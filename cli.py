@@ -23,9 +23,8 @@ from pathlib import Path
 
 import typer
 
-import strip_analyzer as sa
 import guided_pipeline as gp
-import guided_cutter as gc
+import strip_analyzer as sa
 
 log = logging.getLogger(__name__)
 
