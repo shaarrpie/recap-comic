@@ -365,6 +365,8 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
         "chunk_height": chunk_height,
         "overlap": overlap,
         "backend": getattr(backend, "name", type(backend).__name__),
+        "model": getattr(backend, "model", ""),
+        "prompt_version": PROMPT_VERSION,
     }
     cfg_hash = _config_hash(cfg)
 
@@ -569,14 +571,12 @@ class GeminiVisionBackend:
     name = "gemini"
 
     def __init__(self, model: str = "gemini-2.5-flash",
-                 api_key: str | None = None,
-                 max_attempts: int = MAX_ATTEMPTS) -> None:
+                 api_key: str | None = None) -> None:
         self.model = model
         self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
         if not self._api_key:
             raise RuntimeError(
                 "GEMINI_API_KEY is not set; pass api_key or set the env var")
-        self.max_attempts = max_attempts
         self.usage_log: list[dict] = []
         self.last_usage: dict | None = None
 
@@ -589,36 +589,25 @@ class GeminiVisionBackend:
         buf = io.BytesIO()
         image.save(buf, format="PNG")
         client = genai.Client(api_key=self._api_key)
-        last_err = ""
-        for attempt in range(1, self.max_attempts + 1):
-            try:
-                prompt = _chunk_prompt(image.size[1], previous_context)
-                resp = client.models.generate_content(
-                    model=self.model,
-                    contents=[  # type: ignore[arg-type]  # SDK stub list-variance quirk
-                        types.Part.from_text(text=prompt + last_err),
-                        types.Part.from_bytes(
-                            data=buf.getvalue(), mime_type="image/png"),
-                    ],
-                    config=types.GenerateContentConfig(
-                        temperature=0.0,
-                        response_mime_type="application/json",
-                    ),
-                )
-                raw = resp.text
-                if raw is None:
-                    raw = ""
-                self.last_usage = _capture_usage(resp)
-                self.usage_log.append(self.last_usage or {})
-                return parse_entries_from_json(raw, image.size[1])
-            except Exception as exc:  # noqa: BLE001 - retried then re-raised
-                last_err = (
-                    f"\n\nPrevious attempt failed with: {exc}\n"
-                    "Fix the JSON and return only the required shape."
-                )
-                time.sleep(attempt)
-        raise VisionAnalysisError(
-            f"gemini analysis failed after {self.max_attempts} attempts")
+        prompt = _chunk_prompt(image.size[1], previous_context)
+        resp = client.models.generate_content(
+            model=self.model,
+            contents=[  # type: ignore[arg-type]  # SDK stub list-variance quirk
+                types.Part.from_text(text=prompt),
+                types.Part.from_bytes(
+                    data=buf.getvalue(), mime_type="image/png"),
+            ],
+            config=types.GenerateContentConfig(
+                temperature=0.0,
+                response_mime_type="application/json",
+            ),
+        )
+        raw = resp.text
+        if raw is None:
+            raw = ""
+        self.last_usage = _capture_usage(resp)
+        self.usage_log.append(self.last_usage or {})
+        return parse_entries_from_json(raw, image.size[1])
 
 
 class OpenAIVisionBackend:
@@ -629,8 +618,7 @@ class OpenAIVisionBackend:
     the safety net for any response_format quirk on specific model families."""
     name = "openai"
 
-    def __init__(self, model: str, api_key: str | None = None,
-                 max_attempts: int = MAX_ATTEMPTS) -> None:
+    def __init__(self, model: str, api_key: str | None = None) -> None:
         if not model or not model.strip():
             raise ValueError("--model is required for the openai backend")
         self.model = model
@@ -638,7 +626,6 @@ class OpenAIVisionBackend:
         if not self._api_key:
             raise RuntimeError(
                 "OPENAI_API_KEY is not set; pass api_key or set the env var")
-        self.max_attempts = max_attempts
         self.usage_log: list[dict] = []
         self.last_usage: dict | None = None
 
@@ -653,36 +640,25 @@ class OpenAIVisionBackend:
         image.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         client = openai.OpenAI(api_key=self._api_key)
-        last_err = ""
-        for attempt in range(1, self.max_attempts + 1):
-            try:
-                prompt = _chunk_prompt(image.size[1], previous_context)
-                resp = client.chat.completions.create(
-                    model=self.model,
-                    max_tokens=4096,
-                    response_format={"type": "json_object"},
-                    messages=[
-                        {"role": "system",
-                         "content": prompt + last_err},
-                        {"role": "user",
-                         "content": [{"type": "image_url", "image_url": {
-                             "url": f"data:image/png;base64,{b64}"}}]},
-                    ],
-                )
-                raw_text = resp.choices[0].message.content
-                if raw_text is None:
-                    raw_text = ""
-                self.last_usage = _capture_usage(resp)
-                self.usage_log.append(self.last_usage or {})
-                return parse_entries_from_json(raw_text, image.size[1])
-            except Exception as exc:  # noqa: BLE001 - retried then re-raised
-                last_err = (
-                    f"\n\nPrevious attempt failed with: {exc}\n"
-                    "Fix the JSON and return only the required shape."
-                )
-                time.sleep(attempt)
-        raise VisionAnalysisError(
-            f"openai analysis failed after {self.max_attempts} attempts")
+        prompt = _chunk_prompt(image.size[1], previous_context)
+        resp = client.chat.completions.create(
+            model=self.model,
+            max_tokens=4096,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system",
+                 "content": prompt},
+                {"role": "user",
+                 "content": [{"type": "image_url", "image_url": {
+                     "url": f"data:image/png;base64,{b64}"}}]},
+            ],
+        )
+        raw_text = resp.choices[0].message.content
+        if raw_text is None:
+            raw_text = ""
+        self.last_usage = _capture_usage(resp)
+        self.usage_log.append(self.last_usage or {})
+        return parse_entries_from_json(raw_text, image.size[1])
 
 class AnthropicVisionBackend:
     """Anthropic backend. Verified in this session (anthropic==1.4.0):
@@ -693,8 +669,7 @@ class AnthropicVisionBackend:
     NOT executed against the API in this session (no key)."""
     name = "anthropic"
 
-    def __init__(self, model: str, api_key: str | None = None,
-                 max_attempts: int = MAX_ATTEMPTS) -> None:
+    def __init__(self, model: str, api_key: str | None = None) -> None:
         if not model or not model.strip():
             raise ValueError("--model is required for the anthropic backend")
         self.model = model
@@ -702,7 +677,6 @@ class AnthropicVisionBackend:
         if not self._api_key:
             raise RuntimeError(
                 "ANTHROPIC_API_KEY is not set; pass api_key or set the env var")
-        self.max_attempts = max_attempts
         self.usage_log: list[dict] = []
         self.last_usage: dict | None = None
 
@@ -717,39 +691,28 @@ class AnthropicVisionBackend:
         image.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         client = anthropic.Anthropic(api_key=self._api_key)
-        last_err = ""
-        for attempt in range(1, self.max_attempts + 1):
-            try:
-                prompt = _chunk_prompt(image.size[1], previous_context)
-                resp = client.messages.create(
-                    model=self.model,
-                    max_tokens=4096,
-                    messages=[{
-                        "role": "user",
-                        "content": [
-                            {"type": "image",
-                             "source": {"type": "base64",
-                                        "media_type": "image/png",
-                                        "data": b64}},
-                            {"type": "text",
-                             "text": prompt + last_err},
-                        ],
-                    }],
-                )
-                text = "".join(
-                    str(getattr(block, "text", None) or "")
-                    for block in resp.content)
-                self.last_usage = _capture_usage(resp)
-                self.usage_log.append(self.last_usage or {})
-                return parse_entries_from_json(text, image.size[1])
-            except Exception as exc:  # noqa: BLE001 - retried then re-raised
-                last_err = (
-                    f"\n\nPrevious attempt failed with: {exc}\n"
-                    "Fix the JSON and return only the required shape."
-                )
-                time.sleep(attempt)
-        raise VisionAnalysisError(
-            f"anthropic analysis failed after {self.max_attempts} attempts")
+        prompt = _chunk_prompt(image.size[1], previous_context)
+        resp = client.messages.create(
+            model=self.model,
+            max_tokens=4096,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image",
+                     "source": {"type": "base64",
+                                "media_type": "image/png",
+                                "data": b64}},
+                    {"type": "text",
+                     "text": prompt},
+                ],
+            }],
+        )
+        text = "".join(
+            str(getattr(block, "text", None) or "")
+            for block in resp.content)
+        self.last_usage = _capture_usage(resp)
+        self.usage_log.append(self.last_usage or {})
+        return parse_entries_from_json(text, image.size[1])
 
 
 class OllamaVisionBackend:
@@ -768,14 +731,13 @@ class OllamaVisionBackend:
     name = "ollama"
 
     def __init__(self, model: str = "llava", base_url: str | None = None,
-                 timeout: int = 120, max_attempts: int = MAX_ATTEMPTS) -> None:
+                 timeout: int = 120) -> None:
         if not model or not model.strip():
             raise ValueError("--model is required for the ollama backend")
         self.model = model
         self.base_url = (base_url or os.environ.get("OLLAMA_BASE_URL")
                          or "http://localhost:11434").rstrip("/")
         self.timeout = timeout
-        self.max_attempts = max_attempts
         self.usage_log: list[dict] = []
         self.last_usage: dict | None = None
 
@@ -792,26 +754,15 @@ class OllamaVisionBackend:
                       ) -> tuple[list[PanelPlanEntry], list[str]]:
         import urllib.request
 
-        last_err = ""
-        for attempt in range(1, self.max_attempts + 1):
-            prompt = _chunk_prompt(image.size[1], previous_context) + last_err
-            payload = self._build_payload(image, prompt)
-            req = urllib.request.Request(
-                f"{self.base_url}/api/generate",
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"})
-            try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                text = data.get("response", "")
-                self.last_usage = _capture_usage(data)
-                self.usage_log.append(self.last_usage or {})
-                return parse_entries_from_json(text, image.size[1])
-            except Exception as exc:  # noqa: BLE001 - retried then re-raised
-                last_err = (
-                    f"\n\nPrevious attempt failed with: {exc}\n"
-                    "Fix the JSON and return only the required shape."
-                )
-                time.sleep(attempt)
-        raise VisionAnalysisError(
-            f"ollama analysis failed after {self.max_attempts} attempts")
+        prompt = _chunk_prompt(image.size[1], previous_context)
+        payload = self._build_payload(image, prompt)
+        req = urllib.request.Request(
+            f"{self.base_url}/api/generate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        text = data.get("response", "")
+        self.last_usage = _capture_usage(data)
+        self.usage_log.append(self.last_usage or {})
+        return parse_entries_from_json(text, image.size[1])

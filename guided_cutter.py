@@ -349,12 +349,14 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
         log.warning("plan dimensions (%dx%d) differ from strip (%dx%d); "
                     "scaling panel coordinates by (%.3f, %.3f)",
                     plan.width, plan.height, width, height, sx, sy)
-        for e in plan.entries:
-            e.y_start = round(e.y_start * sy)
-            e.y_end = round(e.y_end * sy)
-            for b in e.bubble_boxes:
-                b.y = round(b.y * sy)
-                b.h = round(b.h * sy)
+         for e in plan.entries:
+             e.y_start = round(e.y_start * sy)
+             e.y_end = round(e.y_end * sy)
+             for b in e.bubble_boxes:
+                 b.x = round(b.x * sx)
+                 b.y = round(b.y * sy)
+                 b.w = round(b.w * sx)
+                 b.h = round(b.h * sy)
         plan.width, plan.height = width, height
 
     cuts = build_cuts(gray_arr, plan, config=config)

@@ -40,12 +40,16 @@ dev = [
 recap-comic = "cli:app"
 
 [tool.setuptools]
-packages = [
-    "adapters",
+py-modules = [
+    "cli",
+    "guided_pipeline",
+    "guided_cutter",
+    "strip_analyzer",
+    "narrator",
+    "report",
+    "debug_view",
+    "bubble_detector",
 ]
-
-[tool.setuptools.package-data]
-"*" = ["*.py"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

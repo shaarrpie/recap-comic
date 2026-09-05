@@ -23,10 +23,13 @@ from pathlib import Path
 
 import typer
 
+import strip_analyzer as sa
 import guided_pipeline as gp
 import guided_cutter as gc
 
 log = logging.getLogger(__name__)
+
+_WRITE_ATOMIC = sa._write_atomic
 
 app = typer.Typer(
     help="manhwa-recap: AI-guided panels & narration for long strips")
@@ -51,7 +54,8 @@ def guided_plan(
         help="gemini|openai|anthropic|ollama|fixture|none"),
     model: str | None = typer.Option(
         None, "--model",
-        help="vision model id (required for openai/anthropic/ollama)"),
+        help="vision model id (gemini defaults to gemini-2.5-flash; "
+             "required for openai/anthropic/ollama)"),
     chunk_height: int = typer.Option(2000, "--chunk-height",
                                      help="reading-chunk height in px"),
     overlap: int = typer.Option(200, "--overlap",
@@ -87,10 +91,11 @@ def guided_plan(
     except (gp.VisionAnalysisError, FileNotFoundError, ValueError) as exc:
         if log.isEnabledFor(logging.DEBUG):
             log.exception("guided plan failed")
-        typer.echo(f"ERROR: {exc}", err=True)
+        else:
+            typer.echo(f"ERROR: {exc}", err=True)
         raise typer.Exit(1) from exc
-        if out_plan is not None:
-        _write_atomic_str(out_plan, plan.model_dump_json(indent=2) + "\n")
+    if out_plan is not None:
+        _WRITE_ATOMIC(out_plan, plan.model_dump_json(indent=2) + "\n")
     if debug_overlay is not None:
         from debug_view import draw_overlay
         draw_overlay(strip, plan, out_path=debug_overlay)
@@ -154,13 +159,18 @@ def guided_run(
         help="gemini|openai|anthropic|ollama|fixture|none"),
     model: str | None = typer.Option(
         None, "--model",
-        help="vision model id (required for openai/anthropic/ollama)"),
+        help="vision model id (gemini defaults to gemini-2.5-flash; "
+             "required for openai/anthropic/ollama)"),
     plan_path: Path | None = typer.Option(
         None, "--plan", help="reuse an existing plan JSON from 'guided plan'"),
     chunk_height: int = typer.Option(2000, "--chunk-height"),
     overlap: int = typer.Option(200, "--overlap"),
     cache_dir: Path | None = typer.Option(None, "--cache-dir"),
-        tolerance: int = typer.Option(80, "--tolerance",
+    chunk_dir: Path | None = typer.Option(
+        None, "--chunk-dir",
+        help="also save each chunk sent to the model as chunk_XX.png here "
+             "(visual debug: what the model saw)"),
+    tolerance: int = typer.Option(80, "--tolerance",
         help="+/-px around each AI boundary to scan for gutter (default 80)"),
     max_panel_height: int = typer.Option(1600, "--max-panel-height"),
     variance_threshold: float = typer.Option(6.0, "--variance-threshold"),
@@ -180,7 +190,7 @@ def guided_run(
         plan, artifact, used = gp.run_guided(
             strip, out_dir, backend_name=backend, model=model,
             plan_path=plan_path, chunk_height=chunk_height, overlap=overlap,
-            cache_dir=cache_dir, tolerance=tolerance,
+            cache_dir=cache_dir, chunk_dir=chunk_dir, tolerance=tolerance,
             max_panel_height=max_panel_height,
             variance_threshold=variance_threshold,
             edge_threshold=edge_threshold, fallback=fallback,

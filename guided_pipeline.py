@@ -47,9 +47,8 @@ def build_backend(name: str, api_key: str | None = None,
     if name == "fixture":
         return sa.FixtureVisionBackend()
     if name == "gemini":
-        if not model:
-            raise ValueError("--model is required for the gemini backend")
-        return sa.GeminiVisionBackend(api_key=api_key, model=model)
+        return sa.GeminiVisionBackend(api_key=api_key,
+                                       model=model or "gemini-2.5-flash")
     if name == "openai":
         if not model:
             raise ValueError("--model is required for the openai backend")
@@ -136,6 +135,7 @@ def run_guided(
     chunk_height: int = sa.DEFAULT_CHUNK_HEIGHT,
     overlap: int = sa.DEFAULT_CHUNK_OVERLAP,
     cache_dir: str | Path | None = None,
+    chunk_dir: str | Path | None = None,
     tolerance: int = 80,
     max_panel_height: int = 1600,
     variance_threshold: float = 6.0,
@@ -166,7 +166,7 @@ def run_guided(
         try:
             plan, _cached = sa.analyze_strip(
                 strip, use, chunk_height=chunk_height, overlap=overlap,
-                cache_dir=cache_dir, force=force)
+                cache_dir=cache_dir, force=force, chunk_dir=chunk_dir)
         except sa.VisionAnalysisError as exc:
             log.error("Phase-1 analysis failed: %s", exc)
             plan = None

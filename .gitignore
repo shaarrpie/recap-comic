@@ -12,6 +12,7 @@ venv/
 # Generated outputs
 guided_out/
 guided_out_test/
+pilots/_out/
 *.cache/
 smoke_overlay.png
 smoke_plan.json
