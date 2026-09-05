@@ -801,6 +801,7 @@ class CloudflareWorkersAIBackend:
                       previous_context: str = ""
                       ) -> tuple[list[PanelPlanEntry], list[str]]:
         import base64
+        import urllib.error
         import urllib.request
 
         buf = io.BytesIO()
@@ -836,14 +837,29 @@ class CloudflareWorkersAIBackend:
                 "Content-Type": "application/json",
             },
         )
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as exc:
+            if exc.code == 403:
+                raw = exc.read().decode("utf-8", errors="replace")
+                try:
+                    data = json.loads(raw)
+                except json.JSONDecodeError:
+                    raise VisionAnalysisError(
+                        f"Cloudflare Workers AI 403: {raw[:500]}") from exc
+            else:
+                raise
         if not data.get("success", False):
             errors = data.get("errors", [data])
             raise VisionAnalysisError(
                 f"Cloudflare Workers AI error: {errors}")
         result = data.get("result", {})
         text = result.get("response", "")
+        if not isinstance(text, str):
+            log.debug("Cloudflare raw result: %s", result)
+            text = json.dumps(text) if isinstance(text, dict) else str(text)
+        log.debug("Cloudflare response text: %s", text[:500])
         self.last_usage = _capture_usage(result)
         self.usage_log.append(self.last_usage or {})
         return parse_entries_from_json(text, image.size[1])
