@@ -60,9 +60,11 @@ def build_backend(name: str, api_key: str | None = None,
     if name in ("local", "ollama"):
         return sa.OllamaVisionBackend(model=model or "llava",
                                       base_url=base_url, timeout=timeout)
+    if name == "cloudflare":
+        return sa.CloudflareWorkersAIBackend(api_key=api_key)
     raise ValueError(
         f"unknown backend {name!r}; supported: gemini, openai, anthropic, "
-        "ollama, fixture, none")
+        "ollama, cloudflare, fixture, none")
 
 
 def low_confidence_ratio(plan: sa.PanelPlan) -> float:
@@ -143,6 +145,7 @@ def run_guided(
     fallback: bool = True,
     force: bool = False,
     dry_run: bool = False,
+    out_plan: str | Path | None = None,
 ) -> tuple[sa.PanelPlan, CutArtifact | None, bool]:
     """Phase 1 + Phase 2. Returns (plan, artifact, used_fallback).
 
@@ -195,6 +198,13 @@ def run_guided(
     assert plan is not None
     if dry_run:
         return plan, None, used_fallback
+
+    out = Path(out_dir)
+    out.mkdir(parents=True, exist_ok=True)
+    plan_json_path = out / "plan.json"
+    sa._write_atomic(plan_json_path, plan.model_dump_json(indent=2) + "\n")
+    if out_plan is not None:
+        sa._write_atomic(Path(out_plan), plan.model_dump_json(indent=2) + "\n")
 
     config = CutterConfig(tolerance=tolerance,
                           max_panel_height=max_panel_height,

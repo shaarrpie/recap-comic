@@ -766,3 +766,84 @@ class OllamaVisionBackend:
         self.last_usage = _capture_usage(data)
         self.usage_log.append(self.last_usage or {})
         return parse_entries_from_json(text, image.size[1])
+
+
+class CloudflareWorkersAIBackend:
+    """Cloudflare Workers AI backend (default vision model: Llama 3.2 11B Vision).
+
+    Uses the Workers AI REST API:
+    POST https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/
+         @cf/meta/llama-3.2-11b-vision-instruct
+
+    Requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID env vars
+    (or pass them as api_key / account_id). The account_id is embedded in
+    the URL path; the token goes in the Authorization header.
+    """
+    name = "cloudflare"
+    DEFAULT_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
+
+    def __init__(self, model: str = DEFAULT_MODEL,
+                 api_key: str | None = None,
+                 account_id: str | None = None) -> None:
+        self.model = model
+        self._api_key = api_key or os.environ.get("CLOUDFLARE_API_TOKEN")
+        if not self._api_key:
+            raise RuntimeError(
+                "CLOUDFLARE_API_TOKEN is not set; pass api_key or set the env var")
+        self._account_id = account_id or os.environ.get("CLOUDFLARE_ACCOUNT_ID")
+        if not self._account_id:
+            raise RuntimeError(
+                "CLOUDFLARE_ACCOUNT_ID is not set; pass account_id or set the env var")
+        self.usage_log: list[dict] = []
+        self.last_usage: dict | None = None
+
+    def analyze_chunk(self, image: Image.Image,
+                      previous_context: str = ""
+                      ) -> tuple[list[PanelPlanEntry], list[str]]:
+        import base64
+        import urllib.request
+
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        prompt = _chunk_prompt(image.size[1], previous_context)
+        url = (
+            f"https://api.cloudflare.com/client/v4/accounts/"
+            f"{self._account_id}/ai/run/{self.model}"
+        )
+        payload = {
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{b64}"
+                            },
+                        },
+                    ],
+                }
+            ],
+            "max_tokens": 4096,
+        }
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Content-Type": "application/json",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        if not data.get("success", False):
+            errors = data.get("errors", [data])
+            raise VisionAnalysisError(
+                f"Cloudflare Workers AI error: {errors}")
+        result = data.get("result", {})
+        text = result.get("response", "")
+        self.last_usage = _capture_usage(result)
+        self.usage_log.append(self.last_usage or {})
+        return parse_entries_from_json(text, image.size[1])

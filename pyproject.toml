@@ -10,6 +10,7 @@ readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.11,<3.13"
 dependencies = [
+    "python-dotenv>=1.0",
     "opencv-python-headless==5.0.0.93",
     "numpy==2.4.6",
     "pillow==11.3.0",
@@ -18,18 +19,17 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Core guided pipeline (Phase 1 + Phase 2)
-guided = [
-    "edge-tts==7.2.8",
-]
 # Vision backends (pick at least one for Phase 1 AI mode)
 gemini = ["google-genai==2.22.0"]
 openai = ["openai==3.8.0"]
 anthropic = ["anthropic==1.4.0"]
-# Offline TTS alternative
+# Offline TTS alternatives
+tts-edge = ["edge-tts==7.2.8"]
 kokoro = ["kokoro-onnx==0.6.1"]
-# OCR quality tier (PyPI version NOT verified before writing this)
-# comiq = ["comiq"]
+# Full pipeline extras (render + OCR)
+render = ["moviepy==2.2.1", "imageio-ffmpeg==0.6.0"]
+ocr = ["pytesseract==0.3.13"]
+# Development / testing
 dev = [
     "pytest==9.1.1",
     "ruff==0.16.6",
@@ -40,16 +40,7 @@ dev = [
 recap-comic = "cli:app"
 
 [tool.setuptools]
-py-modules = [
-    "cli",
-    "guided_pipeline",
-    "guided_cutter",
-    "strip_analyzer",
-    "narrator",
-    "report",
-    "debug_view",
-    "bubble_detector",
-]
+packages = ["adapters"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

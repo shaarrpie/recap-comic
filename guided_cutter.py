@@ -315,6 +315,20 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
         raise FileNotFoundError(f"strip image not found: {strip}")
     config = config or CutterConfig()
     out = Path(out_dir)
+    sidecar = out / "panels.json"
+    if not force and sidecar.exists():
+        try:
+            existing = CutArtifact.model_validate_json(sidecar.read_text("utf-8"))
+            new_hash = hashlib.sha256(
+                plan.model_dump_json().encode("utf-8")).hexdigest()
+            if existing.plan_hash != new_hash:
+                log.info("plan changed since last run; clearing stale panels")
+                for prev in out.glob("panel_*.png"):
+                    prev.unlink()
+                force = True
+        except Exception as exc:  # noqa: BLE001 - corrupted sidecar; start fresh
+            log.debug("could not read existing sidecar: %s", exc)
+            force = True
     if force and out.exists():
         # Clear existing outputs for this strip so stale panels from a
         # previous run don't linger alongside the new ones.

@@ -11,10 +11,9 @@ Commands (group `guided`):
   guided run   STRIP                           Phase 1 + Phase 2;
                        --dry-run stops after Phase 1.
 
-Backends (--backend): gemini (default) | openai | anthropic | ollama | fixture | none.
+Backends (--backend): gemini (default) | openai | anthropic | ollama | cloudflare | fixture | none.
 "fixture" is for offline tests; "none" forces the gutter-detector fallback.
-API keys come ONLY from environment variables (GEMINI_API_KEY /
-OPENAI_API_KEY / ANTHROPIC_API_KEY — see .env.example).
+API keys come ONLY from environment variables (GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID).
 """
 from __future__ import annotations
 
@@ -22,9 +21,12 @@ import logging
 from pathlib import Path
 
 import typer
+from dotenv import load_dotenv
 
 import guided_pipeline as gp
 import strip_analyzer as sa
+
+load_dotenv()
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +37,9 @@ app = typer.Typer(
 guided_app = typer.Typer(help="AI-guided panel segmentation & narration")
 app.add_typer(guided_app, name="guided")
 
+
+def _default_cache_dir() -> Path:
+    return Path.home() / ".cache" / "recap-comic"
 
 def _configure_logging(level: str) -> None:
     logging.basicConfig(
@@ -50,7 +55,7 @@ def guided_plan(
         None, "--out-plan", help="also write the plan JSON here"),
     backend: str = typer.Option(
         "gemini", "--backend",
-        help="gemini|openai|anthropic|ollama|fixture|none"),
+        help="gemini|openai|anthropic|ollama|cloudflare|fixture|none"),
     model: str | None = typer.Option(
         None, "--model",
         help="vision model id (gemini defaults to gemini-2.5-flash; "
@@ -81,11 +86,13 @@ def guided_plan(
     --chunk-dir, also saves each chunk image the model received.
     """
     _configure_logging(log_level)
+    used_cache_dir = cache_dir or _default_cache_dir()
     try:
         plan, _artifact, _used = gp.run_guided(
             strip, Path("."), backend_name=backend, model=model,
             chunk_height=chunk_height, overlap=overlap,
-            cache_dir=cache_dir, chunk_dir=chunk_dir,
+            cache_dir=used_cache_dir, chunk_dir=chunk_dir,
+            out_plan=out_plan,
             force=force, dry_run=True)
     except (gp.VisionAnalysisError, FileNotFoundError, ValueError) as exc:
         if log.isEnabledFor(logging.DEBUG):
@@ -144,7 +151,7 @@ def guided_cut(
     typer.echo(f"sidecar: {Path(out_dir) / 'panels.json'}")
     if report is not None:
         from report import render_report
-        render_report(artifact, out_dir, report)
+        render_report(artifact, report, out_dir)
         typer.echo(f"report: {report}")
 
 
@@ -155,7 +162,7 @@ def guided_run(
     out_dir: Path = typer.Option("guided_out", "--out-dir"),
     backend: str = typer.Option(
         "gemini", "--backend",
-        help="gemini|openai|anthropic|ollama|fixture|none"),
+        help="gemini|openai|anthropic|ollama|cloudflare|fixture|none"),
     model: str | None = typer.Option(
         None, "--model",
         help="vision model id (gemini defaults to gemini-2.5-flash; "
@@ -164,7 +171,12 @@ def guided_run(
         None, "--plan", help="reuse an existing plan JSON from 'guided plan'"),
     chunk_height: int = typer.Option(2000, "--chunk-height"),
     overlap: int = typer.Option(200, "--overlap"),
-    cache_dir: Path | None = typer.Option(None, "--cache-dir"),
+    cache_dir: Path | None = typer.Option(
+        None, "--cache-dir",
+        help="Phase-1 cache dir (default: ~/.cache/recap-comic)"),
+    out_plan: Path | None = typer.Option(
+        None, "--out-plan",
+        help="also write the final plan JSON here (always written to out-dir/plan.json)"),
     chunk_dir: Path | None = typer.Option(
         None, "--chunk-dir",
         help="also save each chunk sent to the model as chunk_XX.png here "
@@ -185,11 +197,13 @@ def guided_run(
 ) -> None:
     """Phase 1 (AI pre-read) + Phase 2 (guided dissection) in one command."""
     _configure_logging(log_level)
+    used_cache_dir = cache_dir or _default_cache_dir()
     try:
         plan, artifact, used = gp.run_guided(
             strip, out_dir, backend_name=backend, model=model,
             plan_path=plan_path, chunk_height=chunk_height, overlap=overlap,
-            cache_dir=cache_dir, chunk_dir=chunk_dir, tolerance=tolerance,
+            cache_dir=used_cache_dir, chunk_dir=chunk_dir, out_plan=out_plan,
+            tolerance=tolerance,
             max_panel_height=max_panel_height,
             variance_threshold=variance_threshold,
             edge_threshold=edge_threshold, fallback=fallback,
@@ -213,7 +227,7 @@ def guided_run(
 @guided_app.command("narrate")
 def guided_narrate(
     plan: Path = typer.Argument(..., exists=True, dir_okay=False,
-                                help="plan JSON from 'guided plan'"),
+                                help="plan JSON from 'guided plan' or panels.json from 'guided cut'"),
     out: Path = typer.Option("narration.txt", "--out"),
     style: str = typer.Option(
         "recap", "--style", help="recap (flowing) | literal (verbatim)",
@@ -236,6 +250,8 @@ def guided_narrate(
         else:
             typer.echo(f"ERROR: {exc}", err=True)
         raise typer.Exit(1) from exc
+    if not script.strip():
+        typer.echo("WARNING: narration is empty (fallback plan has no AI narration)", err=True)
     typer.echo(f"wrote {out} ({len(script)} chars)")
     typer.echo(f"index: {out.with_suffix('.index.json')}")
 

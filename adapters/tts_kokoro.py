@@ -17,6 +17,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
+
+_KOKORO_CACHE: dict[tuple[str, str], Any] = {}
 
 
 def synthesize(text: str, out_path: Path, *, model_path: Path,
@@ -25,7 +28,10 @@ def synthesize(text: str, out_path: Path, *, model_path: Path,
     import soundfile as sf  # optional dependency
     from kokoro_onnx import Kokoro
 
-    kokoro = Kokoro(str(model_path), str(voices_path))
+    key = (str(model_path), str(voices_path))
+    if key not in _KOKORO_CACHE:
+        _KOKORO_CACHE[key] = Kokoro(str(model_path), str(voices_path))
+    kokoro = _KOKORO_CACHE[key]
     samples, sample_rate = kokoro.create(text, voice=voice, speed=speed,
                                          lang="en-us")  # type: ignore[call-arg]
     sf.write(out_path, samples, sample_rate)

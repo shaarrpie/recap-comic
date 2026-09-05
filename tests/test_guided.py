@@ -508,3 +508,15 @@ def test_ollama_backend_name_accepted(tmp_path: Path) -> None:
         # confirm the name is recognized.
     except (ConnectionError, OSError):
         pass  # connection errors are acceptable here
+
+
+def test_cloudflare_backend_name_accepted() -> None:
+    """Cloudflare Workers AI backend must be accepted by build_backend."""
+    try:
+        gp.build_backend("cloudflare")
+    except ValueError as exc:
+        if "unknown backend" in str(exc):
+            raise AssertionError(
+                "build_backend rejected 'cloudflare' — backend name drift") from exc
+    except RuntimeError:
+        pass  # missing credentials is fine; we only care the name is recognized

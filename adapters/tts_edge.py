@@ -73,7 +73,8 @@ def synthesize_entry(entry: NarrationEntry, out_dir: Path, *, voice: str,
                               words=words)
         except Exception as exc:  # noqa: BLE001 - re-raised after retries
             last_exc = exc
-            time.sleep(2 ** attempt)  # backoff: 2,4,8s (no event loop needed)
+            if attempt < retries:
+                time.sleep(2 ** attempt)  # backoff: 2,4,8s (no event loop needed)
     # Persist the text so the user can retry manually without re-generating
     # the narration; this is the file the error message points at.
     retry_txt = out_path.with_suffix(".txt")
