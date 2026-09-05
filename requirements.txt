@@ -1,0 +1,25 @@
+# manhwa-recap/requirements.txt — core guided pipeline (CPU-only, no API keys needed)
+# Pinned from live `pip index versions` output on 2026-09-05; pillow resolved
+# by pip under moviepy==2.2.1's pillow<12 cap.
+opencv-python-headless==5.0.0.93
+numpy==2.4.6
+pillow==11.3.0
+pytesseract==0.3.13
+pydantic==2.13.5
+typer==0.27.2
+edge-tts==7.2.8
+moviepy==2.2.1
+imageio-ffmpeg==0.6.0   # bundled FFmpeg 7.1: lets the MoviePy renderer run without a system FFmpeg
+
+# --- optional extras (install separately if wanted) ---
+# google-genai==2.22.0    # Gemini narration + guided Phase-1 vision backend
+# openai==3.8.0           # guided Phase-1 vision backend (--backend openai)
+# anthropic==1.4.0        # guided Phase-1 vision backend (--backend anthropic)
+# kokoro-onnx==0.6.1      # offline TTS (+ onnxruntime + soundfile)
+# comiq                   # OCR quality tier — PyPI version NOT verified; run
+#                         # `pip index versions comiq` first
+
+# --- dev ---
+# pytest==9.1.1
+# ruff==0.16.6
+# mypy==2.3.1

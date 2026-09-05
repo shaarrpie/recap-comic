@@ -1,0 +1,10 @@
+# manhwa-recap/pilots/requirements-pilots.txt
+# Pinned from live `pip index versions` output on 2026-09-05.
+opencv-python-headless==5.0.0.93
+numpy==2.4.6
+pillow==11.3.0  # NOT 12.x: moviepy==2.2.1 caps pillow<12 (resolver-verified)
+edge-tts==7.2.8
+moviepy==2.2.1
+imageio-ffmpeg==0.6.0
+pytesseract==0.3.13
+pydantic==2.13.5
