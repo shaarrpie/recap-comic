@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
     with Image.open(strip) as img:
         gray = np.asarray(img.convert("L"))
     config = CutterConfig(
-        snap_tolerance=args.snap_tolerance,
+        tolerance=args.snap_tolerance,
         variance_threshold=args.variance_threshold,
         edge_threshold=args.edge_threshold)
     cuts = build_cuts(gray, plan, config=config)

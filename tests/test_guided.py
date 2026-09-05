@@ -339,13 +339,14 @@ def test_narrator_recap_and_literal(tmp_path: Path) -> None:
 def test_report_html_embedded(tmp_path: Path) -> None:
     """The report module writes a self-contained HTML page with base64 panel
     images and narration text."""
-    from report import render_report
     from guided_cutter import CutArtifact, CutPanel
+    from report import render_report
     out_dir = tmp_path / "cut_out"
     out_dir.mkdir()
     # Create tiny placeholder PNGs so the report can embed them.
     for name in ("panel_001.png", "panel_002.png"):
-        import struct, zlib
+        import struct
+        import zlib
         def _1x1_png() -> bytes:
             sig = b"\x89PNG\r\n\x1a\n"
             ihdr = struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0)
@@ -392,3 +393,118 @@ def test_end_to_end_dry_run_and_cut(tmp_path: Path) -> None:
     sidecar = gc.CutArtifact.model_validate_json(
         (out / "panels.json").read_text("utf-8"))
     assert len(sidecar.panels) == len(artifact.panels)
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for the bugs found in the code review.
+# ---------------------------------------------------------------------------
+
+class _LowConfBackend:
+    """Backend stub: every panel returns confidence 0.1 (all below 0.5)."""
+    name = "lowconf"
+
+    def __init__(self, height: int, n: int = 4) -> None:
+        self.height, self.n = height, n
+        self.calls = 0
+
+    def analyze_chunk(self, image: Image.Image,
+                      previous_context: str = ""
+                      ) -> tuple[list[sa.PanelPlanEntry], list[str]]:
+        self.calls += 1
+        h = self.height
+        step = h // (self.n + 1)
+        entries = [sa.PanelPlanEntry(
+            panel_index=i + 1, y_start=i * step, y_end=(i + 1) * step,
+            narration=f"panel {i + 1}", dialogue="", panel_type="single",
+            confidence=0.1)  # ALL below 0.5 -> must trigger fallback
+            for i in range(self.n)]
+        return entries, []
+
+
+def test_low_confidence_fallback_actually_falls_back(tmp_path: Path) -> None:
+    """Bug 1.1 regression: low-confidence AI plans must be DISCARDED, not used.
+
+    Before the fix, run_guided set used_fallback=True but kept the AI plan,
+    so the return value lied about what was used for cutting.
+    """
+    strip = tmp_path / "strip.png"
+    make_strip(1600, panels=[(40, 380), (420, 760), (800, 1140), (1180, 1540)],
+               gutters=[(380, 420), (760, 800), (1140, 1180)]).save(strip)
+    backend = _LowConfBackend(height=1600, n=4)
+    plan, _artifact, used = gp.run_guided(
+        strip, tmp_path / "out", backend=backend, fallback=True)
+    assert used is True, "expected fallback flag when all panels < 0.5"
+    assert plan.provenance == "fallback", (
+        "the returned plan must come from the gutter detector, not the AI")
+    # The fallback plan has confidence 0.0 on every panel by design.
+    assert all(e.confidence == 0.0 for e in plan.entries)
+
+
+def test_dimension_mismatch_scales_coordinates(tmp_path: Path) -> None:
+    """Bug 1.5 regression: when the plan was made from a resized strip, the
+    cutter must scale panel coordinates proportionally rather than warn-and-proceed
+    (which would produce garbage crops)."""
+    # Make a strip at 1600px tall, then build a plan as if it were 800px
+    # tall (half resolution). The cutter should scale everything by 2x.
+    strip = tmp_path / "strip.png"
+    make_strip(1600, panels=[(40, 380), (420, 760), (800, 1140)],
+               gutters=[(380, 420), (760, 800)]).save(strip)
+    # Plan says 800px tall; coordinates are in plan-space (0-800).
+    # Strip is 1600px -> cutter must scale by 2x on both axes.
+    entries = [sa.PanelPlanEntry(
+        panel_index=i + 1, y_start=s, y_end=e,
+        narration=f"panel {i + 1}", dialogue="", panel_type="single",
+        confidence=0.9)
+        for i, (s, e) in enumerate([(20, 190), (210, 380), (400, 570)])]
+    plan = sa.PanelPlan(source="strip.png", width=400, height=800,
+                        model="test", config_hash="h", input_hash="i",
+                        provenance="ai", entries=entries)
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(plan.model_dump_json(), "utf-8")
+    out = tmp_path / "cut"
+    artifact = gc.guided_cut(strip, plan, out)
+    assert artifact.height == 1600  # scaled to actual strip
+    for p in artifact.panels:
+        assert 0 <= p.y_start < p.y_end <= 1600
+    assert (out / artifact.panels[0].image_file).is_file()
+
+
+def test_dimension_mismatch_fails_on_wrong_aspect_ratio(tmp_path: Path) -> None:
+    """Bug 1.5: a plan with a wildly different aspect ratio must raise, not
+    silently produce garbage."""
+    strip = tmp_path / "strip.png"
+    make_strip(1600, panels=[(40, 380), (420, 760)],
+               gutters=[(380, 420)]).save(strip)
+    entries = [sa.PanelPlanEntry(
+        panel_index=i + 1, y_start=s, y_end=e,
+        narration=f"panel {i + 1}", dialogue="", panel_type="single",
+        confidence=0.9)
+        for i, (s, e) in enumerate([(20, 190), (210, 380)])]
+    # width 4000 gives aspect 5.0 vs strip aspect 2.0 -> > 5% divergence
+    plan = sa.PanelPlan(source="other.png", width=4000, height=800,
+                        model="test", config_hash="h", input_hash="i",
+                        provenance="ai", entries=entries)
+    import pytest
+    with pytest.raises(ValueError, match="aspect ratio"):
+        gc.guided_cut(strip, plan, tmp_path / "out")
+
+
+
+
+
+def test_ollama_backend_name_accepted(tmp_path: Path) -> None:
+    """Bug 1.7 regression: the CLI advertises ollama, so build_backend must
+    accept 'ollama' (and 'local') without raising."""
+    # We can't actually call Ollama, but we can verify the factory accepts
+    # the name without a network call (it should fail on connection, not
+    # on unknown backend).
+    try:
+        gp.build_backend("ollama", model="llava")
+    except ValueError as exc:
+        if "unknown backend" in str(exc):
+            raise AssertionError(
+                "build_backend rejected 'ollama' — backend name drift") from exc
+        # Any other error (connection, etc.) is fine — we just want to
+        # confirm the name is recognized.
+    except (ConnectionError, OSError):
+        pass  # connection errors are acceptable here

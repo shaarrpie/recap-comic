@@ -11,13 +11,11 @@
 """
 from __future__ import annotations
 
-import base64
-import html
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
-from guided_cutter import CutArtifact, CutPanel
+from guided_cutter import CutPanel
 from strip_analyzer import PanelPlan
 
 
@@ -79,58 +77,3 @@ def draw_overlay(strip_path: str | Path, plan: PanelPlan, out_path: str | Path,
     return out
 
 
-def _panel_block(p: CutPanel, out_dir: Path) -> str:
-    img_path = out_dir / p.image_file
-    if img_path.exists():
-        b64 = base64.b64encode(img_path.read_bytes()).decode("ascii")
-        img_html = (f'<img class="panel-img" '
-                    f'src="data:image/png;base64,{b64}" '
-                    f'alt="{html.escape(p.id)}">')
-    else:
-        img_html = f'<div class="missing">{html.escape(p.image_file)} missing</div>'
-    notes: list[str] = []
-    if p.merged_with:
-        notes.append("merged: " + ", ".join(str(i) for i in p.merged_with))
-    if p.split_of:
-        notes.append(f"split of {p.split_of}")
-    notes.append(f"y {p.y_start}..{p.y_end} ({p.y_end - p.y_start}px)")
-    notes.append(f"type={p.panel_type} conf={p.confidence:.2f}")
-    if p.snap_distances:
-        notes.append("snap(px)=" + ",".join(str(d) for d in p.snap_distances))
-    return f"""<div class="panel">
-  {img_html}
-  <div class="info">
-    <h3>{html.escape(p.id)} — {html.escape(p.panel_type)}</h3>
-    <p class="narration">{html.escape(p.narration)}</p>
-    <p class="dialogue">{html.escape(p.dialogue)}</p>
-    <p class="meta">{", ".join(html.escape(n) for n in notes)}</p>
-  </div>
-</div>"""
-
-
-def write_panel_report(artifact: CutArtifact, out_dir: str | Path,
-                       report_path: str | Path) -> Path:
-    """Self-contained HTML review page: panels in reading order + their text."""
-    out_dir = Path(out_dir)
-    panels = sorted(artifact.panels, key=lambda c: (c.y_start, c.id))
-    body = "\n".join(_panel_block(p, out_dir) for p in panels)
-    page = f"""<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<title>Guided cut report - {html.escape(artifact.source)}</title>
-<style>
- body {{ font-family: system-ui, sans-serif; margin: 2rem; background: #111; color: #eee; }}
- h1 {{ font-size: 1.15rem; }} .meta {{ color: #888; font-size: .85rem; }}
- .panel {{ display: flex; gap: 1rem; padding: 1rem 0; border-bottom: 1px solid #333; }}
- .panel-img {{ max-height: 520px; max-width: 300px; object-fit: contain; border: 1px solid #444; background:#000; }}
- .missing {{ color:#f88; }}
- .info {{ flex: 1; }} .narration {{ font-size: 1.05rem; }}
- .dialogue {{ color: #9cf; }} .meta {{ color: #888; font-size: .8rem; }}
-</style></head><body>
-<h1>Guided cut report - {html.escape(artifact.source)}
-  <span class="meta">({len(panels)} panels, {artifact.width}x{artifact.height})</span></h1>
-{body}
-</body></html>"""
-    report = Path(report_path)
-    report.parent.mkdir(parents=True, exist_ok=True)
-    report.write_text(page, encoding="utf-8")
-    return report

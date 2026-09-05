@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Virtualenv
+.venv/
+venv/
+
+# Generated outputs
+guided_out/
+guided_out_test/
+*.cache/
+smoke_overlay.png
+smoke_plan.json
+
+# Environment (secrets)
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db
+.DS_Store

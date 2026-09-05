@@ -17,6 +17,7 @@ Verified against edge-tts 7.x source, 2026-09-05:
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from pathlib import Path
 
@@ -72,8 +73,12 @@ def synthesize_entry(entry: NarrationEntry, out_dir: Path, *, voice: str,
                               words=words)
         except Exception as exc:  # noqa: BLE001 - re-raised after retries
             last_exc = exc
-            asyncio.run(asyncio.sleep(2 ** attempt))  # backoff: 2,4,8s
+            time.sleep(2 ** attempt)  # backoff: 2,4,8s (no event loop needed)
+    # Persist the text so the user can retry manually without re-generating
+    # the narration; this is the file the error message points at.
+    retry_txt = out_path.with_suffix(".txt")
+    retry_txt.write_text(entry.text, encoding="utf-8")
     raise RuntimeError(
         f"edge-tts failed for entry {entry.id} after {retries} attempts "
-        f"(text saved for retry at {out_path}.txt): {last_exc}"
+        f"(text saved for retry at {retry_txt}): {last_exc}"
     ) from last_exc

@@ -53,6 +53,12 @@ DEFAULT_CHUNK_HEIGHT = 2000
 DEFAULT_CHUNK_OVERLAP = 200
 MAX_ATTEMPTS = 3
 
+# Bump this whenever the prompt template, the JSON schema, or the
+# normalization convention in _chunk_prompt() / parse_entries_from_json()
+# changes in a way that would make a previously cached plan stale. The
+# value is folded into the Phase-1 cache key so old plans are not reused.
+PROMPT_VERSION = "2026-09-05a"
+
 PANEL_TYPES = frozenset({
     "single", "tall_scenic", "transition_gutter", "multi_sub_panel", "unknown",
 })
@@ -283,7 +289,7 @@ def stitch_chunk_results(results: list[list[PanelPlanEntry]],
     Entries are renumbered 1..N in top-to-bottom order afterwards.
     """
     abs_entries: list[tuple[PanelPlanEntry, int]] = []
-    for base, entries in zip(bases, results):
+    for base, entries in zip(bases, results, strict=True):
         for e in entries:
             y0 = max(0, e.y_start + base)
             y1 = min(height, e.y_end + base)

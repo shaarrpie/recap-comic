@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "recap-comic"
+version = "0.1.0"
+description = "Turn tall manhwa/webtoon strips into per-panel images with AI-guided narration."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.11,<3.13"
+dependencies = [
+    "opencv-python-headless==5.0.0.93",
+    "numpy==2.4.6",
+    "pillow==11.3.0",
+    "pydantic==2.13.5",
+    "typer==0.27.2",
+]
+
+[project.optional-dependencies]
+# Core guided pipeline (Phase 1 + Phase 2)
+guided = [
+    "edge-tts==7.2.8",
+]
+# Vision backends (pick at least one for Phase 1 AI mode)
+gemini = ["google-genai==2.22.0"]
+openai = ["openai==3.8.0"]
+anthropic = ["anthropic==1.4.0"]
+# Offline TTS alternative
+kokoro = ["kokoro-onnx==0.6.1"]
+# OCR quality tier (PyPI version NOT verified before writing this)
+# comiq = ["comiq"]
+dev = [
+    "pytest==9.1.1",
+    "ruff==0.16.6",
+    "mypy==2.3.1",
+]
+
+[project.scripts]
+recap-comic = "cli:app"
+
+[tool.setuptools]
+packages = [
+    "adapters",
+]
+
+[tool.setuptools.package-data]
+"*" = ["*.py"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = false
+ignore_missing_imports = true

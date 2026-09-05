@@ -22,12 +22,18 @@ import numpy as np
 from PIL import Image
 
 import strip_analyzer as sa
-from guided_cutter import CutArtifact, CutterConfig, guided_cut, row_variances
+from guided_cutter import CutArtifact, CutterConfig, compute_strip_metrics, guided_cut
 
 log = logging.getLogger(__name__)
 
 LOW_CONF_THRESHOLD = 0.5
 LOW_CONF_RATIO_LIMIT = 0.30
+
+
+# Re-export so callers can write `gp.VisionAnalysisError` without importing
+# strip_analyzer directly. Defined in strip_analyzer to keep the analyzer
+# module self-contained.
+VisionAnalysisError = sa.VisionAnalysisError
 
 
 def build_backend(name: str, api_key: str | None = None,
@@ -41,7 +47,9 @@ def build_backend(name: str, api_key: str | None = None,
     if name == "fixture":
         return sa.FixtureVisionBackend()
     if name == "gemini":
-        return sa.GeminiVisionBackend(api_key=api_key)
+        if not model:
+            raise ValueError("--model is required for the gemini backend")
+        return sa.GeminiVisionBackend(api_key=api_key, model=model)
     if name == "openai":
         if not model:
             raise ValueError("--model is required for the openai backend")
@@ -50,12 +58,12 @@ def build_backend(name: str, api_key: str | None = None,
         if not model:
             raise ValueError("--model is required for the anthropic backend")
         return sa.AnthropicVisionBackend(model=model, api_key=api_key)
-    if name == "local":
+    if name in ("local", "ollama"):
         return sa.OllamaVisionBackend(model=model or "llava",
                                       base_url=base_url, timeout=timeout)
     raise ValueError(
         f"unknown backend {name!r}; supported: gemini, openai, anthropic, "
-        "local, fixture, none")
+        "ollama, fixture, none")
 
 
 def low_confidence_ratio(plan: sa.PanelPlan) -> float:
@@ -81,7 +89,7 @@ def fallback_plan_from_gutter_detector(
         width, height = img.size
         gray = np.asarray(img.convert("L"))
 
-    variance = row_variances(gray, 0, height)
+    variance, _ = compute_strip_metrics(gray, use_edge_density=False)
     runs: list[tuple[int, int]] = []
     start: int | None = None
     for y in range(height):
@@ -174,6 +182,7 @@ def run_guided(
         log.warning("AI plan confidence too low (%.0f%% of panels < %.1f); "
                     "falling back to the gutter detector", bad,
                     LOW_CONF_THRESHOLD)
+        plan = None  # <-- actually discard the low-confidence AI plan
         used_fallback = True
     if plan is None:
         if not fallback:
