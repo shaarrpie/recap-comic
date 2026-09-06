@@ -57,14 +57,18 @@ def _audio_duration(audio: AudioArtifact, panel_id: str) -> float | None:
 
 
 def _word_count(text: str) -> int:
-    return len(re.compile(r"[A-Za-z0-9']+").findall(text))
+    latin = len(re.compile(r"[A-Za-z0-9']+").findall(text))
+    cjk = len(re.compile(
+        r"[\u3040-\u30ff\uac00-\ud7af\u4e00-\u9fff]").findall(text))
+    return latin + cjk
 
 
 def display_seconds(*, audio_seconds: float | None, words: int,
                     travel_px: int, gap: float, min_display: float,
-                    max_display: float, silent_wpm: int) -> float:
+                    max_display: float, silent_wpm: int,
+                    pan_speed: int = 450) -> float:
     """How long a panel stays on screen (including its trailing gap)."""
-    pan_floor = travel_px / 450.0  # 450 px/s default pan speed
+    pan_floor = travel_px / pan_speed if travel_px else 0.0
     if audio_seconds is not None:
         return max(audio_seconds + gap, min_display, pan_floor)
     read = (words / silent_wpm) * 60.0 if words else 0.0
@@ -75,7 +79,8 @@ def build(panels: PanelsArtifact, narration: NarrationArtifact,
           audio: AudioArtifact, *, gap: float = 0.35,
           min_display: float = 2.0, max_display: float = 12.0,
           silent_wpm: int = 160, fps: int = 30,
-          config_hash: str = "") -> TimelineArtifact:
+          config_hash: str = "", input_hashes: dict[str, str] | None = None,
+          pan_speed: int = 450) -> TimelineArtifact:
     """Assemble a contiguous timeline from already-built stages."""
     by_audio = {a.entry_id: a for a in audio.entries}
     by_text = {n.id: n for n in narration.entries}
@@ -93,7 +98,8 @@ def build(panels: PanelsArtifact, narration: NarrationArtifact,
             words=_word_count(text),
             travel_px=fit_pan(p.bbox.w, h).travel_px,
             gap=gap, min_display=min_display,
-            max_display=max_display, silent_wpm=silent_wpm)
+            max_display=max_display, silent_wpm=silent_wpm,
+            pan_speed=pan_speed)
         entries.append(TimelineEntry(
             panel_id=p.id, order=order,
             source_image=p.source_image,
@@ -105,11 +111,12 @@ def build(panels: PanelsArtifact, narration: NarrationArtifact,
         t += dur
     if not entries:
         raise ValueError("no usable panels in PanelsArtifact")
+    meta_input_hashes = dict(input_hashes or {})
     return TimelineArtifact(
         meta=Meta(schema_version=SCHEMA_VERSION,
                   generator="adapters.timeline",
                   config_hash=config_hash,
-                  input_hashes={}),
+                  input_hashes=meta_input_hashes),
         width=WIDTH, height=HEIGHT, fps=fps,
         gap_seconds=gap, min_display_seconds=min_display,
         entries=entries)

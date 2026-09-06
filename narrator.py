@@ -78,29 +78,15 @@ def make_script_from_cut(artifact: CutArtifact, style: str = "recap") -> str:
 
 
 def _script_from_panels(artifact, style: str = "recap") -> str:
-    """Produce a script from a PanelsArtifact (Stack B IR)."""
-    parts = []
-    for p in artifact.panels:
-        text = p.source_image  # placeholder; narration comes from a separate stage
-        if text.strip():
-            parts.append(text.strip())
-    if not parts:
-        return ""
-    if style == "literal":
-        return "\n\n".join(parts)
-    return _flow_join(parts)
+    """Produce a script from a PanelsArtifact (Stack B IR).
 
-
-def _script_from_panels(artifact, style: str = "recap") -> str:
-    """Produce a script from a PanelsArtifact (Stack B IR). PanelsArtifact
-    carries no narration text — this is a placeholder that the OCR/narration
-    stage fills in before calling narrate_plan."""
-    parts = [p.source_image for p in artifact.panels]
-    if not parts:
-        return ""
-    if style == "literal":
-        return "\n\n".join(parts)
-    return " ".join(parts)
+    PanelsArtifact carries no narration text in the current schema; this
+    path is a placeholder that raises until the OCR/narration stage fills
+    it in. Use CutArtifact/PanelPlan for narration-capable inputs.
+    """
+    raise NotImplementedError(
+        "Stack-B PanelsArtifact has no narration text yet; "
+        "use CutArtifact or PanelPlan instead")
 
 
 def narrate_plan(plan_path: Path, out_path: Path, *,
@@ -130,8 +116,10 @@ def narrate_plan(plan_path: Path, out_path: Path, *,
             log.info("narrate_plan from PanelsArtifact panels=%d style=%s",
                      len(artifact.panels), style)
         else:
-            raise ValueError(f"unrecognised panels format in {plan_path}")
-    else:
+            raise ValueError(
+                f"unrecognised panels format in {plan_path}: "
+                f"expected 'image_file' (CutArtifact) or 'bbox' (PanelsArtifact)")
+    elif "entries" in data and isinstance(data.get("entries"), list):
         plan = sa.PanelPlan.model_validate_json(raw)
         script = make_script_from_plan(plan, style=style)
         index = [{"panel_id": e.panel_index,
@@ -139,10 +127,14 @@ def narrate_plan(plan_path: Path, out_path: Path, *,
                  for e in sorted(plan.entries, key=lambda e: e.panel_index)]
         log.info("narrate_plan from PanelPlan entries=%d style=%s",
                  len(plan.entries), style)
+    else:
+        raise ValueError(
+            f"unrecognised plan format in {plan_path}: expected PanelPlan "
+            f"or CutArtifact/PanelsArtifact with panels/entries list")
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(script, encoding="utf-8")
+    sa.write_atomic(out_path, script)
     index_path = out_path.with_suffix(".index.json")
-    index_path.write_text(json.dumps(index, indent=2), encoding="utf-8")
+    sa.write_atomic(index_path, json.dumps(index, indent=2))
     log.info("narrate_plan wrote script=%d chars index=%d entries",
              len(script), len(index))
     return script

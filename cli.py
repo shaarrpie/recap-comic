@@ -47,6 +47,34 @@ def _default_cache_dir() -> Path:
 def _configure_logging(level: str) -> None:
     logging.getLogger().setLevel(getattr(logging, level.upper(), logging.INFO))
 
+_VALID_BACKENDS = {"gemini", "openai", "anthropic", "ollama", "cloudflare", "fixture", "none"}
+_VALID_TTS = {"edge", "kokoro", "none"}
+_VALID_STYLES = {"recap", "literal"}
+
+
+def _validate_backend(name: str) -> str:
+    n = name.lower()
+    if n not in _VALID_BACKENDS:
+        raise typer.BadParameter(
+            f"unknown backend {name!r}; choose from: {', '.join(sorted(_VALID_BACKENDS))}")
+    return n
+
+
+def _validate_tts(name: str) -> str:
+    n = name.lower()
+    if n not in _VALID_TTS:
+        raise typer.BadParameter(
+            f"unknown --tts {name!r}; choose from: {', '.join(sorted(_VALID_TTS))}")
+    return n
+
+
+def _validate_style(name: str) -> str:
+    n = name.lower()
+    if n not in _VALID_STYLES:
+        raise typer.BadParameter(
+            f"unknown --style {name!r}; choose from: {', '.join(sorted(_VALID_STYLES))}")
+    return n
+
 
 @guided_app.command("plan")
 def guided_plan(
@@ -87,6 +115,7 @@ def guided_plan(
     --chunk-dir, also saves each chunk image the model received.
     """
     _configure_logging(log_level)
+    backend = _validate_backend(backend)
     used_cache_dir = cache_dir or _default_cache_dir()
     log.info("guided_plan start strip=%s backend=%s model=%s chunk_height=%d overlap=%d",
              strip.name, backend, model, chunk_height, overlap)
@@ -143,7 +172,8 @@ def guided_cut(
             tolerance=tolerance, max_panel_height=max_panel_height,
             variance_threshold=variance_threshold, force=force,
             fallback=False)
-        assert artifact is not None
+        if artifact is None:
+            raise RuntimeError("guided cut returned no artifact")
     except (gp.VisionAnalysisError, FileNotFoundError, ValueError) as exc:
         if log.isEnabledFor(logging.DEBUG):
             log.exception("guided cut failed")
@@ -206,6 +236,7 @@ def guided_run(
 ) -> None:
     """Phase 1 (AI pre-read) + Phase 2 (guided dissection) in one command."""
     _configure_logging(log_level)
+    backend = _validate_backend(backend)
     used_cache_dir = cache_dir or _default_cache_dir()
     log.info("guided_run start strip=%s backend=%s model=%s dry_run=%s",
              strip.name, backend, model, dry_run)
@@ -326,9 +357,7 @@ def guided_video(
     _configure_logging(log_level)
     from recap_video import VideoConfig, VideoError, make_recap_video
 
-    if tts not in ("edge", "none"):
-        typer.echo("ERROR: --tts must be 'edge' or 'none'", err=True)
-        raise typer.Exit(2)
+    tts = _validate_tts(tts)
     out_path = out or panels.parent / "recap.mp4"
     cfg = VideoConfig(
         tts=tts, voice=voice, rate=rate, pitch=pitch, speed=speed,

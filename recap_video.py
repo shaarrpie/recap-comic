@@ -125,10 +125,11 @@ def _normalise(text: str) -> str:
 
 
 _WORD_RE = re.compile(r"[A-Za-z0-9']+")
+_CJK_RE = re.compile(r"[\u3040-\u30ff\uac00-\ud7af\u4e00-\u9fff]")
 
 
 def _word_count(text: str) -> int:
-    return len(_WORD_RE.findall(text))
+    return len(_WORD_RE.findall(text)) + len(_CJK_RE.findall(text))
 
 
 def probe_duration(path: Path, ffprobe_exe: str = "ffprobe") -> float:
@@ -167,9 +168,18 @@ def script_text(panel: CutPanel, *, include_dialogue: bool = True) -> str:
     dialogue = _normalise(panel.dialogue) if panel.dialogue.strip() else ""
     if not include_dialogue or not dialogue:
         return narration
-    if narration and dialogue.strip(".!?\"'”’ ").lower() in narration.lower():
-        return narration            # already quoted by the narrator
+    if narration and _token_overlap_ratio(dialogue, narration) >= 0.8:
+        return narration
     return f"{narration} {dialogue}".strip()
+
+
+def _token_overlap_ratio(a: str, b: str) -> float:
+    """Fraction of word tokens in `a` that also appear in `b`."""
+    tokens_a = set(re.findall(r"[A-Za-z0-9']+|[\u3040-\u30ff\uac00-\ud7af\u4e00-\u9fff]", a.lower()))
+    tokens_b = set(re.findall(r"[A-Za-z0-9']+|[\u3040-\u30ff\uac00-\ud7af\u4e00-\u9fff]", b.lower()))
+    if not tokens_a:
+        return 0.0
+    return len(tokens_a & tokens_b) / len(tokens_a)
 
 
 def build_narration(artifact: CutArtifact, cfg: VideoConfig,

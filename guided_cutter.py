@@ -371,8 +371,9 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
             existing = CutArtifact.model_validate_json(sidecar.read_text("utf-8"))
             new_hash = hashlib.sha256(
                 plan.model_dump_json().encode("utf-8")).hexdigest()
-            if existing.plan_hash != new_hash:
-                log.info("plan changed since last run; clearing stale panels")
+            new_cfg = asdict(config)
+            if existing.plan_hash != new_hash or existing.config != new_cfg:
+                log.info("plan/config changed since last run; clearing stale panels")
                 for prev in out.glob("panel_*.png"):
                     prev.unlink()
                 force = True
@@ -421,6 +422,7 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
         plan.width, plan.height = width, height
 
     cuts = build_cuts(gray_arr, plan, config=config)
+    saved: list[CutPanel] = []
     for c in cuts:
         y0 = max(0, c.y_start)
         y1 = min(height, c.y_end)
@@ -432,18 +434,20 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
         dest = out / c.image_file
         if dest.exists() and not force:
             log.info("panel file already exists, skipping: %s", dest)
+            saved.append(c)
             continue
         piece.save(dest, "PNG")
         log.debug("saved panel %s y=[%d,%d] size=%dx%d", c.id, y0, y1, width, y1 - y0)
+        saved.append(c)
 
     plan_hash = hashlib.sha256(
         plan.model_dump_json().encode("utf-8")).hexdigest()
     artifact = CutArtifact(
         source=strip.name, width=width, height=height, plan_hash=plan_hash,
-        config=asdict(config), panels=cuts)
+        config=asdict(config), panels=saved)
     sidecar = out / "panels.json"
     tmp = sidecar.with_suffix(".json.tmp")
     tmp.write_text(artifact.model_dump_json(indent=2), "utf-8")
     tmp.replace(sidecar)
-    log.info("guided_cut complete panels=%d sidecar=%s", len(cuts), sidecar)
+    log.info("guided_cut complete panels=%d sidecar=%s", len(saved), sidecar)
     return artifact

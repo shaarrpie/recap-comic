@@ -29,15 +29,12 @@ TICKS_PER_SECOND = 10_000_000  # 100-ns intervals; edge_tts.constants.TICKS_PER_
 
 
 async def _synthesize(text: str, voice: str, rate: str, pitch: str,
-                      out_path: Path) -> list[dict]:
-    # boundary="WordBoundary" is REQUIRED: the 7.2.8 default is
-    # "SentenceBoundary" (verified via inspect.signature on the installed
-    # version). connect/receive timeouts are built in (10s / 60s).
+                      out_path: Path) -> tuple[bytes, list[dict]]:
     comm = edge_tts.Communicate(text, voice=voice, rate=rate, pitch=pitch,
                                 boundary="WordBoundary")
     words: list[dict] = []
     audio_bytes = bytearray()
-    async for msg in comm.stream():  # stream() is single-use
+    async for msg in comm.stream():
         if msg["type"] == "audio":
             audio_bytes.extend(msg["data"])
         elif msg["type"] == "WordBoundary":
@@ -46,37 +43,65 @@ async def _synthesize(text: str, voice: str, rate: str, pitch: str,
                 "end": (msg["offset"] + msg["duration"]) / TICKS_PER_SECOND,
                 "text": msg["text"],
             })
-    out_path.write_bytes(bytes(audio_bytes))  # disk I/O after the async loop
-    return words
+    return bytes(audio_bytes), words
 
 
 def synthesize_entry(entry: NarrationEntry, out_dir: Path, *, voice: str,
                      rate: str = "+0%", pitch: str = "+0Hz",
                      probe_duration: Callable[[Path], float],
                      retries: int = 3) -> AudioEntry | None:
-    """One mp3 per entry, named by the entry's stable panel id.
-
-    `probe_duration` must return a MEASURED duration (ffprobe); the timeline
-    stage must never estimate speech rate. Returns None for empty text so
-    silent panels simply get no audio file.
-    """
     if not entry.text.strip():
         return None
     out_path = out_dir / f"{entry.id}.mp3"
     last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
-            words = asyncio.run(_synthesize(entry.text, voice, rate, pitch,
-                                            out_path))
+            audio_bytes, words = asyncio.run(
+                _synthesize(entry.text, voice, rate, pitch, out_path))
+            if not audio_bytes:
+                raise RuntimeError(
+                    f"edge-tts returned empty audio for entry {entry.id}")
+            out_path.write_bytes(audio_bytes)
             return AudioEntry(entry_id=entry.id, path=out_path.name,
                               duration_seconds=probe_duration(out_path),
                               words=words)
         except Exception as exc:  # noqa: BLE001 - re-raised after retries
             last_exc = exc
             if attempt < retries:
-                time.sleep(2 ** attempt)  # backoff: 2,4,8s (no event loop needed)
-    # Persist the text so the user can retry manually without re-generating
-    # the narration; this is the file the error message points at.
+                time.sleep(2 ** attempt)
+    retry_txt = out_path.with_suffix(".txt")
+    retry_txt.write_text(entry.text, encoding="utf-8")
+    raise RuntimeError(
+        f"edge-tts failed for entry {entry.id} after {retries} attempts "
+        f"(text saved for retry at {retry_txt}): {last_exc}"
+    ) from last_exc
+
+
+async def synthesize_entry_async(entry: NarrationEntry, out_dir: Path, *,
+                                 voice: str, rate: str = "+0%",
+                                 pitch: str = "+0Hz",
+                                 probe_duration: Callable[[Path], float],
+                                 retries: int = 3) -> AudioEntry | None:
+    """Async variant of synthesize_entry for use inside an existing event loop."""
+    if not entry.text.strip():
+        return None
+    out_path = out_dir / f"{entry.id}.mp3"
+    last_exc: Exception | None = None
+    for attempt in range(1, retries + 1):
+        try:
+            audio_bytes, words = await _synthesize(
+                entry.text, voice, rate, pitch, out_path)
+            if not audio_bytes:
+                raise RuntimeError(
+                    f"edge-tts returned empty audio for entry {entry.id}")
+            out_path.write_bytes(audio_bytes)
+            return AudioEntry(entry_id=entry.id, path=out_path.name,
+                              duration_seconds=probe_duration(out_path),
+                              words=words)
+        except Exception as exc:
+            last_exc = exc
+            if attempt < retries:
+                await asyncio.sleep(2 ** attempt)
     retry_txt = out_path.with_suffix(".txt")
     retry_txt.write_text(entry.text, encoding="utf-8")
     raise RuntimeError(
