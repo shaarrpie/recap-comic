@@ -31,15 +31,18 @@ import guided_pipeline as gp
 import strip_analyzer as sa
 from adapters._logging import get_logger, setup_logging
 
-load_dotenv()
-
-setup_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
-log = get_logger(__name__)
-
 _WRITE_ATOMIC = sa.write_atomic
 
 _ARCHIVE_EXTS = {".zip", ".cbz"}
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+
+log = get_logger(__name__)
+
+
+def _configure_logging(level: str) -> None:
+    load_dotenv()
+    setup_logging(level=os.environ.get("LOG_LEVEL", level))
+    logging.getLogger().setLevel(getattr(logging, level.upper(), logging.INFO))
 
 
 def _resolve_strip_path(strip: Path) -> Path:

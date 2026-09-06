@@ -18,6 +18,8 @@ llm_debug/
 *.cache/
 smoke_overlay.png
 smoke_plan.json
+narration.txt
+narration.index.json
 
 # Environment (secrets)
 .env
