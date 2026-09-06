@@ -55,7 +55,20 @@ python cli.py guided run sample_strip.png --backend none
 
 # Narration script for TTS
 python cli.py guided narrate plan.json --style recap --out narration.txt
+
+# Phase 3 — narrated 9:16 recap video (needs ffmpeg on PATH)
+python cli.py guided video guided_out/panels.json --out guided_out/recap.mp4
+
+# Silent, captioned video without any network/TTS
+python cli.py guided video guided_out/panels.json --tts none
+
+# Preview the timing without rendering
+python cli.py guided video guided_out/panels.json --dry-run
 ```
+
+Outputs next to the mp4: recap.srt (captions), timeline.json, audio/*.mp3,
+narration.json. Re-running is incremental: unchanged narration reuses the
+cached audio, an unchanged timeline skips the ffmpeg render (`--force` resets).
 
 ## How the pipeline works
 

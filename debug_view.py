@@ -63,7 +63,7 @@ def draw_overlay(strip_path: str | Path, plan: PanelPlan, out_path: str | Path,
             for c in cuts:
                 for y in (max(0, c.y_start), min(h, c.y_end)):
                     draw.line([(0, y), (w, y)], fill=(0, 190, 0), width=4)
-                draw.text((w - 200, max(0, c.y_start + 4)), c.id,
+                draw.text((max(0, w - 200), max(0, c.y_start + 4)), c.id,
                           fill=(0, 140, 0), font=small)
 
         # bubble boxes (blue)

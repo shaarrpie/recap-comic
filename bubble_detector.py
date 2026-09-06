@@ -48,16 +48,23 @@ def detect_bubbles(
             continue
         if area / (bw * bh) < 0.3:  # not compact / closed
             continue
+        if bw > w * 0.6 or bh > h * 0.6:  # panel-scale, not bubble-scale
+            continue
+        aspect = max(bw, bh) / max(1, min(bw, bh))
+        if aspect > 5.0:  # extremely elongated -> not a bubble
+            continue
 
-        filled = np.zeros((h, w), dtype=np.uint8)
-        cv2.drawContours(filled, [c], -1, 255, thickness=cv2.FILLED)
+        offset = c - np.array([x, y])
+        filled = np.zeros((bh, bw), dtype=np.uint8)
+        cv2.drawContours(filled, [offset], -1, 255, thickness=cv2.FILLED)
         eroded = cv2.erode(filled, np.ones((3, 3), np.uint8))
         ring = (filled > 0) & (eroded == 0)
-        ring_mean = float(gray[ring].mean()) if ring.any() else 255.0
+        region = gray[y:y + bh, x:x + bw]
+        ring_mean = float(region[ring].mean()) if ring.any() else 255.0
         if ring_mean > dark_border_max:
             continue  # no dark outline -> likely just a white area/gutter
 
-        interior = gray[filled > 0]
+        interior = region[filled > 0]
         busyness = float(interior.std()) if interior.size else 0.0
         if busyness < min_busyness:
             continue  # flat white interior -> no text

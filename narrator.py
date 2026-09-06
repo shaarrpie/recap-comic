@@ -74,19 +74,56 @@ def make_script_from_cut(artifact: CutArtifact, style: str = "recap") -> str:
     raise ValueError(f"unknown style {style!r}; expected 'recap' or 'literal'")
 
 
+def _script_from_panels(artifact, style: str = "recap") -> str:
+    """Produce a script from a PanelsArtifact (Stack B IR)."""
+    parts = []
+    for p in artifact.panels:
+        text = p.source_image  # placeholder; narration comes from a separate stage
+        if text.strip():
+            parts.append(text.strip())
+    if not parts:
+        return ""
+    if style == "literal":
+        return "\n\n".join(parts)
+    return _flow_join(parts)
+
+
+def _script_from_panels(artifact, style: str = "recap") -> str:
+    """Produce a script from a PanelsArtifact (Stack B IR). PanelsArtifact
+    carries no narration text — this is a placeholder that the OCR/narration
+    stage fills in before calling narrate_plan."""
+    parts = [p.source_image for p in artifact.panels]
+    if not parts:
+        return ""
+    if style == "literal":
+        return "\n\n".join(parts)
+    return " ".join(parts)
+
+
 def narrate_plan(plan_path: Path, out_path: Path, *,
                  style: str = "recap") -> str:
     """Read a plan JSON (PanelPlan or CutArtifact), write the script, return it."""
     raw = plan_path.read_text("utf-8")
     data = json.loads(raw)
-    if "panels" in data and isinstance(data["panels"], list) and data["panels"] and "image_file" in data["panels"][0]:
-        from guided_cutter import CutArtifact
-        artifact = CutArtifact.model_validate_json(raw)
-        script = make_script_from_cut(artifact, style=style)
-        index = [{"panel_id": p.id, "panel_index": p.panel_index,
-                  "narration": p.narration, "dialogue": p.dialogue,
-                  "image_file": p.image_file}
-                 for p in sorted(artifact.panels, key=lambda p: p.y_start)]
+    if "panels" in data and isinstance(data["panels"], list) and data["panels"]:
+        first = data["panels"][0]
+        if "image_file" in first:
+            from guided_cutter import CutArtifact
+            artifact = CutArtifact.model_validate_json(raw)
+            script = make_script_from_cut(artifact, style=style)
+            index = [{"panel_id": p.id, "panel_index": p.panel_index,
+                      "narration": p.narration, "dialogue": p.dialogue,
+                      "image_file": p.image_file}
+                     for p in sorted(artifact.panels, key=lambda p: p.y_start)]
+        elif "bbox" in first:
+            from adapters.schemas import PanelsArtifact
+            artifact = PanelsArtifact.model_validate_json(raw)
+            script = _script_from_panels(artifact, style=style)
+            index = [{"panel_id": p.id, "panel_index": p.index,
+                      "narration": "", "dialogue": ""}
+                     for p in artifact.panels]
+        else:
+            raise ValueError(f"unrecognised panels format in {plan_path}")
     else:
         plan = sa.PanelPlan.model_validate_json(raw)
         script = make_script_from_plan(plan, style=style)

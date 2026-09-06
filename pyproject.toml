@@ -23,12 +23,23 @@ dependencies = [
 gemini = ["google-genai==2.22.0"]
 openai = ["openai==3.8.0"]
 anthropic = ["anthropic==1.4.0"]
+# Full guided pipeline (vision + TTS + render)
+guided = [
+    "google-genai==2.22.0",
+    "openai==3.8.0",
+    "anthropic==1.4.0",
+    "edge-tts==7.2.8",
+    "moviepy==2.2.1",
+    "imageio-ffmpeg==0.6.0",
+]
 # Offline TTS alternatives
 tts-edge = ["edge-tts==7.2.8"]
 kokoro = ["kokoro-onnx==0.6.1"]
-# Full pipeline extras (render + OCR)
+# Render + OCR
 render = ["moviepy==2.2.1", "imageio-ffmpeg==0.6.0"]
 ocr = ["pytesseract==0.3.13"]
+# Webapp
+web = ["fastapi==0.115.0", "uvicorn==0.30.0", "python-multipart==0.0.12"]
 # Development / testing
 dev = [
     "pytest==9.1.1",
@@ -38,9 +49,21 @@ dev = [
 
 [project.scripts]
 recap-comic = "cli:app"
+recap-web = "webapp.main:app"
 
 [tool.setuptools]
 packages = ["adapters"]
+py-modules = [
+    "cli",
+    "guided_cutter",
+    "guided_pipeline",
+    "strip_analyzer",
+    "narrator",
+    "report",
+    "debug_view",
+    "bubble_detector",
+    "recap_video",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

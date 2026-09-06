@@ -38,6 +38,8 @@ import logging
 import os
 import re
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Protocol
 
@@ -161,10 +163,16 @@ def _config_hash(cfg: dict[str, object]) -> str:
     ).hexdigest()
 
 
-def _write_atomic(path: Path, content: str) -> None:
+def write_atomic(path: Path, content: str) -> None:
+    """Write `content` to `path` atomically (write tmp, then rename)."""
     tmp = path.with_suffix(".tmp")
     tmp.write_text(content, "utf-8")
     tmp.replace(path)
+
+
+def _write_atomic(path: Path, content: str) -> None:
+    """Backwards-compatible alias for write_atomic."""
+    write_atomic(path, content)
 
 
 def extract_json(text: str) -> object:
@@ -419,7 +427,7 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
         characters=characters)
     if cache_path is not None and cache_root is not None:
         cache_root.mkdir(parents=True, exist_ok=True)
-        _write_atomic(cache_path, plan.model_dump_json(indent=2) + "\n")
+        write_atomic(cache_path, plan.model_dump_json(indent=2) + "\n")
     return plan, False
 
 class VisionBackend(Protocol):
@@ -769,11 +777,14 @@ class OllamaVisionBackend:
 
 
 class CloudflareWorkersAIBackend:
-    """Cloudflare Workers AI backend (default vision model: Llama 3.2 11B Vision).
+    """Cloudflare Workers AI backend (default: Llama 3.2 11B Vision).
 
     Uses the Workers AI REST API:
     POST https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/
          @cf/meta/llama-3.2-11b-vision-instruct
+
+    The first call sends `{"prompt":"agree"}` to accept Meta's license; the
+    real request then follows in the same retry loop.
 
     Requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID env vars
     (or pass them as api_key / account_id). The account_id is embedded in
@@ -796,50 +807,18 @@ class CloudflareWorkersAIBackend:
                 "CLOUDFLARE_ACCOUNT_ID is not set; pass account_id or set the env var")
         self.usage_log: list[dict] = []
         self.last_usage: dict | None = None
+        self._agreed_to_license: bool = False
 
-    def analyze_chunk(self, image: Image.Image,
-                      previous_context: str = ""
-                      ) -> tuple[list[PanelPlanEntry], list[str]]:
-        import base64
-        import urllib.error
-        import urllib.request
-
-        buf = io.BytesIO()
-        image.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        prompt = _chunk_prompt(image.size[1], previous_context)
-        url = (
-            f"https://api.cloudflare.com/client/v4/accounts/"
-            f"{self._account_id}/ai/run/{self.model}"
-        )
-        payload = {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{b64}"
-                            },
-                        },
-                    ],
-                }
-            ],
-            "max_tokens": 4096,
-        }
+    def _post(self, url: str, payload: dict,
+              headers: dict) -> dict:
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json",
-            },
+            headers=headers,
         )
         try:
             with urllib.request.urlopen(req, timeout=120) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
+                return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as exc:
             if exc.code == 403:
                 raw = exc.read().decode("utf-8", errors="replace")
@@ -848,18 +827,83 @@ class CloudflareWorkersAIBackend:
                 except json.JSONDecodeError:
                     raise VisionAnalysisError(
                         f"Cloudflare Workers AI 403: {raw[:500]}") from exc
-            else:
-                raise
-        if not data.get("success", False):
-            errors = data.get("errors", [data])
-            raise VisionAnalysisError(
-                f"Cloudflare Workers AI error: {errors}")
-        result = data.get("result", {})
-        text = result.get("response", "")
-        if not isinstance(text, str):
-            log.debug("Cloudflare raw result: %s", result)
-            text = json.dumps(text) if isinstance(text, dict) else str(text)
-        log.debug("Cloudflare response text: %s", text[:500])
-        self.last_usage = _capture_usage(result)
-        self.usage_log.append(self.last_usage or {})
-        return parse_entries_from_json(text, image.size[1])
+                return data
+            raise
+
+    def analyze_chunk(self, image: Image.Image,
+                      previous_context: str = ""
+                      ) -> tuple[list[PanelPlanEntry], list[str]]:
+        import base64
+
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        url = (
+            f"https://api.cloudflare.com/client/v4/accounts/"
+            f"{self._account_id}/ai/run/{self.model}"
+        )
+        headers = {
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+        last_err = ""
+        for attempt in range(1, 4):
+            prompt = _chunk_prompt(image.size[1], previous_context)
+            if last_err:
+                prompt += (
+                    "\n\nPrevious attempt failed with: "
+                    f"{last_err}\nFix the JSON and return only the required shape."
+                )
+            if not self._agreed_to_license:
+                agree_payload = {"prompt": "agree"}
+                data = self._post(url, agree_payload, headers)
+                if data.get("success"):
+                    self._agreed_to_license = True
+                    log.debug("Cloudflare: accepted Meta license for %s",
+                              self.model)
+                elif data.get("errors"):
+                    err_msg = str(data["errors"])
+                    last_err = f"license agreement failed: {err_msg}"
+                    log.warning("Cloudflare license attempt %d/3: %s",
+                                attempt, err_msg)
+                    time.sleep(attempt)
+                    continue
+            payload = {
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{b64}"
+                                },
+                            },
+                        ],
+                    }
+                ],
+                "max_tokens": 4096,
+            }
+            data = self._post(url, payload, headers)
+            if not data.get("success", False):
+                errors = data.get("errors", [data])
+                raise VisionAnalysisError(
+                    f"Cloudflare Workers AI error: {errors}")
+            result = data.get("result", {})
+            text = result.get("response", "")
+            if not isinstance(text, str):
+                log.debug("Cloudflare raw result: %s", result)
+                text = json.dumps(text) if isinstance(text, dict) else str(text)
+            try:
+                entries, new_chars = parse_entries_from_json(text, image.size[1])
+                self.last_usage = _capture_usage(result)
+                self.usage_log.append(self.last_usage or {})
+                return entries, new_chars
+            except Exception as exc:  # noqa: BLE001 - retried then re-raised
+                last_err = str(exc)
+                log.warning("Cloudflare chunk attempt %d/3 failed: %s",
+                            attempt, exc)
+                time.sleep(attempt)
+        raise VisionAnalysisError(
+            "Cloudflare Workers AI failed after 3 attempts")

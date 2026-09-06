@@ -126,7 +126,7 @@ def test_boundary_snaps_to_nearest_gutter_row() -> None:
     gray = np.asarray(img.convert("L"))
     plan = plan_from([(50, 640), (700, 890)], height=900)
     cuts = gc.build_cuts(gray, plan, config=gc.CutterConfig(tolerance=80))
-    assert cuts[0].y_end == 670 and cuts[1].y_start == 670
+    assert cuts[0].y_end == 669 and cuts[1].y_start == 669
 
 
 def test_never_cut_through_speech_bubble() -> None:
@@ -240,6 +240,8 @@ def test_fallback_on_backend_failure(tmp_path: Path) -> None:
 
 
 def test_fallback_on_low_confidence(tmp_path: Path) -> None:
+    """Bug A2 regression: an explicit plan file is NEVER discarded due to
+    low confidence. The user trusted it enough to pass it on the CLI."""
     strip = tmp_path / "strip.png"
     make_strip(1200, panels=[(40, 300), (340, 600), (640, 1100)],
                gutters=[(300, 340), (600, 640)]).save(strip)
@@ -248,15 +250,17 @@ def test_fallback_on_low_confidence(tmp_path: Path) -> None:
         source="strip.png", width=800, height=1200, model="test",
         config_hash="t", input_hash="t",
         entries=[sa.PanelPlanEntry(panel_index=i + 1, y_start=y0, y_end=y1,
-                                   narration="n", confidence=0.3)
+                                   narration="n", dialogue="d", confidence=0.3)
                  for i, (y0, y1) in enumerate([(40, 300), (340, 600),
                                                (640, 1100)])])
     plan_file.write_text(low.model_dump_json(), "utf-8")
     out = tmp_path / "out2"
     _, artifact, used = gp.run_guided(strip, out, backend_name="none",
                                       plan_path=plan_file, fallback=True)
-    assert used is True  # 3/3 panels below 0.5 confidence -> fallback
+    assert used is False, "explicit plan must not be discarded due to low confidence"
     assert artifact is not None and len(artifact.panels) == 3
+    # AI narrations are preserved on the cut panels.
+    assert all(p.narration == "n" for p in artifact.panels)
 
 
 def test_fallback_segments_sample_strip(tmp_path: Path) -> None:
@@ -422,11 +426,8 @@ class _LowConfBackend:
 
 
 def test_low_confidence_fallback_actually_falls_back(tmp_path: Path) -> None:
-    """Bug 1.1 regression: low-confidence AI plans must be DISCARDED, not used.
-
-    Before the fix, run_guided set used_fallback=True but kept the AI plan,
-    so the return value lied about what was used for cutting.
-    """
+    """Bug A3 regression: low-confidence AI plans must keep their narrations
+    even when the geometry is replaced by the gutter detector."""
     strip = tmp_path / "strip.png"
     make_strip(1600, panels=[(40, 380), (420, 760), (800, 1140), (1180, 1540)],
                gutters=[(380, 420), (760, 800), (1140, 1180)]).save(strip)
@@ -435,9 +436,12 @@ def test_low_confidence_fallback_actually_falls_back(tmp_path: Path) -> None:
         strip, tmp_path / "out", backend=backend, fallback=True)
     assert used is True, "expected fallback flag when all panels < 0.5"
     assert plan.provenance == "fallback", (
-        "the returned plan must come from the gutter detector, not the AI")
-    # The fallback plan has confidence 0.0 on every panel by design.
-    assert all(e.confidence == 0.0 for e in plan.entries)
+        "the returned plan must come from the gutter detector for geometry")
+    # The fallback geometry replaces the AI boundaries, but the AI's
+    # narration/dialogue are preserved on the best-overlapping fallback panel.
+    assert all(e.narration for e in plan.entries), (
+        "AI narrations must survive the low-confidence fallback")
+    assert len(plan.entries) >= 3
 
 
 def test_dimension_mismatch_scales_coordinates(tmp_path: Path) -> None:

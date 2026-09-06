@@ -42,8 +42,9 @@ def _config_hash(cfg: dict) -> str:
 
 
 def detect_panels(gray: np.ndarray, *, tol: int = 28,
-                  min_area_frac: float = 0.02) -> list[tuple[int, int, int, int]]:
-    """Return (x, y, w, h) boxes sorted top-to-bottom, left-to-right."""
+                  min_area_frac: float = 0.02,
+                  reading_order: str = "top_to_bottom") -> list[tuple[int, int, int, int]]:
+    """Return (x, y, w, h) boxes sorted in reading order."""
     h, w = gray.shape
     frame = np.concatenate([
         gray[:8].ravel(), gray[-8:].ravel(),
@@ -62,7 +63,10 @@ def detect_panels(gray: np.ndarray, *, tol: int = 28,
         if bw * bh < min_area_frac * w * h:
             continue
         boxes.append((x, y, bw, bh))
-    boxes.sort(key=lambda b: (b[1], b[0]))  # reading order: top_to_bottom
+    if reading_order == "right_to_left_rows":
+        boxes.sort(key=lambda b: (b[1], -b[0]))
+    else:
+        boxes.sort(key=lambda b: (b[1], b[0]))
     return boxes
 
 

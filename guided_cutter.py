@@ -45,6 +45,13 @@ log = logging.getLogger(__name__)
 Image.MAX_IMAGE_PIXELS = 80_000_000
 
 
+def _blur(gray: np.ndarray, sigma: float = 0.5) -> np.ndarray:
+    """Small Gaussian blur to reduce JPEG ringing before row statistics."""
+    import cv2
+    k = max(3, int(2 * sigma + 1) | 1)
+    return cv2.GaussianBlur(gray, (k, k), sigma)
+
+
 @dataclass
 class CutterConfig:
     tolerance: int = 80
@@ -53,6 +60,8 @@ class CutterConfig:
     edge_threshold: float = 30.0  # max row edge-density (Sobel/Canny) for a gutter
     bubble_pad: int = 8
     use_edge_density: bool = True  # require gutters to be low on BOTH variance+edge
+    min_gutter_run: int = 4       # minimum consecutive low-variance rows
+    blur_sigma: float = 0.5       # pre-blur to tolerate JPEG noise
 
 
 class CutPanel(BaseModel):
@@ -93,23 +102,21 @@ def row_edge_density(gray: np.ndarray, y0: int, y1: int) -> np.ndarray:
     return mag[y0:y1].mean(axis=1)
 
 
-def compute_strip_metrics(gray: np.ndarray, use_edge_density: bool
-                           ) -> tuple[np.ndarray, np.ndarray | None]:
+def compute_strip_metrics(gray: np.ndarray, use_edge_density: bool,
+                           blur_sigma: float = 0.5) -> tuple[np.ndarray, np.ndarray | None]:
     """Pre-compute per-row variance and (optionally) edge density for the WHOLE
     strip once. Returns (variances, edge_density_or_None).
 
-    Why once per strip, not per boundary: build_cuts and _split_panel each
-    call find_gutter_row for windows around many rows. Computing a 1-D
-    variance array for the whole strip up front turns each per-boundary call
-    into a cheap slice, and lets find_gutter_row do vectorised selection
-    instead of a Python loop. For a 20,000px strip this is ~100x fewer
-    numpy ops.
+    A small Gaussian blur is applied before statistics to tolerate JPEG
+    ringing. The returned 1-D arrays let find_gutter_row and _split_panel
+    do cheap vectorised selection instead of recomputing per boundary.
     """
-    variances = gray.astype(np.float32).var(axis=1)
+    blurred = _blur(gray, sigma=blur_sigma)
+    variances = blurred.astype(np.float32).var(axis=1)
     edge_density: np.ndarray | None = None
     if use_edge_density:
         import cv2
-        edges = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        edges = cv2.Sobel(blurred, cv2.CV_32F, 1, 0, ksize=3)
         edge_density = np.abs(edges).mean(axis=1)
     return variances, edge_density
 
@@ -150,46 +157,69 @@ def find_gutter_row(
     use_edge_density: bool = True,
     forbidden: frozenset[int] = frozenset(),
     require_threshold: bool = True,
+    min_gutter_run: int = 4,
+    blur_sigma: float = 0.5,
+    variances: np.ndarray | None = None,
+    edge_density: np.ndarray | None = None,
 ) -> int | None:
-    """Nearest low-variance row within `tolerance` of center_y.
+    """Nearest low-variance GUTTER RUN within `tolerance` of center_y.
+
+    A gutter is a contiguous run of at least `min_gutter_run` rows whose
+    variance (and edge density, if enabled) is below threshold. The cut is
+    placed at the RUN'S MIDPOINT, not the nearest single row, so a wide
+    gutter is never carried entirely to one side.
 
     `forbidden` rows (speech bubbles) are never returned. With
-    require_threshold=True, rows above the variance threshold are not
-    considered gutters, so continuous artwork yields None (caller merges).
-    When use_edge_density is True, a gutter must ALSO be below edge_threshold
-    (mean Sobel magnitude) — this second signal prevents mis-firing on
-    screentone/gradient backgrounds where variance alone is ambiguous.
-    With require_threshold=False, the nearest allowed row is returned as a
-    fallback so oversized panels can still be split (caller may log).
+    require_threshold=True, the window must contain at least one valid run;
+    otherwise None is returned (caller merges panels). When
+    use_edge_density is True, a gutter must ALSO be below edge_threshold.
+    With require_threshold=False, the midpoint of the nearest allowed run is
+    returned as a fallback so oversized panels can still be split.
     """
     h = gray.shape[0]
     lo = max(0, center_y - tolerance)
     hi = min(h - 1, center_y + tolerance)
     if hi < lo:
         return None
-    rows = np.arange(lo, hi + 1)
-    var = gray[lo:hi + 1].astype(np.float32).var(axis=1)
-    # Pre-compute edge density once for the search window if the dual-signal
-    # mode is enabled. A gutter must be low on BOTH variance and edge density;
-    # this prevents mis-firing on screentone/gradient backgrounds where
-    # variance alone is ambiguous.
-    edge: np.ndarray | None = None
+
+    if variances is None:
+        blurred = _blur(gray, sigma=blur_sigma)
+        variances = blurred.astype(np.float32).var(axis=1)
+    window_var = variances[lo:hi + 1]
+
+    window_edge: np.ndarray | None = None
     if use_edge_density:
-        edge = row_edge_density(gray, lo, hi + 1)
-    order = np.argsort(np.abs(rows - center_y))
-    fallback: int | None = None
-    for k in order:
-        r = int(rows[int(k)])
-        if forbidden and r in forbidden:
-            continue
-        is_gutter = float(var[int(k)]) <= threshold
-        if use_edge_density and edge is not None:
-            is_gutter = is_gutter and float(edge[int(k)]) <= edge_threshold
-        if is_gutter:
-            return r
-        if not require_threshold and fallback is None:
-            fallback = r
-    return fallback if not require_threshold else None
+        if edge_density is not None:
+            window_edge = edge_density[lo:hi + 1]
+        else:
+            window_edge = row_edge_density(_blur(gray, sigma=blur_sigma), lo, hi + 1)
+
+    mask = window_var <= threshold
+    if use_edge_density and window_edge is not None:
+        mask = mask & (window_edge <= edge_threshold)
+
+    forbidden_mask = np.zeros(hi - lo + 1, dtype=bool)
+    for r in forbidden:
+        if lo <= r <= hi:
+            forbidden_mask[r - lo] = True
+    mask = mask & ~forbidden_mask
+
+    # Find contiguous runs of passing rows.
+    padded = np.concatenate(([False], mask, [False]))
+    changes = np.diff(padded.astype(np.int8))
+    starts = np.where(changes == 1)[0]
+    ends = np.where(changes == -1)[0] - 1
+    runs = [(lo + s, lo + e) for s, e in zip(starts, ends, strict=True)
+            if (e - s + 1) >= min_gutter_run]
+
+    if not runs:
+        if not require_threshold:
+            return (lo + hi) // 2
+        return None
+
+    # Pick the run whose midpoint is nearest to center_y.
+    best = min(runs, key=lambda r: abs((r[0] + r[1]) / 2 - center_y))
+    return (best[0] + best[1]) // 2
 
 def _emit(group: list[PanelPlanEntry], y0: int, y1: int,
           base_id: str, snap_distances: list[int] | None = None) -> CutPanel:
@@ -220,7 +250,9 @@ def _emit(group: list[PanelPlanEntry], y0: int, y1: int,
 
 def _split_panel(gray: np.ndarray, panel: CutPanel,
                  forbidden: frozenset[int],
-                 config: CutterConfig) -> list[CutPanel]:
+                 config: CutterConfig,
+                 variances: np.ndarray | None = None,
+                 edge_density: np.ndarray | None = None) -> list[CutPanel]:
     """Split `panel` at internal gutters until every piece fits
     max_panel_height. Pieces are named <id>a / <id>b (recursively <id>aa...)
     and keep the parent's narration."""
@@ -242,7 +274,12 @@ def _split_panel(gray: np.ndarray, panel: CutPanel,
         row = find_gutter_row(
             gray, mid, tolerance=(y1 - y0) // 2,
             threshold=config.variance_threshold,
-            forbidden=forbidden, require_threshold=False)
+            edge_threshold=config.edge_threshold,
+            use_edge_density=config.use_edge_density,
+            forbidden=forbidden, require_threshold=False,
+            min_gutter_run=config.min_gutter_run,
+            blur_sigma=config.blur_sigma,
+            variances=variances, edge_density=edge_density)
         if row is None or row <= y0 or row >= y1:
             row = mid
             log.warning("no usable gutter inside panel %s; splitting at "
@@ -263,6 +300,10 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
         raise ValueError("plan contains no panels; nothing to cut")
     forbidden = frozenset(bubble_rows(plan, pad=config.bubble_pad, gray=gray))
 
+    variances, edge_density = compute_strip_metrics(
+        gray, use_edge_density=config.use_edge_density,
+        blur_sigma=config.blur_sigma)
+
     # 1. Refine boundaries; a None gutter row means continuous art -> merge.
     groups: list[list[PanelPlanEntry]] = [[entries[0]]]
     cut_rows: list[int] = []
@@ -274,7 +315,10 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
             threshold=config.variance_threshold,
             edge_threshold=config.edge_threshold,
             use_edge_density=config.use_edge_density,
-            forbidden=forbidden, require_threshold=True)
+            forbidden=forbidden, require_threshold=True,
+            min_gutter_run=config.min_gutter_run,
+            blur_sigma=config.blur_sigma,
+            variances=variances, edge_density=edge_density)
         if row is None:
             groups[-1].append(b)  # continuous art: merge the two panels
         else:
@@ -302,7 +346,9 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
         if (p.y_end - p.y_start) <= config.max_panel_height:
             final.append(p)
         else:
-            final.extend(_split_panel(gray, p, forbidden, config))
+            final.extend(_split_panel(gray, p, forbidden, config,
+                                      variances=variances,
+                                      edge_density=edge_density))
     return sorted(final, key=lambda c: (c.y_start, c.id))
 
 
@@ -363,6 +409,7 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
         log.warning("plan dimensions (%dx%d) differ from strip (%dx%d); "
                     "scaling panel coordinates by (%.3f, %.3f)",
                     plan.width, plan.height, width, height, sx, sy)
+        plan = plan.model_copy(deep=True)
         for e in plan.entries:
             e.y_start = round(e.y_start * sy)
             e.y_end = round(e.y_end * sy)

@@ -13,6 +13,8 @@ venv/
 guided_out/
 guided_out_test/
 pilots/_out/
+pilots/_out_test/
+llm_debug/
 *.cache/
 smoke_overlay.png
 smoke_plan.json

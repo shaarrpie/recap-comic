@@ -8,6 +8,7 @@ This is the review surface for `guided cut --report report.html`.
 from __future__ import annotations
 
 import base64
+import html
 from pathlib import Path
 
 from guided_cutter import CutArtifact
@@ -62,26 +63,26 @@ def render_report(artifact: CutArtifact, out_path: Path,
         img_path = out_dir / p.image_file
         img = (_embed_png(img_path) if img_path.exists()
                else '<div class="empty">image missing</div>')
-        narration = (p.narration
+        narration = (html.escape(p.narration)
                      if p.narration.strip()
                      else '<span class="empty">(no narration)</span>')
-        dialogue = (f'<div class="dialogue"><b>Dialogue:</b> {p.dialogue}</div>'
+        dialogue = (f'<div class="dialogue"><b>Dialogue:</b> {html.escape(p.dialogue)}</div>'
                     if p.dialogue.strip() else "")
         panels_html.append(f"""\
 <div class="panel">
   {img}
   <div class="body">
-    <h2>{p.id}</h2>
-    <div class="type">type: {p.panel_type}</div>
+    <h2>{html.escape(str(p.id))}</h2>
+    <div class="type">type: {html.escape(str(p.panel_type))}</div>
     <div class="conf">confidence: {p.confidence:.2f}</div>
     <div class="y-range">Y: {p.y_start}&ndash;{p.y_end}</div>
     <div class="narration">{narration}</div>
     {dialogue}
   </div>
 </div>""")
-    html = HTML_TEMPLATE.format(
-        source=artifact.source, n_panels=len(artifact.panels),
+    html_out = HTML_TEMPLATE.format(
+        source=html.escape(artifact.source), n_panels=len(artifact.panels),
         width=artifact.width, height=artifact.height,
-        config=artifact.config, panels="\n".join(panels_html))
-    out_path.write_text(html, encoding="utf-8")
+        config=html.escape(str(artifact.config)), panels="\n".join(panels_html))
+    out_path.write_text(html_out, encoding="utf-8")
     return out_path

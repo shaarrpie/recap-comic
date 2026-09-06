@@ -30,7 +30,7 @@ load_dotenv()
 
 log = logging.getLogger(__name__)
 
-_WRITE_ATOMIC = sa._write_atomic
+_WRITE_ATOMIC = sa.write_atomic
 
 app = typer.Typer(
     help="manhwa-recap: AI-guided panels & narration for long strips")
@@ -100,8 +100,11 @@ def guided_plan(
         else:
             typer.echo(f"ERROR: {exc}", err=True)
         raise typer.Exit(1) from exc
-    if out_plan is not None:
-        _WRITE_ATOMIC(out_plan, plan.model_dump_json(indent=2) + "\n")
+    except Exception as exc:
+        log.exception("unexpected error in guided plan")
+        typer.echo(f"ERROR: unexpected error: {exc} "
+                   "(see --log-level DEBUG for details)", err=True)
+        raise typer.Exit(1) from exc
     if debug_overlay is not None:
         from debug_view import draw_overlay
         draw_overlay(strip, plan, out_path=debug_overlay)
@@ -134,7 +137,8 @@ def guided_cut(
         _plan, artifact, _used = gp.run_guided(
             strip, out_dir, backend_name="none", plan_path=plan,
             tolerance=tolerance, max_panel_height=max_panel_height,
-            variance_threshold=variance_threshold, force=force)
+            variance_threshold=variance_threshold, force=force,
+            fallback=False)
         assert artifact is not None
     except (gp.VisionAnalysisError, FileNotFoundError, ValueError) as exc:
         if log.isEnabledFor(logging.DEBUG):
@@ -208,12 +212,16 @@ def guided_run(
             variance_threshold=variance_threshold,
             edge_threshold=edge_threshold, fallback=fallback,
             force=force, dry_run=dry_run)
-    except (gp.VisionAnalysisError, FileNotFoundError, ValueError,
-            AssertionError) as exc:
+    except (gp.VisionAnalysisError, FileNotFoundError, ValueError) as exc:
         if log.isEnabledFor(logging.DEBUG):
             log.exception("guided run failed")
         else:
             typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    except Exception as exc:
+        log.exception("unexpected error in guided run")
+        typer.echo(f"ERROR: unexpected error: {exc} "
+                   "(see --log-level DEBUG for details)", err=True)
         raise typer.Exit(1) from exc
     if dry_run:
         typer.echo(plan.model_dump_json(indent=2))
@@ -250,10 +258,95 @@ def guided_narrate(
         else:
             typer.echo(f"ERROR: {exc}", err=True)
         raise typer.Exit(1) from exc
+    except Exception as exc:
+        log.exception("unexpected error in guided narrate")
+        typer.echo(f"ERROR: unexpected error: {exc} "
+                   "(see --log-level DEBUG for details)", err=True)
+        raise typer.Exit(1) from exc
     if not script.strip():
         typer.echo("WARNING: narration is empty (fallback plan has no AI narration)", err=True)
     typer.echo(f"wrote {out} ({len(script)} chars)")
     typer.echo(f"index: {out.with_suffix('.index.json')}")
+
+
+@guided_app.command("video")
+def guided_video(
+    panels: Path = typer.Argument(
+        ..., exists=True, dir_okay=False,
+        help="panels.json written by 'guided run' / 'guided cut'"),
+    out: Path | None = typer.Option(
+        None, "--out",
+        help="output mp4 (default: <panels dir>/recap.mp4)"),
+    tts: str = typer.Option(
+        "edge", "--tts", help="edge (default, needs internet) | none (silent)"),
+    voice: str = typer.Option(
+        "en-US-AriaNeural", "--voice",
+        help="edge-tts voice id (list with: edge-tts --list-voices)"),
+    rate: str = typer.Option("+0%", "--rate", help="speech rate, e.g. +10%"),
+    pitch: str = typer.Option("+0Hz", "--pitch", help="speech pitch, e.g. -2Hz"),
+    dialogue: bool = typer.Option(
+        True, "--dialogue/--no-dialogue",
+        help="also read each panel's dialogue after its narration"),
+    gap: float = typer.Option(0.35, "--gap", help="silence after each panel (s)"),
+    min_display: float = typer.Option(
+        2.0, "--min-display", help="minimum seconds a panel stays on screen"),
+    max_display: float = typer.Option(
+        12.0, "--max-display", help="cap for SILENT panels (tts none)"),
+    pan_speed: int = typer.Option(
+        450, "--pan-speed", help="max pan speed in px/s (lower = slower)"),
+    fps: int = typer.Option(30, "--fps"),
+    ffmpeg: str = typer.Option("ffmpeg", "--ffmpeg", help="ffmpeg executable"),
+    ffprobe: str = typer.Option("ffprobe", "--ffprobe", help="ffprobe executable"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run",
+        help="build narration/audio/timeline/srt but do NOT render the mp4"),
+    force: bool = typer.Option(False, "--force", help="ignore all caches"),
+    log_level: str = typer.Option("INFO", "--log-level"),
+) -> None:
+    """Phase 3: panels.json -> recap.mp4 (9:16, narrated, captioned).
+
+    Reads the per-panel narration, synthesises speech with edge-tts (or none),
+    builds a drift-free timeline from MEASURED clip durations, pans each
+    panel (Ken-Burns) and renders one mp4 with ffmpeg. Also writes recap.srt,
+    timeline.json, audio/ and narration.json next to the mp4.
+    """
+    _configure_logging(log_level)
+    from recap_video import VideoConfig, VideoError, make_recap_video
+
+    if tts not in ("edge", "none"):
+        typer.echo("ERROR: --tts must be 'edge' or 'none'", err=True)
+        raise typer.Exit(2)
+    out_path = out or panels.parent / "recap.mp4"
+    cfg = VideoConfig(
+        tts=tts, voice=voice, rate=rate, pitch=pitch,  # type: ignore[arg-type]
+        include_dialogue=dialogue, gap_seconds=gap,
+        min_display_seconds=min_display, max_display_seconds=max_display,
+        max_pan_px_per_sec=pan_speed, fps=fps,
+        ffmpeg_exe=ffmpeg, ffprobe_exe=ffprobe)
+    try:
+        summary = make_recap_video(panels, out_path, cfg,
+                                   force=force, dry_run=dry_run)
+    except (VideoError, FileNotFoundError, ValueError) as exc:
+        if log.isEnabledFor(logging.DEBUG):
+            log.exception("guided video failed")
+        else:
+            typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    except Exception as exc:  # noqa: BLE001
+        log.exception("unexpected error in guided video")
+        typer.echo(f"ERROR: unexpected error: {exc} "
+                   "(see --log-level DEBUG for details)", err=True)
+        raise typer.Exit(1) from exc
+
+    mins, secs = divmod(summary["total_seconds"], 60)
+    typer.echo(f"panels: {summary['panels']}  spoken: {summary['spoken_panels']}"
+               f"  voice: {summary['voice']}  length: {int(mins)}m{secs:04.1f}s")
+    typer.echo(f"timeline: {summary['timeline']}")
+    typer.echo(f"captions: {summary['srt']} ({summary['srt_cues']} cues)")
+    if dry_run:
+        typer.echo("dry run: mp4 not rendered")
+    else:
+        typer.echo(f"video: {summary['video']}")
 
 
 if __name__ == "__main__":
