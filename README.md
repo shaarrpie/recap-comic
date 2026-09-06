@@ -87,6 +87,15 @@ panel_001.png + panel_002.png + … + panels.json
 Sobel edge density (low = no screentone/gradient). A gutter must be low on
 **both**. This prevents mis-firing on heavy screentone backgrounds.
 
+## Webapp
+
+```bash
+pip install -e .[web]
+uvicorn webapp.main:app --port 8000
+```
+
+Open `http://localhost:8000`. Set `GEMINI_API_KEY` in `.env` for AI features.
+
 ## Tests
 
 ```bash

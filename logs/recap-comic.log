@@ -1,12 +1,159 @@
-2026-09-06 21:36:29,942 INFO    [job=-] test: test info message
-2026-09-06 21:36:29,971 DEBUG   [job=-] test: test debug message
-2026-09-06 21:36:29,972 WARNING [job=-] test: test warning message
-2026-09-06 21:38:03,133 INFO    [job=job123] test: test info message
-2026-09-06 21:38:03,138 DEBUG   [job=job123] test: test debug message
-2026-09-06 21:38:03,139 WARNING [job=job123] test: test warning message
-2026-09-06 21:38:52,794 INFO    [job=job123] test: test info message
-2026-09-06 21:38:52,795 DEBUG   [job=job123] test: test debug message
-2026-09-06 21:38:52,795 WARNING [job=job123] test: test warning message
-2026-09-06 21:44:55,370 DEBUG   [job=-] webapp.main: config check gemini_configured=True
-2026-09-06 22:20:33,025 DEBUG   [job=-] webapp.main: config check gemini_configured=True
-2026-09-06 22:20:46,911 DEBUG   [job=-] webapp.main: config check gemini_configured=True
+2026-09-07 00:30:08,552 INFO    [job=-] webapp.main: config check gemini_configured=True model=gemini-2.5-flash
+2026-09-07 00:30:18,167 INFO    [job=-] webapp.main: job=cf1687f4e23d upload received filename=002_1.png bytes=517570
+2026-09-07 00:30:18,169 INFO    [job=-] webapp.main: job=cf1687f4e23d worker started kind=segment
+2026-09-07 00:30:18,203 INFO    [job=-] webapp.main: job=c41b835adc6e upload received filename=003_1.png bytes=550658
+2026-09-07 00:30:18,207 INFO    [job=-] webapp.main: job=c41b835adc6e worker started kind=segment
+2026-09-07 00:30:18,245 INFO    [job=-] webapp.main: job=759b8c3ba8fa upload received filename=004.png bytes=483204
+2026-09-07 00:30:18,246 INFO    [job=-] webapp.main: job=759b8c3ba8fa worker started kind=segment
+2026-09-07 00:30:18,279 INFO    [job=-] webapp.main: job=b7df53fb4e38 upload received filename=004_1.png bytes=483204
+2026-09-07 00:30:18,285 INFO    [job=-] webapp.main: job=b7df53fb4e38 worker started kind=segment
+2026-09-07 00:30:18,349 INFO    [job=-] webapp.main: job=594aee8dbcb7 upload received filename=005_1.png bytes=602592
+2026-09-07 00:30:18,356 INFO    [job=-] webapp.main: job=594aee8dbcb7 worker started kind=segment
+2026-09-07 00:30:18,391 INFO    [job=-] webapp.main: job=b2ab247fff56 upload received filename=006_1.png bytes=543636
+2026-09-07 00:30:18,392 INFO    [job=-] webapp.main: job=b2ab247fff56 worker started kind=segment
+2026-09-07 00:30:19,026 INFO    [job=-] guided_pipeline: run_guided start strip=strip.png backend=none model=None chunk_height=2000 overlap=200
+2026-09-07 00:30:19,026 INFO    [job=-] guided_pipeline: run_guided start strip=strip.png backend=none model=None chunk_height=2000 overlap=200
+2026-09-07 00:30:19,027 INFO    [job=-] guided_pipeline: run_guided start strip=strip.png backend=none model=None chunk_height=2000 overlap=200
+2026-09-07 00:30:19,027 INFO    [job=-] guided_pipeline: run_guided start strip=strip.png backend=none model=None chunk_height=2000 overlap=200
+2026-09-07 00:30:19,027 INFO    [job=-] guided_pipeline: run_guided start strip=strip.png backend=none model=None chunk_height=2000 overlap=200
+2026-09-07 00:30:19,027 INFO    [job=-] guided_pipeline: run_guided start strip=strip.png backend=none model=None chunk_height=2000 overlap=200
+2026-09-07 00:30:24,078 WARNING [job=-] guided_pipeline: using gutter-detector fallback (no AI narration)
+2026-09-07 00:30:24,184 INFO    [job=-] guided_pipeline: Phase-2 starting guided_cut
+2026-09-07 00:30:24,777 INFO    [job=-] guided_cutter: guided_cut start strip=strip.png size=800x8230 panels_in_plan=9
+2026-09-07 00:30:25,274 INFO    [job=-] guided_cutter: panel 001 split into 7 pieces (height=6395)
+2026-09-07 00:30:25,289 INFO    [job=-] guided_cutter: build_cuts result panels=12
+2026-09-07 00:30:26,676 WARNING [job=-] guided_cutter: cut panel 005 has empty/negative range [6395,6395]; skipping
+2026-09-07 00:30:26,679 WARNING [job=-] guided_cutter: cut panel 006 has empty/negative range [6395,6395]; skipping
+2026-09-07 00:30:26,681 WARNING [job=-] guided_cutter: cut panel 007 has empty/negative range [6395,6395]; skipping
+2026-09-07 00:30:26,990 INFO    [job=-] guided_cutter: guided_cut complete panels=9 sidecar=C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\panels.json
+2026-09-07 00:30:27,010 INFO    [job=-] guided_pipeline: Phase-2 complete panels=9
+2026-09-07 00:30:29,807 WARNING [job=-] guided_pipeline: using gutter-detector fallback (no AI narration)
+2026-09-07 00:30:29,829 INFO    [job=-] guided_pipeline: Phase-2 starting guided_cut
+2026-09-07 00:30:30,279 INFO    [job=-] guided_cutter: guided_cut start strip=strip.png size=800x9455 panels_in_plan=29
+2026-09-07 00:30:30,665 INFO    [job=-] guided_cutter: panel 003 split into 9 pieces (height=4804)
+2026-09-07 00:30:30,673 INFO    [job=-] guided_cutter: panel 021 split into 11 pieces (height=2766)
+2026-09-07 00:30:30,685 INFO    [job=-] guided_cutter: build_cuts result panels=43
+2026-09-07 00:30:30,693 WARNING [job=-] guided_cutter: cut panel 002 has empty/negative range [2,2]; skipping
+2026-09-07 00:30:32,097 WARNING [job=-] guided_pipeline: using gutter-detector fallback (no AI narration)
+2026-09-07 00:30:32,101 INFO    [job=-] guided_pipeline: Phase-2 starting guided_cut
+2026-09-07 00:30:32,383 INFO    [job=-] guided_cutter: guided_cut complete panels=42 sidecar=C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\c41b835adc6e\panels.json
+2026-09-07 00:30:32,396 INFO    [job=-] guided_pipeline: Phase-2 complete panels=42
+2026-09-07 00:30:32,539 INFO    [job=-] guided_cutter: guided_cut start strip=strip.png size=800x9590 panels_in_plan=42
+2026-09-07 00:30:32,584 WARNING [job=-] guided_pipeline: using gutter-detector fallback (no AI narration)
+2026-09-07 00:30:32,595 INFO    [job=-] guided_pipeline: Phase-2 starting guided_cut
+2026-09-07 00:30:32,839 WARNING [job=-] guided_pipeline: using gutter-detector fallback (no AI narration)
+2026-09-07 00:30:32,842 INFO    [job=-] guided_pipeline: Phase-2 starting guided_cut
+2026-09-07 00:30:32,861 INFO    [job=-] guided_cutter: panel 001 split into 6 pieces (height=1653)
+2026-09-07 00:30:32,865 INFO    [job=-] guided_cutter: panel 015 split into 11 pieces (height=2121)
+2026-09-07 00:30:32,867 INFO    [job=-] guided_cutter: panel 032 split into 11 pieces (height=2492)
+2026-09-07 00:30:32,869 INFO    [job=-] guided_cutter: build_cuts result panels=64
+2026-09-07 00:30:32,943 INFO    [job=-] guided_cutter: guided_cut start strip=strip.png size=800x9590 panels_in_plan=42
+2026-09-07 00:30:33,097 WARNING [job=-] guided_cutter: cut panel 010 has empty/negative range [2453,2453]; skipping
+2026-09-07 00:30:33,099 WARNING [job=-] guided_cutter: cut panel 011 has empty/negative range [2453,2453]; skipping
+2026-09-07 00:30:33,100 WARNING [job=-] guided_cutter: cut panel 012 has empty/negative range [2453,2453]; skipping
+2026-09-07 00:30:33,102 WARNING [job=-] guided_cutter: cut panel 013 has empty/negative range [2453,2453]; skipping
+2026-09-07 00:30:33,103 WARNING [job=-] guided_cutter: cut panel 014 has empty/negative range [2453,2453]; skipping
+2026-09-07 00:30:33,146 INFO    [job=-] guided_cutter: panel 001 split into 6 pieces (height=1653)
+2026-09-07 00:30:33,148 INFO    [job=-] guided_cutter: panel 015 split into 11 pieces (height=2121)
+2026-09-07 00:30:33,150 INFO    [job=-] guided_cutter: panel 032 split into 11 pieces (height=2492)
+2026-09-07 00:30:33,151 INFO    [job=-] guided_cutter: build_cuts result panels=64
+2026-09-07 00:30:33,230 WARNING [job=-] guided_pipeline: using gutter-detector fallback (no AI narration)
+2026-09-07 00:30:33,235 INFO    [job=-] guided_cutter: guided_cut start strip=strip.png size=800x9850 panels_in_plan=43
+2026-09-07 00:30:33,243 INFO    [job=-] guided_pipeline: Phase-2 starting guided_cut
+2026-09-07 00:30:33,394 INFO    [job=-] guided_cutter: panel 001 split into 8 pieces (height=4617)
+2026-09-07 00:30:33,395 WARNING [job=-] guided_cutter: cut panel 010 has empty/negative range [2453,2453]; skipping
+2026-09-07 00:30:33,397 WARNING [job=-] guided_cutter: cut panel 011 has empty/negative range [2453,2453]; skipping
+2026-09-07 00:30:33,397 INFO    [job=-] guided_cutter: panel 020 split into 11 pieces (height=2152)
+2026-09-07 00:30:33,397 WARNING [job=-] guided_cutter: cut panel 012 has empty/negative range [2453,2453]; skipping
+2026-09-07 00:30:33,398 WARNING [job=-] guided_cutter: cut panel 013 has empty/negative range [2453,2453]; skipping
+2026-09-07 00:30:33,399 WARNING [job=-] guided_cutter: cut panel 014 has empty/negative range [2453,2453]; skipping
+2026-09-07 00:30:33,400 INFO    [job=-] guided_cutter: panel 035 split into 11 pieces (height=1841)
+2026-09-07 00:30:33,402 INFO    [job=-] guided_cutter: build_cuts result panels=65
+2026-09-07 00:30:33,597 INFO    [job=-] guided_cutter: guided_cut start strip=strip.png size=800x10000 panels_in_plan=46
+2026-09-07 00:30:33,749 INFO    [job=-] guided_cutter: panel 009 split into 11 pieces (height=2282)
+2026-09-07 00:30:33,751 INFO    [job=-] guided_cutter: panel 024 split into 11 pieces (height=1815)
+2026-09-07 00:30:33,752 INFO    [job=-] guided_cutter: panel 039 split into 11 pieces (height=2859)
+2026-09-07 00:30:33,752 INFO    [job=-] guided_cutter: build_cuts result panels=73
+2026-09-07 00:30:33,815 INFO    [job=-] guided_cutter: guided_cut complete panels=59 sidecar=C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\759b8c3ba8fa\panels.json
+2026-09-07 00:30:33,823 INFO    [job=-] guided_pipeline: Phase-2 complete panels=59
+2026-09-07 00:30:34,043 INFO    [job=-] guided_cutter: guided_cut complete panels=59 sidecar=C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\b7df53fb4e38\panels.json
+2026-09-07 00:30:34,054 INFO    [job=-] guided_pipeline: Phase-2 complete panels=59
+2026-09-07 00:30:34,407 INFO    [job=-] guided_cutter: guided_cut complete panels=65 sidecar=C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\594aee8dbcb7\panels.json
+2026-09-07 00:30:34,418 INFO    [job=-] guided_pipeline: Phase-2 complete panels=65
+2026-09-07 00:30:34,696 INFO    [job=-] guided_cutter: guided_cut complete panels=73 sidecar=C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\b2ab247fff56\panels.json
+2026-09-07 00:30:34,706 INFO    [job=-] guided_pipeline: Phase-2 complete panels=73
+2026-09-07 00:30:45,654 INFO    [job=-] webapp.main: job=f4f0f839930e created kind=generate session=cf1687f4e23d order=default
+2026-09-07 00:30:45,656 INFO    [job=-] webapp.main: job=f4f0f839930e worker started kind=generate
+2026-09-07 00:30:45,660 INFO    [job=-] guided_pipeline: run_guided start strip=strip.png backend=none model=None chunk_height=2000 overlap=200
+2026-09-07 00:30:46,519 WARNING [job=-] guided_pipeline: using gutter-detector fallback (no AI narration)
+2026-09-07 00:30:46,524 INFO    [job=-] guided_pipeline: Phase-2 starting guided_cut
+2026-09-07 00:30:46,793 INFO    [job=-] guided_cutter: guided_cut start strip=strip.png size=800x8230 panels_in_plan=9
+2026-09-07 00:30:46,928 INFO    [job=-] guided_cutter: panel 001 split into 7 pieces (height=6395)
+2026-09-07 00:30:46,929 INFO    [job=-] guided_cutter: build_cuts result panels=12
+2026-09-07 00:30:46,932 INFO    [job=-] guided_cutter: panel file already exists, skipping: C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\panel_001aaaaa.png
+2026-09-07 00:30:46,936 INFO    [job=-] guided_cutter: panel file already exists, skipping: C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\panel_001aaaab.png
+2026-09-07 00:30:46,940 INFO    [job=-] guided_cutter: panel file already exists, skipping: C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\panel_001aaaba.png
+2026-09-07 00:30:46,946 INFO    [job=-] guided_cutter: panel file already exists, skipping: C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\panel_001aaabb.png
+2026-09-07 00:30:46,948 INFO    [job=-] guided_cutter: panel file already exists, skipping: C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\panel_001aab.png
+2026-09-07 00:30:46,949 INFO    [job=-] guided_cutter: panel file already exists, skipping: C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\panel_001ab.png
+2026-09-07 00:30:46,950 INFO    [job=-] guided_cutter: panel file already exists, skipping: C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\panel_001b.png
+2026-09-07 00:30:46,951 WARNING [job=-] guided_cutter: cut panel 005 has empty/negative range [6395,6395]; skipping
+2026-09-07 00:30:46,952 WARNING [job=-] guided_cutter: cut panel 006 has empty/negative range [6395,6395]; skipping
+2026-09-07 00:30:46,953 WARNING [job=-] guided_cutter: cut panel 007 has empty/negative range [6395,6395]; skipping
+2026-09-07 00:30:46,955 INFO    [job=-] guided_cutter: panel file already exists, skipping: C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\panel_008.png
+2026-09-07 00:30:46,957 INFO    [job=-] guided_cutter: panel file already exists, skipping: C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\panel_009.png
+2026-09-07 00:30:46,960 INFO    [job=-] guided_cutter: guided_cut complete panels=9 sidecar=C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\panels.json
+2026-09-07 00:30:46,970 INFO    [job=-] guided_pipeline: Phase-2 complete panels=9
+2026-09-07 00:30:46,974 INFO    [job=-] guided_pipeline: run_guided start strip=strip.png backend=gemini model=None chunk_height=2000 overlap=200
+2026-09-07 00:30:46,975 INFO    [job=-] guided_pipeline: backend=gemini model=gemini-2.5-flash
+2026-09-07 00:30:46,976 INFO    [job=-] guided_pipeline: Phase-1 starting analyze_strip
+2026-09-07 00:30:47,196 INFO    [job=-] strip_analyzer: strip loaded file=strip.png size=800x8230 backend=gemini model=gemini-2.5-flash chunks=5
+2026-09-07 00:30:50,324 INFO    [job=-] strip_analyzer: gemini request start model=gemini-2.5-flash image=800x2000 prompt_len=1765
+2026-09-07 00:30:50,381 INFO    [job=-] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-09-07 00:30:50,382 WARNING [job=-] google_genai.models: Direct use of automatic function calling (AFC) in Models.generate_content is not recommended. Instead, we recommend to use AFC in Chat.send_message. Similarly, direct use of AFC in Models.generate_content_stream is not recommended. Instead, we recommend to use AFC in Chat.send_message_stream.
+2026-09-07 00:31:10,703 WARNING [job=-] strip_analyzer: chunk analysis attempt 1/3 failed: Server disconnected without sending a response.
+2026-09-07 00:31:12,422 INFO    [job=-] strip_analyzer: gemini request start model=gemini-2.5-flash image=800x2000 prompt_len=1765
+2026-09-07 00:31:12,423 INFO    [job=-] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-09-07 00:31:32,129 INFO    [job=-] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-09-07 00:31:32,136 INFO    [job=-] strip_analyzer: gemini request complete duration=19.71s response_len=627 usage={'prompt_token_count': 771, 'candidates_token_count': 199, 'total_token_count': 2770}
+2026-09-07 00:31:32,140 INFO    [job=-] strip_analyzer: chunk 1/5 panels=1 new_chars=[]
+2026-09-07 00:31:32,941 INFO    [job=-] strip_analyzer: gemini request start model=gemini-2.5-flash image=800x2000 prompt_len=2282
+2026-09-07 00:31:32,943 INFO    [job=-] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-09-07 00:31:48,350 INFO    [job=-] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-09-07 00:31:48,355 INFO    [job=-] strip_analyzer: gemini request complete duration=15.41s response_len=817 usage={'prompt_token_count': 883, 'candidates_token_count': 211, 'total_token_count': 1927}
+2026-09-07 00:31:48,362 INFO    [job=-] strip_analyzer: chunk 2/5 panels=1 new_chars=[]
+2026-09-07 00:31:50,199 INFO    [job=-] strip_analyzer: gemini request start model=gemini-2.5-flash image=800x2000 prompt_len=2350
+2026-09-07 00:31:50,201 INFO    [job=-] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-09-07 00:32:20,515 INFO    [job=-] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-09-07 00:32:20,519 INFO    [job=-] strip_analyzer: gemini request complete duration=30.32s response_len=866 usage={'prompt_token_count': 890, 'candidates_token_count': 249, 'total_token_count': 2202}
+2026-09-07 00:32:20,522 INFO    [job=-] strip_analyzer: chunk 3/5 panels=1 new_chars=[]
+2026-09-07 00:32:21,411 INFO    [job=-] strip_analyzer: gemini request start model=gemini-2.5-flash image=800x2000 prompt_len=2350
+2026-09-07 00:32:21,412 INFO    [job=-] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-09-07 00:32:44,358 INFO    [job=-] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-09-07 00:32:44,361 INFO    [job=-] strip_analyzer: gemini request complete duration=22.95s response_len=1098 usage={'prompt_token_count': 897, 'candidates_token_count': 357, 'total_token_count': 4018}
+2026-09-07 00:32:44,365 INFO    [job=-] strip_analyzer: chunk 4/5 panels=3 new_chars=[]
+2026-09-07 00:32:45,229 INFO    [job=-] strip_analyzer: gemini request start model=gemini-2.5-flash image=800x1030 prompt_len=2421
+2026-09-07 00:32:45,230 INFO    [job=-] google_genai.models: AFC is enabled with max remote calls: 10.
+2026-09-07 00:32:57,981 INFO    [job=-] httpx: HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent "HTTP/1.1 200 OK"
+2026-09-07 00:32:57,983 INFO    [job=-] strip_analyzer: gemini request complete duration=12.75s response_len=543 usage={'prompt_token_count': 913, 'candidates_token_count': 183, 'total_token_count': 2671}
+2026-09-07 00:32:57,985 INFO    [job=-] strip_analyzer: chunk 5/5 panels=1 new_chars=[]
+2026-09-07 00:32:57,987 INFO    [job=-] strip_analyzer: stitched panels=7 characters=[]
+2026-09-07 00:32:58,000 INFO    [job=-] guided_pipeline: Phase-1 complete panels=7 provenance=ai cached=False
+2026-09-07 00:32:58,005 INFO    [job=-] guided_pipeline: Phase-2 starting guided_cut
+2026-09-07 00:32:58,006 INFO    [job=-] guided_cutter: plan/config changed since last run; clearing stale panels
+2026-09-07 00:32:58,285 INFO    [job=-] guided_cutter: guided_cut start strip=strip.png size=800x8230 panels_in_plan=7
+2026-09-07 00:32:58,406 INFO    [job=-] guided_cutter: panel 001 split into 7 pieces (height=6395)
+2026-09-07 00:32:58,407 INFO    [job=-] guided_cutter: build_cuts result panels=8
+2026-09-07 00:32:58,958 INFO    [job=-] guided_cutter: guided_cut complete panels=8 sidecar=C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\panels.json
+2026-09-07 00:32:58,969 INFO    [job=-] guided_pipeline: Phase-2 complete panels=8
+2026-09-07 00:33:10,389 INFO    [job=-] recap_video: make_recap_video start panels=8 tts=edge voice=en-US-AriaNeural
+2026-09-07 00:33:10,393 INFO    [job=-] recap_video: build_narration entries=8
+2026-09-07 00:33:28,413 WARNING [job=-] recap_video: TTS skipped 001aaaaa: edge-tts failed for entry 001aaaaa after 3 attempts (text saved for retry at C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\audio\001aaaaa.txt): 'ffprobe' not found on PATH; install FFmpeg (https://ffmpeg.org/download.html)
+2026-09-07 00:33:45,608 WARNING [job=-] recap_video: TTS skipped 001aaaab: edge-tts failed for entry 001aaaab after 3 attempts (text saved for retry at C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\audio\001aaaab.txt): 'ffprobe' not found on PATH; install FFmpeg (https://ffmpeg.org/download.html)
+2026-09-07 00:34:31,872 WARNING [job=-] recap_video: TTS skipped 001aaaba: edge-tts failed for entry 001aaaba after 3 attempts (text saved for retry at C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\audio\001aaaba.txt): 'ffprobe' not found on PATH; install FFmpeg (https://ffmpeg.org/download.html)
+2026-09-07 00:34:46,855 WARNING [job=-] recap_video: TTS skipped 001aaabb: edge-tts failed for entry 001aaabb after 3 attempts (text saved for retry at C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\audio\001aaabb.txt): 'ffprobe' not found on PATH; install FFmpeg (https://ffmpeg.org/download.html)
+2026-09-07 00:35:00,978 WARNING [job=-] recap_video: TTS skipped 001aab: edge-tts failed for entry 001aab after 3 attempts (text saved for retry at C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\audio\001aab.txt): 'ffprobe' not found on PATH; install FFmpeg (https://ffmpeg.org/download.html)
+2026-09-07 00:35:13,808 WARNING [job=-] recap_video: TTS skipped 001ab: edge-tts failed for entry 001ab after 3 attempts (text saved for retry at C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\audio\001ab.txt): 'ffprobe' not found on PATH; install FFmpeg (https://ffmpeg.org/download.html)
+2026-09-07 00:35:26,552 WARNING [job=-] recap_video: TTS skipped 001b: edge-tts failed for entry 001b after 3 attempts (text saved for retry at C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\audio\001b.txt): 'ffprobe' not found on PATH; install FFmpeg (https://ffmpeg.org/download.html)
+2026-09-07 00:35:38,223 WARNING [job=-] recap_video: TTS skipped 006: edge-tts failed for entry 006 after 3 attempts (text saved for retry at C:\Users\tiajungba\.cline\data\workspaces\chat\manhwa-recap\webapp_output\cf1687f4e23d\audio\006.txt): 'ffprobe' not found on PATH; install FFmpeg (https://ffmpeg.org/download.html)
+2026-09-07 00:35:38,236 INFO    [job=-] recap_video: build_timeline entries=8 total_duration=2043.91s

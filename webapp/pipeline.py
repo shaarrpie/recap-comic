@@ -5,7 +5,6 @@ timeout that converts a hang into an explicit failure."""
 from __future__ import annotations
 
 import asyncio
-import os
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -76,15 +75,14 @@ def _stage(job: Job, name: str, fn: Callable[[], Any]) -> Any:
 
 
 def _validate_config(job: Job) -> None:
-    key = os.environ.get("GEMINI_API_KEY", "")
-    configured = bool(key)
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    backend = job.config.get("backend", "none")
+    api_key = job.config.get("api_key", "")
     job.log("INFO",
-            f"Gemini configured={configured} model={model} "
-            f"key_source={'env' if configured else 'missing'}",
+            f"backend={backend} api_key={'set' if api_key else 'missing'}",
             "validate_config")
-    if job.kind == "generate" and not configured:
-        raise RuntimeError("GEMINI_API_KEY not set; add it to .env")
+    if backend != "none" and not api_key:
+        raise RuntimeError(
+            f"{backend.upper()}_API_KEY not set; enter it in the webapp settings")
 
 
 def _load_images(job: Job) -> Path:
@@ -104,9 +102,16 @@ def _segment_panels(job: Job) -> None:
     strip = session_dir / job.config["strip_file"]
     cache = BASE_DIR / ".cache" / "recap-comic"
     cache.mkdir(parents=True, exist_ok=True)
+    backend_name = job.config.get("backend", "none")
+    api_key = job.config.get("api_key", "")
+    model = job.config.get("model", "")
+    endpoint = job.config.get("endpoint", "")
+    cf_account_id = job.config.get("cf_account_id", "")
     _plan, artifact, _used = gp.run_guided(
-        strip, session_dir, backend_name="none",
-        cache_dir=cache, force=False, fallback=False)
+        strip, session_dir, backend_name=backend_name,
+        cache_dir=cache, force=False, fallback=True,
+        api_key=api_key or None, model=model or None,
+        base_url=endpoint or None, cf_account_id=cf_account_id or None)
     assert artifact is not None
     job.panels = [{
         "id": p.id, "panel_index": p.panel_index,
@@ -140,14 +145,19 @@ def _gemini_narration(job: Job) -> None:
     import guided_pipeline as gp
     strip = session_dir / job.config["strip_file"]
     cache = BASE_DIR / ".cache" / "recap-comic"
-    job.log("INFO", "Gemini request started", "gemini_narration")
+    backend_name = job.config.get("backend", "gemini")
+    api_key = job.config.get("api_key", "")
+    model = job.config.get("model", "")
+    endpoint = job.config.get("endpoint", "")
+    cf_account_id = job.config.get("cf_account_id", "")
+    job.log("INFO", f"{backend_name} narration started", "gemini_narration")
     plan, _artifact, _used = gp.run_guided(
-        strip, session_dir, backend_name="gemini",
+        strip, session_dir, backend_name=backend_name,
         cache_dir=cache, force=False, fallback=True,
-        chunk_height=job.config.get("chunk_height", 2000),
-        overlap=job.config.get("overlap", 200))
+        api_key=api_key or None, model=model or None,
+        base_url=endpoint or None, cf_account_id=cf_account_id or None)
     job.log("INFO",
-            f"Gemini request completed panels={len(plan.entries)} "
+            f"narration completed panels={len(plan.entries)} "
             f"model={plan.model}", "gemini_narration")
     by_index = {e.panel_index: e for e in plan.entries}
     for p in job.panels:

@@ -6,7 +6,6 @@ acceptance flow, without hitting the real API.
 """
 from __future__ import annotations
 
-import json
 from unittest.mock import MagicMock
 
 from test_guided import make_strip
@@ -35,14 +34,13 @@ def _post_side_effect(url: str, payload: dict, headers: dict) -> dict:
                 c.get("type") == "image_url" for c in content):
             return {
                 "success": True,
-                "result": {
-                    "response": json.dumps({
-                        "panels": [
-                            {"panel_index": 1, "y_start": 100, "y_end": 500,
-                             "narration": "ok", "dialogue": "", "panel_type": "single",
-                             "confidence": 0.9, "bubble_boxes": []}
-                        ]
-                    })
+                "response": {
+                    "panels": [
+                        {"panel_index": 1, "y_start": 100, "y_end": 500,
+                         "narration": "ok", "dialogue": "", "panel_type": "single",
+                         "confidence": 0.9, "bubble_boxes": []}
+                    ],
+                    "characters": [],
                 }
             }
     raise ValueError(f"unexpected payload shape: {payload}")
@@ -92,6 +90,9 @@ def test_cloudflare_llama_payload_shape() -> None:
     assert content[0]["type"] == "text"
     assert content[1]["type"] == "image_url"
     assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert "response_format" in real_payload
+    assert real_payload["response_format"]["type"] == "json_schema"
+    assert real_payload.get("temperature") == 0.1
 
 
 def test_cloudflare_skips_license_on_second_call() -> None:

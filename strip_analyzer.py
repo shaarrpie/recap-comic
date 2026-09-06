@@ -66,7 +66,53 @@ MAX_ATTEMPTS = 3
 # normalization convention in _chunk_prompt() / parse_entries_from_json()
 # changes in a way that would make a previously cached plan stale. The
 # value is folded into the Phase-1 cache key so old plans are not reused.
-PROMPT_VERSION = "2026-09-06a"
+PROMPT_VERSION = "2026-09-06b"
+
+_PANEL_RESPONSE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "panels": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "panel_index": {"type": "integer"},
+                    "y_start": {"type": "integer"},
+                    "y_end": {"type": "integer"},
+                    "narration": {"type": "string"},
+                    "dialogue": {"type": "string"},
+                    "panel_type": {
+                        "type": "string",
+                        "enum": [
+                            "single", "tall_scenic", "transition_gutter",
+                            "multi_sub_panel", "unknown",
+                        ],
+                    },
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "bubble_boxes": {
+                        "type": "array",
+                        "items": {
+                            "type": "array",
+                            "items": {"type": "integer"},
+                            "minItems": 4,
+                            "maxItems": 4,
+                        },
+                    },
+                },
+                "required": [
+                    "panel_index", "y_start", "y_end",
+                    "narration", "dialogue", "panel_type",
+                    "confidence", "bubble_boxes",
+                ],
+            },
+        },
+        "characters": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["panels", "characters"],
+}
 
 PANEL_TYPES = frozenset({
     "single", "tall_scenic", "transition_gutter", "multi_sub_panel", "unknown",
@@ -937,20 +983,39 @@ class CloudflareWorkersAIBackend:
                     }
                 ],
                 "max_tokens": 4096,
+                "temperature": 0.1,
+                "response_format": {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "panel_plan",
+                        "strict": True,
+                        "schema": _PANEL_RESPONSE_SCHEMA,
+                    },
+                },
             }
             data = self._post(url, payload, headers)
             if not data.get("success", False):
                 errors = data.get("errors", [data])
+                if any("JSON Mode couldn't be met" in str(e) for e in errors):
+                    raise VisionAnalysisError(
+                        "Cloudflare JSON Mode couldn't be met; the model "
+                        "could not comply with the requested schema")
                 raise VisionAnalysisError(
                     f"Cloudflare Workers AI error: {errors}")
-            result = data.get("result", {})
-            text = result.get("response", "")
-            if not isinstance(text, str):
-                log.debug("Cloudflare raw result: %s", result)
-                text = json.dumps(text) if isinstance(text, dict) else str(text)
+            if "response" in data and isinstance(data["response"], dict):
+                text = json.dumps(data["response"])
+                usage_src = data
+            else:
+                result = data.get("result", {})
+                text = (result.get("response", "")
+                        if isinstance(result, dict) else str(result))
+                if not isinstance(text, str):
+                    log.debug("Cloudflare raw result: %s", result)
+                    text = json.dumps(text) if isinstance(text, dict) else str(text)
+                usage_src = result
             try:
                 entries, new_chars = parse_entries_from_json(text, image.size[1])
-                self.last_usage = _capture_usage(result)
+                self.last_usage = _capture_usage(usage_src)
                 self.usage_log.append(self.last_usage or {})
                 return entries, new_chars
             except Exception as exc:  # noqa: BLE001 - retried then re-raised

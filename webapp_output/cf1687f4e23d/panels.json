@@ -1,0 +1,199 @@
+{
+  "source": "strip.png",
+  "width": 800,
+  "height": 8230,
+  "plan_hash": "093e1d27af088197208ec8621a38516e1fe0e2fcd71a23514ed0d5225674b724",
+  "config": {
+    "tolerance": 80,
+    "max_panel_height": 1600,
+    "variance_threshold": 6.0,
+    "edge_threshold": 30.0,
+    "bubble_pad": 8,
+    "use_edge_density": true,
+    "min_gutter_run": 4,
+    "blur_sigma": 0.5
+  },
+  "panels": [
+    {
+      "id": "001aaaaa",
+      "panel_index": 1,
+      "y_start": 0,
+      "y_end": 1593,
+      "narration": "A dark, desolate, and snowy environment is depicted, with large, jagged, dark rock formations or structures rising from the ground. Bright, glowing light effects, stylized as large Korean characters (ㅌ, ㄱ, ㄹ), emanate from the midground, adding an ethereal and mysterious atmosphere. Snowflakes are visibly falling across the scene. The desolate, snowy landscape continues, dominated by towering, dark, jagged rock formations. Bright, stylized glowing light effects, resembling Korean characters, emanate from these structures, casting an ethereal blue-white glow. Snowflakes visibly fall across the scene, enhancing the cold and mysterious atmosphere. In the lower portion of the image, a vast expanse of snow-covered ground stretches out, upon which numerous small, dark, silhouetted figures are gathered or moving, adding a sense of scale and a hint of presence in the otherwise barren environment. A vast, desolate, snow-covered landscape stretches across the entire scene. In the upper portion, a large, dark mass of silhouetted figures, resembling a marching crowd, traverses the snowy expanse. Jagged, dark rock formations, partially covered in snow, dominate the middle and lower sections. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures, casting a mysterious glow. Snowflakes are visibly falling, enhancing the cold atmosphere. A prominent title card, 'THE DEADLANDS', is overlaid in the center of the image. Jagged, dark rock formations, partially covered in snow, dominate the upper portion of the scene. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures. Snow falls lightly. A sudden, sharp sound echoes through the snowy environment.",
+      "dialogue": "TOWER, FLOOR 8. THE DEADLANDS ザッ",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001aaaaa.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "snap_distances": [
+        0,
+        5
+      ]
+    },
+    {
+      "id": "001aaaab",
+      "panel_index": 1,
+      "y_start": 1593,
+      "y_end": 3187,
+      "narration": "A dark, desolate, and snowy environment is depicted, with large, jagged, dark rock formations or structures rising from the ground. Bright, glowing light effects, stylized as large Korean characters (ㅌ, ㄱ, ㄹ), emanate from the midground, adding an ethereal and mysterious atmosphere. Snowflakes are visibly falling across the scene. The desolate, snowy landscape continues, dominated by towering, dark, jagged rock formations. Bright, stylized glowing light effects, resembling Korean characters, emanate from these structures, casting an ethereal blue-white glow. Snowflakes visibly fall across the scene, enhancing the cold and mysterious atmosphere. In the lower portion of the image, a vast expanse of snow-covered ground stretches out, upon which numerous small, dark, silhouetted figures are gathered or moving, adding a sense of scale and a hint of presence in the otherwise barren environment. A vast, desolate, snow-covered landscape stretches across the entire scene. In the upper portion, a large, dark mass of silhouetted figures, resembling a marching crowd, traverses the snowy expanse. Jagged, dark rock formations, partially covered in snow, dominate the middle and lower sections. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures, casting a mysterious glow. Snowflakes are visibly falling, enhancing the cold atmosphere. A prominent title card, 'THE DEADLANDS', is overlaid in the center of the image. Jagged, dark rock formations, partially covered in snow, dominate the upper portion of the scene. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures. Snow falls lightly. A sudden, sharp sound echoes through the snowy environment.",
+      "dialogue": "TOWER, FLOOR 8. THE DEADLANDS ザッ",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001aaaab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "snap_distances": [
+        0,
+        5
+      ]
+    },
+    {
+      "id": "001aaaba",
+      "panel_index": 1,
+      "y_start": 3187,
+      "y_end": 4780,
+      "narration": "A dark, desolate, and snowy environment is depicted, with large, jagged, dark rock formations or structures rising from the ground. Bright, glowing light effects, stylized as large Korean characters (ㅌ, ㄱ, ㄹ), emanate from the midground, adding an ethereal and mysterious atmosphere. Snowflakes are visibly falling across the scene. The desolate, snowy landscape continues, dominated by towering, dark, jagged rock formations. Bright, stylized glowing light effects, resembling Korean characters, emanate from these structures, casting an ethereal blue-white glow. Snowflakes visibly fall across the scene, enhancing the cold and mysterious atmosphere. In the lower portion of the image, a vast expanse of snow-covered ground stretches out, upon which numerous small, dark, silhouetted figures are gathered or moving, adding a sense of scale and a hint of presence in the otherwise barren environment. A vast, desolate, snow-covered landscape stretches across the entire scene. In the upper portion, a large, dark mass of silhouetted figures, resembling a marching crowd, traverses the snowy expanse. Jagged, dark rock formations, partially covered in snow, dominate the middle and lower sections. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures, casting a mysterious glow. Snowflakes are visibly falling, enhancing the cold atmosphere. A prominent title card, 'THE DEADLANDS', is overlaid in the center of the image. Jagged, dark rock formations, partially covered in snow, dominate the upper portion of the scene. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures. Snow falls lightly. A sudden, sharp sound echoes through the snowy environment.",
+      "dialogue": "TOWER, FLOOR 8. THE DEADLANDS ザッ",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001aaaba.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "snap_distances": [
+        0,
+        5
+      ]
+    },
+    {
+      "id": "001aaabb",
+      "panel_index": 1,
+      "y_start": 4780,
+      "y_end": 6374,
+      "narration": "A dark, desolate, and snowy environment is depicted, with large, jagged, dark rock formations or structures rising from the ground. Bright, glowing light effects, stylized as large Korean characters (ㅌ, ㄱ, ㄹ), emanate from the midground, adding an ethereal and mysterious atmosphere. Snowflakes are visibly falling across the scene. The desolate, snowy landscape continues, dominated by towering, dark, jagged rock formations. Bright, stylized glowing light effects, resembling Korean characters, emanate from these structures, casting an ethereal blue-white glow. Snowflakes visibly fall across the scene, enhancing the cold and mysterious atmosphere. In the lower portion of the image, a vast expanse of snow-covered ground stretches out, upon which numerous small, dark, silhouetted figures are gathered or moving, adding a sense of scale and a hint of presence in the otherwise barren environment. A vast, desolate, snow-covered landscape stretches across the entire scene. In the upper portion, a large, dark mass of silhouetted figures, resembling a marching crowd, traverses the snowy expanse. Jagged, dark rock formations, partially covered in snow, dominate the middle and lower sections. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures, casting a mysterious glow. Snowflakes are visibly falling, enhancing the cold atmosphere. A prominent title card, 'THE DEADLANDS', is overlaid in the center of the image. Jagged, dark rock formations, partially covered in snow, dominate the upper portion of the scene. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures. Snow falls lightly. A sudden, sharp sound echoes through the snowy environment.",
+      "dialogue": "TOWER, FLOOR 8. THE DEADLANDS ザッ",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001aaabb.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "snap_distances": [
+        0,
+        5
+      ]
+    },
+    {
+      "id": "001aab",
+      "panel_index": 1,
+      "y_start": 6374,
+      "y_end": 6377,
+      "narration": "A dark, desolate, and snowy environment is depicted, with large, jagged, dark rock formations or structures rising from the ground. Bright, glowing light effects, stylized as large Korean characters (ㅌ, ㄱ, ㄹ), emanate from the midground, adding an ethereal and mysterious atmosphere. Snowflakes are visibly falling across the scene. The desolate, snowy landscape continues, dominated by towering, dark, jagged rock formations. Bright, stylized glowing light effects, resembling Korean characters, emanate from these structures, casting an ethereal blue-white glow. Snowflakes visibly fall across the scene, enhancing the cold and mysterious atmosphere. In the lower portion of the image, a vast expanse of snow-covered ground stretches out, upon which numerous small, dark, silhouetted figures are gathered or moving, adding a sense of scale and a hint of presence in the otherwise barren environment. A vast, desolate, snow-covered landscape stretches across the entire scene. In the upper portion, a large, dark mass of silhouetted figures, resembling a marching crowd, traverses the snowy expanse. Jagged, dark rock formations, partially covered in snow, dominate the middle and lower sections. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures, casting a mysterious glow. Snowflakes are visibly falling, enhancing the cold atmosphere. A prominent title card, 'THE DEADLANDS', is overlaid in the center of the image. Jagged, dark rock formations, partially covered in snow, dominate the upper portion of the scene. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures. Snow falls lightly. A sudden, sharp sound echoes through the snowy environment.",
+      "dialogue": "TOWER, FLOOR 8. THE DEADLANDS ザッ",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001aab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "snap_distances": [
+        0,
+        5
+      ]
+    },
+    {
+      "id": "001ab",
+      "panel_index": 1,
+      "y_start": 6377,
+      "y_end": 6383,
+      "narration": "A dark, desolate, and snowy environment is depicted, with large, jagged, dark rock formations or structures rising from the ground. Bright, glowing light effects, stylized as large Korean characters (ㅌ, ㄱ, ㄹ), emanate from the midground, adding an ethereal and mysterious atmosphere. Snowflakes are visibly falling across the scene. The desolate, snowy landscape continues, dominated by towering, dark, jagged rock formations. Bright, stylized glowing light effects, resembling Korean characters, emanate from these structures, casting an ethereal blue-white glow. Snowflakes visibly fall across the scene, enhancing the cold and mysterious atmosphere. In the lower portion of the image, a vast expanse of snow-covered ground stretches out, upon which numerous small, dark, silhouetted figures are gathered or moving, adding a sense of scale and a hint of presence in the otherwise barren environment. A vast, desolate, snow-covered landscape stretches across the entire scene. In the upper portion, a large, dark mass of silhouetted figures, resembling a marching crowd, traverses the snowy expanse. Jagged, dark rock formations, partially covered in snow, dominate the middle and lower sections. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures, casting a mysterious glow. Snowflakes are visibly falling, enhancing the cold atmosphere. A prominent title card, 'THE DEADLANDS', is overlaid in the center of the image. Jagged, dark rock formations, partially covered in snow, dominate the upper portion of the scene. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures. Snow falls lightly. A sudden, sharp sound echoes through the snowy environment.",
+      "dialogue": "TOWER, FLOOR 8. THE DEADLANDS ザッ",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001ab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "snap_distances": [
+        0,
+        5
+      ]
+    },
+    {
+      "id": "001b",
+      "panel_index": 1,
+      "y_start": 6383,
+      "y_end": 6395,
+      "narration": "A dark, desolate, and snowy environment is depicted, with large, jagged, dark rock formations or structures rising from the ground. Bright, glowing light effects, stylized as large Korean characters (ㅌ, ㄱ, ㄹ), emanate from the midground, adding an ethereal and mysterious atmosphere. Snowflakes are visibly falling across the scene. The desolate, snowy landscape continues, dominated by towering, dark, jagged rock formations. Bright, stylized glowing light effects, resembling Korean characters, emanate from these structures, casting an ethereal blue-white glow. Snowflakes visibly fall across the scene, enhancing the cold and mysterious atmosphere. In the lower portion of the image, a vast expanse of snow-covered ground stretches out, upon which numerous small, dark, silhouetted figures are gathered or moving, adding a sense of scale and a hint of presence in the otherwise barren environment. A vast, desolate, snow-covered landscape stretches across the entire scene. In the upper portion, a large, dark mass of silhouetted figures, resembling a marching crowd, traverses the snowy expanse. Jagged, dark rock formations, partially covered in snow, dominate the middle and lower sections. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures, casting a mysterious glow. Snowflakes are visibly falling, enhancing the cold atmosphere. A prominent title card, 'THE DEADLANDS', is overlaid in the center of the image. Jagged, dark rock formations, partially covered in snow, dominate the upper portion of the scene. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures. Snow falls lightly. A sudden, sharp sound echoes through the snowy environment.",
+      "dialogue": "TOWER, FLOOR 8. THE DEADLANDS ザッ",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001b.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ],
+      "snap_distances": [
+        0,
+        5
+      ]
+    },
+    {
+      "id": "006",
+      "panel_index": 6,
+      "y_start": 6395,
+      "y_end": 7972,
+      "narration": "The lower bodies and legs of several figures, clad in dark, possibly armored, attire, are visible as they move across the snowy ground, with snow continuing to fall. The lower bodies and legs of several figures, clad in dark, possibly armored, attire, are visible as they move across the snowy ground, with snow continuing to fall. A large, sharp-edged sound effect, rendered in dark teal, dominates the right side of the panel.",
+      "dialogue": "ザッ",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_006.png",
+      "split_of": null,
+      "merged_with": [
+        6,
+        7
+      ],
+      "snap_distances": [
+        5,
+        0
+      ]
+    }
+  ]
+}

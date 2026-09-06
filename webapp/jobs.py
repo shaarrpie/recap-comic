@@ -73,19 +73,28 @@ class Job:
                 self.log("ERROR", ln)
 
     def to_dict(self, include_logs: bool = False) -> dict[str, Any]:
-        d = {
+        def _safe(v: Any) -> Any:
+            if hasattr(v, "item"):
+                return v.item()
+            if isinstance(v, dict):
+                return {k: _safe(val) for k, val in v.items()}
+            if isinstance(v, list):
+                return [_safe(x) for x in v]
+            return v
+
+        d: dict[str, Any] = {
             "job_id": self.id,
             "kind": self.kind,
             "status": self.status.value,
             "stage": self.stage,
-            "progress": self.progress,
+            "progress": int(self.progress) if hasattr(self, "progress") else 0,
             "error": self.error,
-            "panels": self.panels,
-            "outputs": self.outputs,
-            "created_at": self.created_at,
-            "updated_at": self.updated_at,
-            "started_at": self.started_at,
-            "finished_at": self.finished_at,
+            "panels": _safe(self.panels),
+            "outputs": _safe(self.outputs),
+            "created_at": float(self.created_at) if self.created_at else None,
+            "updated_at": float(self.updated_at) if self.updated_at else None,
+            "started_at": float(self.started_at) if self.started_at else None,
+            "finished_at": float(self.finished_at) if self.finished_at else None,
         }
         if include_logs:
             d["logs"] = list(self._logs)

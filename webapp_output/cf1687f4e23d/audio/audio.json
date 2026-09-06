@@ -1,0 +1,13 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "generator": "recap_video.1",
+    "config_hash": "42ee8185dd18cfe2b81699d2f11aa708be8d064afc0779ce46a5509e1db7118f",
+    "input_hashes": {
+      "narration.json": "51469364d1cdd47969a84ba8ec6dc48927361e714fee0250888a1d833e8ebb0d",
+      "tts_input": "e26a9d7f6aae8db93867454d4c3a889f8f613db1cde5a2b4c4a4e3410dee21c7"
+    }
+  },
+  "voice": "en-US-AriaNeural",
+  "entries": []
+}

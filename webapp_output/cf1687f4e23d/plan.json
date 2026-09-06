@@ -1,0 +1,103 @@
+{
+  "source": "strip.png",
+  "width": 800,
+  "height": 8230,
+  "model": "gemini",
+  "config_hash": "357170af5833508c7eb38a51be6d4ac81914e40b59c5186070163b492eba196b",
+  "input_hash": "3361e21ea32e60fb05aa57f36405634232891f4187f848be129027e22035e682",
+  "provenance": "ai",
+  "characters": [],
+  "entries": [
+    {
+      "panel_index": 1,
+      "y_start": 0,
+      "y_end": 2000,
+      "narration": "A dark, desolate, and snowy environment is depicted, with large, jagged, dark rock formations or structures rising from the ground. Bright, glowing light effects, stylized as large Korean characters (ㅌ, ㄱ, ㄹ), emanate from the midground, adding an ethereal and mysterious atmosphere. Snowflakes are visibly falling across the scene.",
+      "dialogue": "TOWER, FLOOR 8.",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "bubble_boxes": [
+        {
+          "x": 380,
+          "y": 230,
+          "w": 1240,
+          "h": 340
+        }
+      ]
+    },
+    {
+      "panel_index": 2,
+      "y_start": 1800,
+      "y_end": 3800,
+      "narration": "The desolate, snowy landscape continues, dominated by towering, dark, jagged rock formations. Bright, stylized glowing light effects, resembling Korean characters, emanate from these structures, casting an ethereal blue-white glow. Snowflakes visibly fall across the scene, enhancing the cold and mysterious atmosphere. In the lower portion of the image, a vast expanse of snow-covered ground stretches out, upon which numerous small, dark, silhouetted figures are gathered or moving, adding a sense of scale and a hint of presence in the otherwise barren environment.",
+      "dialogue": "",
+      "panel_type": "tall_scenic",
+      "confidence": 0.98,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 3,
+      "y_start": 3600,
+      "y_end": 5600,
+      "narration": "A vast, desolate, snow-covered landscape stretches across the entire scene. In the upper portion, a large, dark mass of silhouetted figures, resembling a marching crowd, traverses the snowy expanse. Jagged, dark rock formations, partially covered in snow, dominate the middle and lower sections. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures, casting a mysterious glow. Snowflakes are visibly falling, enhancing the cold atmosphere. A prominent title card, 'THE DEADLANDS', is overlaid in the center of the image.",
+      "dialogue": "THE DEADLANDS",
+      "panel_type": "tall_scenic",
+      "confidence": 0.98,
+      "bubble_boxes": [
+        {
+          "x": 560,
+          "y": 640,
+          "w": 880,
+          "h": 320
+        }
+      ]
+    },
+    {
+      "panel_index": 4,
+      "y_start": 5400,
+      "y_end": 6000,
+      "narration": "Jagged, dark rock formations, partially covered in snow, dominate the upper portion of the scene. Ethereal blue-white glowing lines and a distinct circular light emanate from within these structures. Snow falls lightly.",
+      "dialogue": "",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 5,
+      "y_start": 6000,
+      "y_end": 6400,
+      "narration": "A sudden, sharp sound echoes through the snowy environment.",
+      "dialogue": "ザッ",
+      "panel_type": "single",
+      "confidence": 0.9,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 6,
+      "y_start": 6400,
+      "y_end": 7400,
+      "narration": "The lower bodies and legs of several figures, clad in dark, possibly armored, attire, are visible as they move across the snowy ground, with snow continuing to fall.",
+      "dialogue": "",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 7,
+      "y_start": 7200,
+      "y_end": 7972,
+      "narration": "The lower bodies and legs of several figures, clad in dark, possibly armored, attire, are visible as they move across the snowy ground, with snow continuing to fall. A large, sharp-edged sound effect, rendered in dark teal, dominates the right side of the panel.",
+      "dialogue": "ザッ",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "bubble_boxes": [
+        {
+          "x": 464,
+          "y": 206,
+          "w": 464,
+          "h": 515
+        }
+      ]
+    }
+  ]
+}
