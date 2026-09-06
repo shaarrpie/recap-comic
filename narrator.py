@@ -12,10 +12,13 @@ Offline: no API call, no model load. Pure string joining.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import strip_analyzer as sa
 from guided_cutter import CutArtifact
+
+log = logging.getLogger(__name__)
 
 
 def _flow_join(parts: list[str]) -> str:
@@ -115,6 +118,8 @@ def narrate_plan(plan_path: Path, out_path: Path, *,
                       "narration": p.narration, "dialogue": p.dialogue,
                       "image_file": p.image_file}
                      for p in sorted(artifact.panels, key=lambda p: p.y_start)]
+            log.info("narrate_plan from CutArtifact panels=%d style=%s",
+                     len(artifact.panels), style)
         elif "bbox" in first:
             from adapters.schemas import PanelsArtifact
             artifact = PanelsArtifact.model_validate_json(raw)
@@ -122,6 +127,8 @@ def narrate_plan(plan_path: Path, out_path: Path, *,
             index = [{"panel_id": p.id, "panel_index": p.index,
                       "narration": "", "dialogue": ""}
                      for p in artifact.panels]
+            log.info("narrate_plan from PanelsArtifact panels=%d style=%s",
+                     len(artifact.panels), style)
         else:
             raise ValueError(f"unrecognised panels format in {plan_path}")
     else:
@@ -130,8 +137,12 @@ def narrate_plan(plan_path: Path, out_path: Path, *,
         index = [{"panel_id": e.panel_index,
                   "narration": e.narration, "dialogue": e.dialogue}
                  for e in sorted(plan.entries, key=lambda e: e.panel_index)]
+        log.info("narrate_plan from PanelPlan entries=%d style=%s",
+                 len(plan.entries), style)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(script, encoding="utf-8")
     index_path = out_path.with_suffix(".index.json")
     index_path.write_text(json.dumps(index, indent=2), encoding="utf-8")
+    log.info("narrate_plan wrote script=%d chars index=%d entries",
+             len(script), len(index))
     return script

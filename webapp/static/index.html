@@ -53,8 +53,10 @@
     }
     .panel {
       background: #fff; border: 1px solid #e0e0e0; border-radius: 10px;
-      overflow: hidden;
+      overflow: hidden; cursor: grab; transition: transform 0.15s, box-shadow 0.15s;
     }
+    .panel.dragging { opacity: 0.4; transform: scale(0.95); }
+    .panel.drag-over { border-color: #4f46e5; box-shadow: 0 0 0 3px #eef2ff; }
     .panel img {
       width: 100%; height: 260px; object-fit: cover; display: block;
       background: #e5e5e5;
@@ -67,13 +69,17 @@
     }
     .panel .meta .conf { color: #666; font-size: 0.75rem; }
     .panel .meta .conf.low { color: #b45309; background: #fef3c7; padding: 2px 6px; border-radius: 4px; }
-    .actions { margin-top: 12px; }
-    .actions a {
+    .panel .meta .order-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      background: #4f46e5; color: #fff; font-size: 0.75rem; margin: 2px 4px 2px 0;
+    }
+    .actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .actions a, .actions button.secondary {
       display: inline-block; padding: 8px 12px; border-radius: 6px;
       background: #f0f0f0; color: #1a1a1a; text-decoration: none;
-      font-size: 0.85rem; margin-right: 8px;
+      font-size: 0.85rem; margin-right: 8px; border: 1px solid #d0d0d0;
     }
-    .actions a:hover { background: #e0e0e0; }
+    .actions a:hover, .actions button.secondary:hover { background: #e0e0e0; }
     .empty { color: #888; font-style: italic; }
     .settings-grid {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -88,6 +94,24 @@
     }
     .api-keys summary { cursor: pointer; font-weight: 600; }
     .api-keys .row { margin-top: 8px; }
+    .gemini-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 6px; font-size: 0.8rem;
+      background: #ecfdf5; color: #064e3b; border: 1px solid #10b981;
+    }
+    .gemini-badge.missing {
+      background: #fef3c7; color: #92400e; border-color: #f59e0b;
+    }
+    .strip-preview {
+      margin-top: 16px; max-width: 300px; border-radius: 8px;
+      border: 1px solid #e0e0e0; overflow: hidden;
+    }
+    .strip-preview img { width: 100%; display: block; }
+    .strip-preview .meta { padding: 8px 12px; font-size: 0.8rem; background: #f8f8f8; }
+    .reorder-tools {
+      margin-top: 12px; padding: 12px; border-radius: 8px;
+      background: #eef2ff; border: 1px solid #c7d2fe;
+    }
     .hidden { display: none; }
   </style>
 </head>
@@ -100,16 +124,16 @@
       <input type="file" id="file" accept="image/png,image/jpeg,image/webp" multiple>
       <div id="drop-label">Drop tall strip images here, or click to choose<br><small>(multiple files supported)</small></div>
     </div>
+    <div id="strip-preview-container"></div>
     <div class="settings-grid">
       <div class="field">
-        <label>Backend</label>
+        <label>Backend <span id="gemini-badge"></span></label>
         <select id="backend">
-          <option value="cloudflare">cloudflare (free)</option>
           <option value="gemini">gemini</option>
           <option value="openai">openai</option>
           <option value="anthropic">anthropic</option>
           <option value="ollama">ollama</option>
-          <option value="zai">zai (chat.z.ai cookies)</option>
+          <option value="cloudflare">cloudflare (free)</option>
           <option value="none">none (offline)</option>
         </select>
       </div>
@@ -139,7 +163,7 @@
       <div class="settings-grid">
         <div class="field">
           <label>API Key</label>
-          <input type="text" id="api-key" placeholder="optional for some backends">
+          <input type="password" id="api-key" placeholder="optional for some backends">
         </div>
         <div class="field">
           <label>Endpoint / Base URL</label>
@@ -148,10 +172,6 @@
         <div class="field">
           <label>Cloudflare Account ID</label>
           <input type="text" id="cf-account-id" placeholder="required for cloudflare backend">
-        </div>
-        <div class="field">
-          <label>Z AI Cookies</label>
-          <input type="text" id="key-zai-cookies" placeholder="cookie string for chat.z.ai (zai backend)">
         </div>
       </div>
       <div class="row" style="margin-top:8px">
@@ -174,6 +194,17 @@
     <h2>Result</h2>
     <div id="summary"></div>
     <div class="actions" id="actions"></div>
+    <div class="reorder-tools hidden" id="reorder-tools">
+      <b>Panel order</b>
+      <p style="margin:4px 0 8px; font-size:0.9rem; color:#555;">
+        Drag panels to reorder them. The narration and final video will follow this sequence.
+      </p>
+      <div class="row">
+        <button id="apply-order" type="button">Apply order & regenerate narration</button>
+        <button id="reset-order" type="button" class="secondary">Reset to detected order</button>
+      </div>
+      <p id="reorder-status" class="empty" style="margin-top:8px; font-size:0.85rem;"></p>
+    </div>
     <div class="gallery" id="gallery"></div>
   </div>
 
@@ -189,8 +220,15 @@
     var galleryEl = $('gallery');
     var stepper = $('stepper');
     var fileCountEl = $('file-count');
+    var reorderTools = $('reorder-tools');
+    var reorderStatus = $('reorder-status');
+    var stripPreviewContainer = $('strip-preview-container');
+    var geminiBadge = $('gemini-badge');
 
-    var selectedFiles = null;
+    var currentJobId = null;
+    var currentPanels = [];
+    var detectedOrder = [];
+    var dragSrcIndex = null;
 
     function setStep(step) {
       stepper.querySelectorAll('.step').forEach(function(el) {
@@ -223,7 +261,7 @@
 
     $('save-keys').addEventListener('click', function() {
       var keys = {};
-      ['api-key','endpoint','model','cf-account-id','zai-cookies'].forEach(function(k) {
+      ['api-key','endpoint','model','cf-account-id'].forEach(function(k) {
         var input = $('key-' + k);
         if (input && input.value.trim()) keys[k] = input.value.trim();
       });
@@ -233,7 +271,7 @@
     });
     $('clear-keys').addEventListener('click', function() {
       localStorage.removeItem('recap-comic-keys');
-      ['api-key','endpoint','model','cf-account-id','zai-cookies'].forEach(function(k) {
+      ['api-key','endpoint','model','cf-account-id'].forEach(function(k) {
         var input = $('key-' + k);
         if (input) input.value = '';
       });
@@ -246,9 +284,27 @@
         if (keys['endpoint']) $('key-endpoint').value = keys['endpoint'];
         if (keys['model']) $('key-model').value = keys['model'];
         if (keys['cf-account-id']) $('key-cf-account-id').value = keys['cf-account-id'];
-        if (keys['zai-cookies']) $('key-zai-cookies').value = keys['zai-cookies'];
       } catch(e) {}
     })();
+
+    async function loadConfig() {
+      try {
+        var res = await fetch('/api/config');
+        if (!res.ok) return;
+        var cfg = await res.json();
+        if (cfg.gemini_configured) {
+          geminiBadge.className = 'gemini-badge';
+          geminiBadge.textContent = 'Gemini configured';
+        } else {
+          geminiBadge.className = 'gemini-badge missing';
+          geminiBadge.textContent = 'Gemini not configured';
+        }
+        if (cfg.default_backend && !$('backend').value) {
+          $('backend').value = cfg.default_backend;
+        }
+      } catch(e) {}
+    }
+    loadConfig();
 
     async function uploadOne(file, backend) {
       var form = new FormData();
@@ -261,7 +317,6 @@
       form.append('endpoint', $('key-endpoint').value);
       form.append('model', $('key-model').value);
       form.append('cf_account_id', $('key-cf-account-id').value);
-      form.append('zai_cookies', $('key-zai-cookies').value);
       var res = await fetch('/api/upload', { method: 'POST', body: form });
       if (!res.ok) throw new Error((await res.text()) || 'upload failed');
       return await res.json();
@@ -277,6 +332,8 @@
       resultCard.style.display = 'none';
       galleryEl.innerHTML = '';
       actionsEl.innerHTML = '';
+      reorderTools.classList.add('hidden');
+      stripPreviewContainer.innerHTML = '';
       statusEl.className = 'status running';
       statusEl.textContent = 'Uploading...';
       setStep('upload');
@@ -292,6 +349,13 @@
         setStep('phase1');
         statusEl.textContent = 'Processing...';
         var first = jobs[0];
+        currentJobId = first.job_id;
+        if (first.strip_file) {
+          stripPreviewContainer.innerHTML = '<div class="strip-preview">' +
+            '<img src="/api/download/' + first.job_id + '/' + first.strip_file + '" alt="uploaded strip">' +
+            '<div class="meta">Original: ' + escapeHtml((selectedFiles[0] && selectedFiles[0].name) || 'strip') + '</div>' +
+            '</div>';
+        }
         poll(first.job_id, jobs.map(function(j) { return j.job_id; }));
       } catch (err) {
         statusEl.className = 'status error';
@@ -341,23 +405,97 @@
       if (data.narration_path) links.push('<a href="/api/download/' + job_id + '/' + data.narration_path.split('/').pop() + '" download>narration.txt</a>');
       actionsEl.innerHTML = links.join('') || '<span class="empty">no downloads yet</span>';
 
+      currentPanels = data.panels || [];
+      detectedOrder = currentPanels.map(function(p) { return p.id; });
+      renderGallery();
+      reorderTools.classList.remove('hidden');
+    }
+
+    function renderGallery() {
       galleryEl.innerHTML = '';
-      var panels = data.panels || [];
-      for (var i = 0; i < panels.length; i++) {
-        var p = panels[i];
+      for (var i = 0; i < currentPanels.length; i++) {
+        var p = currentPanels[i];
         var el = document.createElement('div');
         el.className = 'panel';
+        el.draggable = true;
+        el.dataset.index = i;
+        el.dataset.id = p.id;
         var confPct = (p.confidence * 100).toFixed(0);
         var confClass = p.confidence < 0.5 ? 'low' : '';
-        el.innerHTML = '<img src="/api/download/' + job_id + '/' + p.image_file + '" alt="panel ' + p.id + '" loading="lazy">' +
-          '<div class="meta"><b>#' + p.id + '</b>' +
+        el.innerHTML = '<img src="/api/download/' + currentJobId + '/' + p.image_file + '" alt="panel ' + p.id + '" loading="lazy">' +
+          '<div class="meta"><b>#' + p.id + ' <span style="font-weight:normal;color:#666">#</span>' + (i + 1) + '</b>' +
+          '<span class="order-badge">Order ' + (i + 1) + '</span>' +
           '<span class="tag">' + p.panel_type + '</span>' +
           '<span class="tag conf ' + confClass + '">' + confPct + '%</span>' +
           '<div style="margin-top:6px; color:#444">' + escapeHtml(p.narration || p.dialogue || '(no text)') + '</div>' +
           '</div>';
+
+        el.addEventListener('dragstart', function(e) {
+          dragSrcIndex = i;
+          el.classList.add('dragging');
+          e.dataTransfer.effectAllowed = 'move';
+        });
+        el.addEventListener('dragend', function() {
+          el.classList.remove('dragging');
+          galleryEl.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('drag-over'); });
+        });
+        el.addEventListener('dragover', function(e) {
+          e.preventDefault();
+          el.classList.add('drag-over');
+        });
+        el.addEventListener('dragleave', function() {
+          el.classList.remove('drag-over');
+        });
+        el.addEventListener('drop', function(e) {
+          e.preventDefault();
+          el.classList.remove('drag-over');
+          if (dragSrcIndex === null || dragSrcIndex === i) return;
+          var item = currentPanels.splice(dragSrcIndex, 1)[0];
+          currentPanels.splice(i, 0, item);
+          dragSrcIndex = null;
+          renderGallery();
+        });
+
         galleryEl.appendChild(el);
       }
     }
+
+    $('apply-order').addEventListener('click', async function() {
+      if (!currentJobId || !currentPanels.length) return;
+      var order = currentPanels.map(function(p) { return p.id; });
+      reorderStatus.textContent = 'Applying order...';
+      reorderStatus.className = '';
+      try {
+        var res = await fetch('/api/reorder/' + currentJobId, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ order: order })
+        });
+        if (!res.ok) throw new Error((await res.text()) || 'reorder failed');
+        var data = await res.json();
+        if (data.ok) {
+          currentPanels = data.panels;
+          renderGallery();
+          reorderStatus.textContent = 'Order applied. Narration regenerated.';
+          reorderStatus.className = 'status done';
+        } else {
+          throw new Error(data.error || 'unknown error');
+        }
+      } catch (err) {
+        reorderStatus.textContent = 'Failed: ' + err.message;
+        reorderStatus.className = 'status error';
+      }
+    });
+
+    $('reset-order').addEventListener('click', function() {
+      if (!detectedOrder.length) return;
+      var byId = {};
+      currentPanels.forEach(function(p) { byId[p.id] = p; });
+      currentPanels = detectedOrder.map(function(id) { return byId[id]; }).filter(Boolean);
+      renderGallery();
+      reorderStatus.textContent = 'Reset to detected order.';
+      reorderStatus.className = '';
+    });
 
     function escapeHtml(s) {
       return s.replace(/[&<>"']/g, function(c) {

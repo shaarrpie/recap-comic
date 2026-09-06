@@ -1,0 +1,10 @@
+2026-09-06 21:36:29,942 INFO    [job=-] test: test info message
+2026-09-06 21:36:29,971 DEBUG   [job=-] test: test debug message
+2026-09-06 21:36:29,972 WARNING [job=-] test: test warning message
+2026-09-06 21:38:03,133 INFO    [job=job123] test: test info message
+2026-09-06 21:38:03,138 DEBUG   [job=job123] test: test debug message
+2026-09-06 21:38:03,139 WARNING [job=job123] test: test warning message
+2026-09-06 21:38:52,794 INFO    [job=job123] test: test info message
+2026-09-06 21:38:52,795 DEBUG   [job=job123] test: test debug message
+2026-09-06 21:38:52,795 WARNING [job=job123] test: test warning message
+2026-09-06 21:44:55,370 DEBUG   [job=-] webapp.main: config check gemini_configured=True

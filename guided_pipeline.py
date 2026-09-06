@@ -59,27 +59,31 @@ VisionAnalysisError = sa.VisionAnalysisError
 
 def build_backend(name: str, api_key: str | None = None,
                   model: str | None = None, base_url: str | None = None,
-                  timeout: int = 120, cf_account_id: str | None = None,
-                  zai_cookies: str | None = None
+                  timeout: int = 120, cf_account_id: str | None = None
                   ) -> sa.VisionBackend | None:
     """Backend factory. "none" means no AI call at all (offline fallback).
     "local" uses Ollama's POST /api/generate (llava/qwen2-vl)."""
     name = name.lower()
     if name == "none":
+        log.debug("backend=none offline fallback")
         return None
     if name == "fixture":
+        log.debug("backend=fixture offline test backend")
         return sa.FixtureVisionBackend()
     if name == "gemini":
         kw = {"api_key": api_key}
         if model:
             kw["model"] = model
-        return sa.GeminiVisionBackend(**kw)
+        backend = sa.GeminiVisionBackend(**kw)
+        log.info("backend=gemini model=%s", backend.model)
+        return backend
     if name == "openai":
         if not model:
             raise ValueError("--model is required for the openai backend")
         kw = {"model": model, "api_key": api_key}
         if base_url:
             kw["base_url"] = base_url
+        log.info("backend=openai model=%s", model)
         return sa.OpenAIVisionBackend(**kw)
     if name == "anthropic":
         if not model:
@@ -87,11 +91,13 @@ def build_backend(name: str, api_key: str | None = None,
         kw = {"model": model, "api_key": api_key}
         if base_url:
             kw["base_url"] = base_url
+        log.info("backend=anthropic model=%s", model)
         return sa.AnthropicVisionBackend(**kw)
     if name in ("local", "ollama"):
         kw = {"model": model or "llava", "timeout": timeout}
         if base_url:
             kw["base_url"] = base_url
+        log.info("backend=ollama model=%s", kw["model"])
         return sa.OllamaVisionBackend(**kw)
     if name == "cloudflare":
         kw = {"api_key": api_key}
@@ -99,21 +105,11 @@ def build_backend(name: str, api_key: str | None = None,
             kw["model"] = model
         if cf_account_id:
             kw["account_id"] = cf_account_id
+        log.info("backend=cloudflare model=%s", kw.get("model", sa.CloudflareWorkersAIBackend.DEFAULT_MODEL))
         return sa.CloudflareWorkersAIBackend(**kw)
-    if name == "zai":
-        kw: dict[str, object] = {}
-        if model:
-            kw["model"] = model
-        if base_url:
-            kw["base_url"] = base_url
-        if api_key:
-            kw["api_key"] = api_key
-        if zai_cookies:
-            kw["cookies"] = zai_cookies
-        return sa.ZaiVisionBackend(**kw)
     raise ValueError(
         f"unknown backend {name!r}; supported: gemini, openai, anthropic, "
-        "ollama, cloudflare, zai, fixture, none")
+        "ollama, cloudflare, fixture, none")
 
 
 def low_confidence_ratio(plan: sa.PanelPlan) -> float:
@@ -215,7 +211,6 @@ def run_guided(
     model: str | None = None,
     base_url: str | None = None,
     cf_account_id: str | None = None,
-    zai_cookies: str | None = None,
     plan_path: str | Path | None = None,
     chunk_height: int = sa.DEFAULT_CHUNK_HEIGHT,
     overlap: int = sa.DEFAULT_CHUNK_OVERLAP,
@@ -239,6 +234,8 @@ def run_guided(
     strip = Path(strip)
     if not strip.is_file():
         raise FileNotFoundError(f"strip image not found: {strip}")
+    log.info("run_guided start strip=%s backend=%s model=%s chunk_height=%d overlap=%d",
+             strip.name, backend_name, model, chunk_height, overlap)
 
     plan: sa.PanelPlan | None = None
     plan_from_file = False
@@ -246,34 +243,32 @@ def run_guided(
         plan = sa.PanelPlan.model_validate_json(
             Path(plan_path).read_text("utf-8"))
         plan_from_file = True
+        log.info("plan loaded from file panels=%d", len(plan.entries))
     elif backend is not None or backend_name.lower() != "none":
         use = backend if backend is not None else build_backend(
             backend_name, api_key=api_key, model=model,
-            base_url=base_url, cf_account_id=cf_account_id,
-            zai_cookies=zai_cookies)
+            base_url=base_url, cf_account_id=cf_account_id)
         if use is None:
             raise sa.VisionAnalysisError("no vision backend available")
         try:
+            log.info("Phase-1 starting analyze_strip")
             plan, _cached = sa.analyze_strip(
                 strip, use, chunk_height=chunk_height, overlap=overlap,
                 cache_dir=cache_dir, force=force, chunk_dir=chunk_dir)
+            log.info("Phase-1 complete panels=%d provenance=%s cached=%s",
+                     len(plan.entries), plan.provenance, _cached)
         except sa.VisionAnalysisError as exc:
             log.error("Phase-1 analysis failed: %s", exc)
             plan = None
 
     used_fallback = False
-    # A plan that ALREADY came from the gutter detector (provenance="fallback")
-    # has confidence 0.0 on every panel by design. Exempt it from the
-    # low-confidence rule, otherwise we'd re-derive the same plan in a loop.
-    # Also exempt plans loaded from an explicit file (A2): the user trusted
-    # that plan enough to pass it on the command line.
     if (plan is not None
             and not plan_from_file
             and plan.provenance != "fallback"
             and low_confidence_ratio(plan) > LOW_CONF_RATIO_LIMIT):
         bad = low_confidence_ratio(plan) * 100.0
         log.warning("AI plan confidence too low (%.0f%% of panels < %.1f); "
-                    "falling back to the gutter detector for geometry, "
+                    "falling back to gutter detector for geometry, "
                     "keeping AI narrations", bad, LOW_CONF_THRESHOLD)
         fallback = fallback_plan_from_gutter_detector(
             strip, variance_threshold=variance_threshold)
@@ -290,6 +285,7 @@ def run_guided(
 
     assert plan is not None
     if dry_run:
+        log.info("dry_run returning plan panels=%d", len(plan.entries))
         return plan, None, used_fallback
 
     out = Path(out_dir)
@@ -303,5 +299,7 @@ def run_guided(
                           max_panel_height=max_panel_height,
                           variance_threshold=variance_threshold,
                           edge_threshold=edge_threshold)
+    log.info("Phase-2 starting guided_cut")
     artifact = guided_cut(strip, plan, out_dir, config=config, force=force)
+    log.info("Phase-2 complete panels=%d", len(artifact.panels))
     return plan, artifact, used_fallback

@@ -86,9 +86,9 @@ def build_verbatim(ocr: OcrArtifact, panel_ids: list[str]) -> NarrationArtifact:
 
 
 def generate(narration_request: str, ocr: OcrArtifact, panel_ids: list[str],
-             mode: str = "narrator", *, model: str = "gemini-2.0-flash",
-             max_attempts: int = 3, debug_dir: Path = Path("llm_debug")
-             ) -> NarrationArtifact:
+              mode: str = "narrator", *, model: str = "gemini-2.0-flash",
+              max_attempts: int = 3, debug_dir: Path = Path("llm_debug")
+              ) -> NarrationArtifact:
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("GEMINI_API_KEY not set; use --llm-backend none "
@@ -112,11 +112,6 @@ def generate(narration_request: str, ocr: OcrArtifact, panel_ids: list[str],
             model=model, contents=[SYSTEM_PROMPT, user + last_err],
             config=types.GenerateContentConfig(
                 temperature=0.2,
-                # Verified against Gemini API structured-output docs
-                # (ai.google.dev/gemini-api/docs/json-mode, last updated
-                # 2026-09-02): response_mime_type="application/json" (and
-                # optionally response_schema=<pydantic model>) is the
-                # documented way to force JSON with the google-genai SDK.
                 response_mime_type="application/json"))
         try:
             data = json.loads(resp.text)
@@ -126,7 +121,14 @@ def generate(narration_request: str, ocr: OcrArtifact, panel_ids: list[str],
             if [e.panel_id for e in narration.entries] != panel_ids:
                 raise ValueError("panel ids/order do not match panels.json")
             bad = check_grounding(narration, ocr)
-            narration.ungrounded_quotes = bad
+            if not bad:
+                narration.ungrounded_quotes = []
+                return narration
+            # G2: grounding feedback loop — one targeted retry for the
+            # offending panels only.
+            narration = _grounding_retry(
+                client, narration, ocr, bad, model, debug_dir)
+            narration.ungrounded_quotes = []
             return narration
         except Exception as exc:  # noqa: BLE001 - every failure is retried,
             # then re-raised with context; never silently swallowed
@@ -138,3 +140,62 @@ def generate(narration_request: str, ocr: OcrArtifact, panel_ids: list[str],
     raise RuntimeError(
         f"narration validation failed after {max_attempts} attempts; raw "
         f"response saved under {debug_dir}")
+
+
+def _grounding_retry(client, narration: NarrationArtifact,
+                      ocr: OcrArtifact, bad_quotes: list[str],
+                      model: str, debug_dir: Path) -> NarrationArtifact:
+    """One-shot targeted retry: feed only the offending panels' OCR regions
+    and the ungrounded quotes back to the model, asking it to either ground
+    each quote in the provided OCR or drop it."""
+    from google.genai import types
+
+    affected_panel_ids = {e.panel_id for e in narration.entries
+                          for q in e.quotes if q in bad_quotes}
+    ocr_by_panel: dict[str, list[str]] = {}
+    for r in ocr.regions:
+        if r.panel_id and r.text and r.panel_id in affected_panel_ids:
+            ocr_by_panel.setdefault(r.panel_id, []).append(r.text)
+    if not ocr_by_panel:
+        return narration
+
+    ocr_dump = "\n".join(
+        f"{pid}: {' | '.join(lines)}" for pid, lines in ocr_by_panel.items())
+    follow_up = (
+        "GROUNDING AUDIT: the following quotes were flagged as NOT found "
+        "in the full OCR corpus. For EACH quote, either:\n"
+        "  a) return the exact OCR text that supports it (if present in "
+        "the panel OCR below), or\n"
+        "  b) remove the quote from the panel's narration entirely.\n"
+        f"Flagged quotes: {json.dumps(bad_quotes, ensure_ascii=False)}\n"
+        f"Panel OCR for affected panels:\n{ocr_dump}\n"
+        "Return the SAME JSON schema with updated entries for ONLY the "
+        "affected panels. Keep all other panels unchanged."
+    )
+    try:
+        resp = client.models.generate_content(
+            model=model,
+            contents=[follow_up],
+            config=types.GenerateContentConfig(
+                temperature=0.2, response_mime_type="application/json"))
+        data = json.loads(resp.text)
+        updated = NarrationArtifact.model_validate(
+            {**data, "mode": narration.mode, "meta": narration.meta})
+        updated.entries.sort(key=lambda e: e.order)
+        by_id = {e.panel_id: e for e in updated.entries}
+        for _i, e in enumerate(narration.entries):
+            if e.panel_id in by_id:
+                replacement = by_id[e.panel_id]
+                e.text = replacement.text
+                e.quotes = replacement.quotes
+                e.speaker = replacement.speaker
+        still_bad = check_grounding(narration, ocr)
+        if still_bad:
+            for e in narration.entries:
+                e.quotes = [q for q in e.quotes if q not in still_bad]
+    except Exception as exc:  # noqa: BLE001 - best-effort audit
+        debug_dir.mkdir(exist_ok=True)
+        (debug_dir / f"grounding_retry_{int(time.time())}.txt").write_text(
+            f"Grounding retry failed: {exc}\nQuotes: {bad_quotes}\n",
+            encoding="utf-8")
+    return narration

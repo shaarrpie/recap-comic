@@ -47,6 +47,7 @@ import numpy as np
 from PIL import Image
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError, model_validator
 
+from adapters._logging import sanitize
 from adapters.schemas import BBox
 
 log = logging.getLogger(__name__)
@@ -274,6 +275,8 @@ def parse_entries_from_json(text: str, chunk_height: int, *,
                 f"panel {entry.panel_index}: degenerate range after scaling "
                 f"[{entry.y_start},{entry.y_end}]")
         entries.append(entry)
+    log.debug("parsed %d panels + %d characters from model response",
+              len(entries), len(characters))
     return entries, characters
 
 def _dup_of(a: PanelPlanEntry, b: PanelPlanEntry) -> bool:
@@ -392,6 +395,9 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
     with Image.open(path) as img:
         img.load()
         width, height = img.size
+        log.info("strip loaded file=%s size=%dx%d backend=%s model=%s chunks=%d",
+                 path.name, width, height, cfg["backend"], cfg["model"],
+                 len(list(make_chunks(img, chunk_height=chunk_height, overlap=overlap))))
         chunks = make_chunks(img, chunk_height=chunk_height, overlap=overlap)
         results: list[list[PanelPlanEntry]] = []
         bases: list[int] = []
@@ -402,6 +408,8 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
                 chunk_dir_p.mkdir(parents=True, exist_ok=True)
                 chunk.save(chunk_dir_p / f"chunk_{idx:02d}.png", "PNG")
             context = build_context(prev_entries, characters)
+            log.debug("chunk %d/%d base_y=%d size=%dx%d context_len=%d",
+                       idx + 1, len(chunks), base, chunk.width, chunk.height, len(context))
             try:
                 entries, new_chars = _call_with_retry(
                     backend, chunk, attempts=attempts,
@@ -410,6 +418,8 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
                 raise VisionAnalysisError(
                     f"chunk {idx} (absolute y0={base}) failed after "
                     f"{attempts} attempt(s): {exc}") from exc
+            log.info("chunk %d/%d panels=%d new_chars=%s",
+                     idx + 1, len(chunks), len(entries), new_chars)
             prev_entries = entries
             for name in new_chars:
                 if name not in characters:
@@ -425,6 +435,7 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
         model=getattr(backend, "name", type(backend).__name__),
         config_hash=cfg_hash, input_hash=input_hash, entries=stitched,
         characters=characters)
+    log.info("stitched panels=%d characters=%s", len(stitched), characters)
     if cache_path is not None and cache_root is not None:
         cache_root.mkdir(parents=True, exist_ok=True)
         write_atomic(cache_path, plan.model_dump_json(indent=2) + "\n")
@@ -467,6 +478,7 @@ class FixtureVisionBackend:
                       previous_context: str = ""
                       ) -> tuple[list[PanelPlanEntry], list[str]]:
         self.calls += 1
+        log.debug("fixture backend call=%d image=%dx%d", self.calls, image.width, image.height)
         if not self._plans:
             return [], []
         return self._plans.pop(0), []
@@ -601,6 +613,9 @@ class GeminiVisionBackend:
         image.save(buf, format="PNG")
         client = genai.Client(api_key=self._api_key)
         prompt = _chunk_prompt(image.size[1], previous_context)
+        log.info("gemini request start model=%s image=%dx%d prompt_len=%d",
+                 self.model, image.width, image.height, len(prompt))
+        t0 = time.time()
         resp = client.models.generate_content(
             model=self.model,
             contents=[  # type: ignore[arg-type]  # SDK stub list-variance quirk
@@ -613,11 +628,14 @@ class GeminiVisionBackend:
                 response_mime_type="application/json",
             ),
         )
+        elapsed = time.time() - t0
         raw = resp.text
         if raw is None:
             raw = ""
         self.last_usage = _capture_usage(resp)
         self.usage_log.append(self.last_usage or {})
+        log.info("gemini request complete duration=%.2fs response_len=%d usage=%s",
+                 elapsed, len(raw), sanitize(self.last_usage))
         return parse_entries_from_json(raw, image.size[1])
 
 
@@ -774,106 +792,6 @@ class OllamaVisionBackend:
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         text = data.get("response", "")
-        self.last_usage = _capture_usage(data)
-        self.usage_log.append(self.last_usage or {})
-        return parse_entries_from_json(text, image.size[1])
-
-
-class ZaiVisionBackend:
-    """Z AI (chat.z.ai) vision backend via the OpenAI-compatible chat completions API.
-
-    Authenticates with a JWT ``token`` extracted from chat.z.ai cookies
-    (``ZAI_COOKIES`` / ``ZAI_TOKEN`` env vars, on-disk cache, or the
-    ``cookies`` / ``api_key`` constructor args).  Default model is
-    ``glm-4.6v-flash`` (free).  Set ``base_url`` to ``https://api.z.ai`` to use the
-    public PAAS endpoint (``/api/paas/v4/chat/completions``); leave it as
-    ``https://chat.z.ai`` to use the web-chat endpoint (``/api/chat/completions``).
-    """
-    name = "zai"
-    DEFAULT_MODEL = "glm-4.6v-flash"
-
-    def __init__(self, model: str = DEFAULT_MODEL,
-                 api_key: str | None = None,
-                 cookies: dict[str, str] | str | None = None,
-                 base_url: str = "https://chat.z.ai",
-                 timeout: int = 120) -> None:
-        from adapters.zai_cookies import ZaiAuth
-
-        self.model = model
-        self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
-        self._auth = ZaiAuth(cookies=cookies, token=api_key, auto_fetch=True)
-        self.usage_log: list[dict] = []
-        self.last_usage: dict | None = None
-
-    def analyze_chunk(self, image: Image.Image,
-                      previous_context: str = ""
-                      ) -> tuple[list[PanelPlanEntry], list[str]]:
-        import base64
-
-        buf = io.BytesIO()
-        image.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        prompt = _chunk_prompt(image.size[1], previous_context)
-        payload = {
-            "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{b64}"
-                            },
-                        },
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ],
-            "temperature": 0.0,
-            "max_tokens": 4096,
-        }
-        endpoint = (
-            "/api/paas/v4/chat/completions"
-            if self.base_url == "https://api.z.ai"
-            else "/api/chat/completions"
-        )
-        headers = self._auth.auth_headers()
-        headers["accept"] = "application/json"
-        req = urllib.request.Request(
-            f"{self.base_url}{endpoint}",
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
-        )
-        last_err: Exception | None = None
-        for attempt in range(1, 4):
-            try:
-                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                    data = json.loads(resp.read().decode("utf-8"))
-                break
-            except urllib.error.HTTPError as exc:
-                raw = exc.read().decode("utf-8", errors="replace")
-                if exc.code == 429 and attempt < 3:
-                    wait = 5 * attempt
-                    log.warning("Z AI rate-limited (429); retrying in %ds (%d/3)",
-                                wait, attempt)
-                    time.sleep(wait)
-                    continue
-                raise VisionAnalysisError(
-                    f"Z AI API error: HTTP {exc.code} {exc.reason}: {raw[:500]}"
-                ) from exc
-            except urllib.error.URLError as exc:
-                raise VisionAnalysisError(
-                    f"cannot reach Z AI API ({exc.reason})"
-                ) from exc
-        else:
-            assert last_err is not None
-            raise last_err
-        text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        if not isinstance(text, str):
-            text = str(text) if text is not None else ""
-        text = text.strip()
         self.last_usage = _capture_usage(data)
         self.usage_log.append(self.last_usage or {})
         return parse_entries_from_json(text, image.size[1])

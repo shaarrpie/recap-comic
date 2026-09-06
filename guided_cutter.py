@@ -299,6 +299,7 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
     if not entries:
         raise ValueError("plan contains no panels; nothing to cut")
     forbidden = frozenset(bubble_rows(plan, pad=config.bubble_pad, gray=gray))
+    log.debug("build_cuts start panels=%d forbidden_rows=%d", len(entries), len(forbidden))
 
     variances, edge_density = compute_strip_metrics(
         gray, use_edge_density=config.use_edge_density,
@@ -307,7 +308,7 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
     # 1. Refine boundaries; a None gutter row means continuous art -> merge.
     groups: list[list[PanelPlanEntry]] = [[entries[0]]]
     cut_rows: list[int] = []
-    snap_distances: list[int] = []  # |center - snapped_row| per boundary
+    snap_distances: list[int] = []
     for a, b in pairwise(entries):
         center = (a.y_end + b.y_start) // 2
         row = find_gutter_row(
@@ -320,7 +321,8 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
             blur_sigma=config.blur_sigma,
             variances=variances, edge_density=edge_density)
         if row is None:
-            groups[-1].append(b)  # continuous art: merge the two panels
+            groups[-1].append(b)
+            log.debug("panel %d..%d merged (no gutter at %d)", a.panel_index, b.panel_index, center)
         else:
             groups.append([b])
             cut_rows.append(row)
@@ -328,27 +330,29 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
 
     tops = [entries[0].y_start] + cut_rows
     bottoms = cut_rows + [entries[-1].y_end]
-    # snap_distances[i] is the snap for the boundary between groups[i] and
-    # groups[i+1] (= bottom of groups[i] = top of groups[i+1]).
     panel_snaps: list[list[int]] = []
     for i in range(len(groups)):
         top_snap = snap_distances[i - 1] if 0 <= i - 1 < len(snap_distances) else 0
         bot_snap = snap_distances[i] if 0 <= i < len(snap_distances) else 0
         panel_snaps.append([top_snap, bot_snap])
 
-    # 2. One CutPanel per (possibly merged) group.
     panels = [_emit(g, int(y0), int(y1), f"{g[0].panel_index:03d}", snaps)
               for g, y0, y1, snaps in zip(groups, tops, bottoms, panel_snaps, strict=True)]
+    log.debug("after merge/snap groups=%d", len(panels))
 
-    # 3. Split oversized panels at their internal gutters.
+    # 2. Split oversized panels at their internal gutters.
     final: list[CutPanel] = []
     for p in panels:
         if (p.y_end - p.y_start) <= config.max_panel_height:
             final.append(p)
         else:
-            final.extend(_split_panel(gray, p, forbidden, config,
-                                      variances=variances,
-                                      edge_density=edge_density))
+            pieces = _split_panel(gray, p, forbidden, config,
+                                  variances=variances,
+                                  edge_density=edge_density)
+            log.info("panel %s split into %d pieces (height=%d)",
+                     p.id, len(pieces), p.y_end - p.y_start)
+            final.extend(pieces)
+    log.info("build_cuts result panels=%d", len(final))
     return sorted(final, key=lambda c: (c.y_start, c.id))
 
 
@@ -376,8 +380,6 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
             log.debug("could not read existing sidecar: %s", exc)
             force = True
     if force and out.exists():
-        # Clear existing outputs for this strip so stale panels from a
-        # previous run don't linger alongside the new ones.
         for prev in out.glob("panel_*.png"):
             prev.unlink()
         panels_json = out / "panels.json"
@@ -392,11 +394,9 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
         width, height = img.size
         rgb = img.convert("RGB")
         gray_arr = np.asarray(img.convert("L"))
+    log.info("guided_cut start strip=%s size=%dx%d panels_in_plan=%d",
+             strip.name, width, height, len(plan.entries))
     if (width, height) != (plan.width, plan.height):
-        # The plan may have been generated from a resized copy of the same
-        # strip (e.g. downscaled before upload to save tokens). Scale every
-        # panel coordinate proportionally. If the aspect ratio diverges by
-        # more than 5% we refuse — the plan is for a different image.
         aspect_plan = plan.width / plan.height
         aspect_strip = width / height
         if abs(aspect_plan - aspect_strip) / aspect_plan > 0.05:
@@ -434,6 +434,7 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
             log.info("panel file already exists, skipping: %s", dest)
             continue
         piece.save(dest, "PNG")
+        log.debug("saved panel %s y=[%d,%d] size=%dx%d", c.id, y0, y1, width, y1 - y0)
 
     plan_hash = hashlib.sha256(
         plan.model_dump_json().encode("utf-8")).hexdigest()
@@ -443,5 +444,6 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
     sidecar = out / "panels.json"
     tmp = sidecar.with_suffix(".json.tmp")
     tmp.write_text(artifact.model_dump_json(indent=2), "utf-8")
-    tmp.replace(sidecar)  # atomic write
+    tmp.replace(sidecar)
+    log.info("guided_cut complete panels=%d sidecar=%s", len(cuts), sidecar)
     return artifact

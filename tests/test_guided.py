@@ -147,6 +147,40 @@ def test_never_cut_through_speech_bubble() -> None:
     assert cuts[0].merged_with == [1, 2]
 
 
+def test_bubble_veto_no_cut_intersects_bbox() -> None:
+    # Regression test (G3): every cut boundary row must avoid every bubble bbox.
+    # The AI proposes panels [40,600] and [620,960] with a gutter at [600,620].
+    # A bubble spans y=480..520 inside panel 1. The cutter must snap the cut
+    # away from the bubble (or merge panels if the bubble spans the gutter).
+    img = make_strip(1000, panels=[(40, 600), (620, 960)], gutters=[(600, 620)])
+    gray = np.asarray(img.convert("L"))
+    plan = sa.PanelPlan(
+        source="s.png", width=800, height=1000, model="test",
+        config_hash="t", input_hash="t",
+        entries=[
+            sa.PanelPlanEntry(panel_index=1, y_start=40, y_end=600,
+                              narration="A", confidence=0.9,
+                              bubble_boxes=[BBox(x=100, y=480, w=200, h=40)]),
+            sa.PanelPlanEntry(panel_index=2, y_start=620, y_end=960,
+                              narration="B", confidence=0.9)])
+    cuts = gc.build_cuts(gray, plan, config=gc.CutterConfig(tolerance=80))
+    # Collect all bubble y-ranges from the plan.
+    bubble_ranges = []
+    for e in plan.entries:
+        for b in e.bubble_boxes:
+            bubble_ranges.append((b.y, b.y + b.h))
+    # The cut boundaries between adjacent panels are at cuts[i].y_end.
+    # For a single merged panel there are no boundaries to check.
+    if len(cuts) > 1:
+        for i in range(len(cuts) - 1):
+            boundary = cuts[i].y_end
+            for by0, by1 in bubble_ranges:
+                if by0 <= boundary < by1:
+                    raise AssertionError(
+                        f"cut boundary at y={boundary} intersects "
+                        f"bubble bbox [{by0},{by1}]")
+
+
 def test_tall_panel_split_at_internal_gutter() -> None:
     # panel 3: 1916..3700 (1784px) with internal white gutter 2800..2815
     img = make_strip(3700, panels=[(40, 1100), (1116, 1900), (1916, 3700)],
@@ -522,17 +556,5 @@ def test_cloudflare_backend_name_accepted() -> None:
         if "unknown backend" in str(exc):
             raise AssertionError(
                 "build_backend rejected 'cloudflare' — backend name drift") from exc
-    except RuntimeError:
-        pass  # missing credentials is fine; we only care the name is recognized
-
-
-def test_zai_backend_name_accepted() -> None:
-    """Z AI vision backend must be accepted by build_backend."""
-    try:
-        gp.build_backend("zai")
-    except ValueError as exc:
-        if "unknown backend" in str(exc):
-            raise AssertionError(
-                "build_backend rejected 'zai' — backend name drift") from exc
     except RuntimeError:
         pass  # missing credentials is fine; we only care the name is recognized

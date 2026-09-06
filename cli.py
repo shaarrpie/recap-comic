@@ -11,14 +11,14 @@ Commands (group `guided`):
   guided run   STRIP                           Phase 1 + Phase 2;
                        --dry-run stops after Phase 1.
 
-Backends (--backend): gemini (default) | openai | anthropic | ollama | cloudflare | zai | fixture | none.
+Backends (--backend): gemini (default) | openai | anthropic | ollama | cloudflare | fixture | none.
 "fixture" is for offline tests; "none" forces the gutter-detector fallback.
-Z AI (--backend zai) authenticates via chat.z.ai cookies (--zai-cookies or ZAI_COOKIES / ZAI_TOKEN env vars).
-Other backends use API keys from environment variables (GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID).
+API keys come ONLY from environment variables (GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID).
 """
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 
 import typer
@@ -26,10 +26,12 @@ from dotenv import load_dotenv
 
 import guided_pipeline as gp
 import strip_analyzer as sa
+from adapters._logging import get_logger, setup_logging
 
 load_dotenv()
 
-log = logging.getLogger(__name__)
+setup_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
+log = get_logger(__name__)
 
 _WRITE_ATOMIC = sa.write_atomic
 
@@ -43,9 +45,7 @@ def _default_cache_dir() -> Path:
     return Path.home() / ".cache" / "recap-comic"
 
 def _configure_logging(level: str) -> None:
-    logging.basicConfig(
-        level=getattr(logging, level.upper(), logging.INFO),
-        format="%(levelname)s %(name)s: %(message)s")
+    logging.getLogger().setLevel(getattr(logging, level.upper(), logging.INFO))
 
 
 @guided_app.command("plan")
@@ -56,14 +56,11 @@ def guided_plan(
         None, "--out-plan", help="also write the plan JSON here"),
     backend: str = typer.Option(
         "gemini", "--backend",
-        help="gemini|openai|anthropic|ollama|cloudflare|zai|fixture|none"),
+        help="gemini|openai|anthropic|ollama|cloudflare|fixture|none"),
     model: str | None = typer.Option(
         None, "--model",
         help="vision model id (gemini defaults to gemini-2.5-flash; "
-             "zai defaults to glm-4.6v-flash; required for openai/anthropic/ollama)"),
-    zai_cookies: str | None = typer.Option(
-        None, "--zai-cookies",
-        help="Z AI cookie string from chat.z.ai (or set ZAI_COOKIES env var)"),
+             "required for openai/anthropic/ollama)"),
     chunk_height: int = typer.Option(2000, "--chunk-height",
                                      help="reading-chunk height in px"),
     overlap: int = typer.Option(200, "--overlap",
@@ -91,12 +88,14 @@ def guided_plan(
     """
     _configure_logging(log_level)
     used_cache_dir = cache_dir or _default_cache_dir()
+    log.info("guided_plan start strip=%s backend=%s model=%s chunk_height=%d overlap=%d",
+             strip.name, backend, model, chunk_height, overlap)
     try:
         plan, _artifact, _used = gp.run_guided(
             strip, Path("."), backend_name=backend, model=model,
             chunk_height=chunk_height, overlap=overlap,
             cache_dir=used_cache_dir, chunk_dir=chunk_dir,
-            out_plan=out_plan, zai_cookies=zai_cookies,
+            out_plan=out_plan,
             force=force, dry_run=True)
     except (gp.VisionAnalysisError, FileNotFoundError, ValueError) as exc:
         if log.isEnabledFor(logging.DEBUG):
@@ -112,6 +111,7 @@ def guided_plan(
     if debug_overlay is not None:
         from debug_view import draw_overlay
         draw_overlay(strip, plan, out_path=debug_overlay)
+    log.info("guided_plan complete panels=%d", len(plan.entries))
     typer.echo(plan.model_dump_json(indent=2))
 
 
@@ -155,6 +155,7 @@ def guided_cut(
         typer.echo(f"ERROR: unexpected error: {exc} (see --log-level DEBUG for details)",
                     err=True)
         raise typer.Exit(1) from exc
+    log.info("guided_cut complete panels=%d", len(artifact.panels))
     typer.echo(f"cut {len(artifact.panels)} panels into {out_dir}")
     typer.echo(f"sidecar: {Path(out_dir) / 'panels.json'}")
     if report is not None:
@@ -170,14 +171,11 @@ def guided_run(
     out_dir: Path = typer.Option("guided_out", "--out-dir"),
     backend: str = typer.Option(
         "gemini", "--backend",
-        help="gemini|openai|anthropic|ollama|cloudflare|zai|fixture|none"),
+        help="gemini|openai|anthropic|ollama|cloudflare|fixture|none"),
     model: str | None = typer.Option(
         None, "--model",
         help="vision model id (gemini defaults to gemini-2.5-flash; "
-             "zai defaults to glm-4.6v-flash; required for openai/anthropic/ollama)"),
-    zai_cookies: str | None = typer.Option(
-        None, "--zai-cookies",
-        help="Z AI cookie string from chat.z.ai (or set ZAI_COOKIES env var)"),
+             "required for openai/anthropic/ollama)"),
     plan_path: Path | None = typer.Option(
         None, "--plan", help="reuse an existing plan JSON from 'guided plan'"),
     chunk_height: int = typer.Option(2000, "--chunk-height"),
@@ -209,12 +207,13 @@ def guided_run(
     """Phase 1 (AI pre-read) + Phase 2 (guided dissection) in one command."""
     _configure_logging(log_level)
     used_cache_dir = cache_dir or _default_cache_dir()
+    log.info("guided_run start strip=%s backend=%s model=%s dry_run=%s",
+             strip.name, backend, model, dry_run)
     try:
         plan, artifact, used = gp.run_guided(
             strip, out_dir, backend_name=backend, model=model,
             plan_path=plan_path, chunk_height=chunk_height, overlap=overlap,
             cache_dir=used_cache_dir, chunk_dir=chunk_dir, out_plan=out_plan,
-            zai_cookies=zai_cookies,
             tolerance=tolerance,
             max_panel_height=max_panel_height,
             variance_threshold=variance_threshold,
@@ -228,15 +227,14 @@ def guided_run(
         raise typer.Exit(1) from exc
     except Exception as exc:
         log.exception("unexpected error in guided run")
-        typer.echo(f"ERROR: unexpected error: {exc} "
-                   "(see --log-level DEBUG for details)", err=True)
+        typer.echo(f"ERROR: unexpected error: {exc} (see --log-level DEBUG for details)",
+                    err=True)
         raise typer.Exit(1) from exc
     if dry_run:
-        typer.echo(plan.model_dump_json(indent=2))
+        log.info("guided_run dry_run complete")
         return
-    assert artifact is not None
-    typer.echo(f"cut {len(artifact.panels)} panels into {out_dir} "
-               f"(used_fallback={used})")
+    log.info("guided_run complete panels=%d fallback=%s", len(artifact.panels), used)
+    typer.echo(f"cut {len(artifact.panels)} panels into {out_dir}")
     typer.echo(f"sidecar: {Path(out_dir) / 'panels.json'}")
 
 

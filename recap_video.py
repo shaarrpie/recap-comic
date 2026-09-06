@@ -34,6 +34,7 @@ import math
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -181,9 +182,11 @@ def build_narration(artifact: CutArtifact, cfg: VideoConfig,
                                                 p.dialogue or "")]
         entries.append(NarrationEntry(id=p.id, panel_id=p.id, order=order,
                                       speaker=None, text=text, quotes=quotes))
-    return NarrationArtifact(
+    result = NarrationArtifact(
         meta=_meta(cfg.hash(), {"panels.json": panels_hash}),
         mode="narrator", entries=entries)
+    log.info("build_narration entries=%d", len(entries))
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -326,7 +329,7 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
         t += dur
     if not entries:
         raise VideoError("no usable panels in panels.json")
-    return TimelineArtifact(
+    result = TimelineArtifact(
         meta=_meta(cfg.hash(), {
             "panels.json": panels_hash,
             "narration.json": _sha256_text(narration.model_dump_json()),
@@ -334,6 +337,9 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
         width=WIDTH, height=HEIGHT, fps=cfg.fps,
         gap_seconds=cfg.gap_seconds,
         min_display_seconds=cfg.min_display_seconds, entries=entries)
+    log.info("build_timeline entries=%d total_duration=%.2fs",
+             len(entries), total_seconds(result))
+    return result
 
 
 def total_seconds(timeline: TimelineArtifact) -> float:
@@ -404,18 +410,23 @@ def render_video(timeline: TimelineArtifact, out_path: Path,
     from adapters.render_ffmpeg import RenderError, render
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(out_path.stem + ".partial.mp4")
+    log.info("render_video start out=%s timeline_entries=%d",
+             out_path, len(timeline.entries))
+    t0 = time.time()
     try:
         render(timeline, tmp, ffmpeg_exe=exe)
     except RenderError as exc:
         raise VideoError(str(exc)) from exc
+    elapsed = time.time() - t0
     tmp.replace(out_path)
+    log.info("render_video complete out=%s duration=%.2fs", out_path, elapsed)
 
 
 # --------------------------------------------------------------------------- #
 # Orchestrator
 # --------------------------------------------------------------------------- #
 def make_recap_video(panels_json: Path, out_path: Path,
-                     cfg: VideoConfig | None = None, *,
+                     cfg: VideoConfig | None = None,
                      force: bool = False, dry_run: bool = False
                      ) -> dict[str, Any]:
     """panels.json -> recap.mp4 (+ sidecars).  Returns a summary dict."""
@@ -433,6 +444,8 @@ def make_recap_video(panels_json: Path, out_path: Path,
     if not artifact.panels:
         raise VideoError("panels.json contains no panels")
     panels_hash = _sha256_file(panels_json)
+    log.info("make_recap_video start panels=%d tts=%s voice=%s",
+             len(artifact.panels), cfg.tts, cfg.voice)
 
     # 1. narration
     narration = build_narration(artifact, cfg, panels_hash=panels_hash)
@@ -468,6 +481,7 @@ def make_recap_video(panels_json: Path, out_path: Path,
         "video": None,
     }
     if dry_run:
+        log.info("make_recap_video dry_run summary=%s", summary)
         return summary
 
     # 4. render (cache: skip when the timeline hash is unchanged)
@@ -480,4 +494,5 @@ def make_recap_video(panels_json: Path, out_path: Path,
         render_video(timeline, out_path, cfg)
         _write_atomic(stamp, tl_hash + "\n")
     summary["video"] = str(out_path)
+    log.info("make_recap_video complete summary=%s", summary)
     return summary
