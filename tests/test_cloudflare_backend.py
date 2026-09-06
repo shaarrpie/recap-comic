@@ -19,6 +19,7 @@ def _make_backend():
     b.model = sa.CloudflareWorkersAIBackend.DEFAULT_MODEL
     b._api_key = "fake-token"
     b._account_id = "fake-account"
+    b._endpoint = ""
     b.usage_log = []
     b.last_usage = None
     b._agreed_to_license = False

@@ -1,0 +1,1009 @@
+{
+  "source": "stripwebp",
+  "width": 900,
+  "height": 16000,
+  "plan_hash": "eae65926cce3a856a7f4df435cd404324a52c92e030ea42ab21e02326a48d90b",
+  "config": {
+    "tolerance": 80,
+    "max_panel_height": 1600,
+    "variance_threshold": 6.0,
+    "edge_threshold": 30.0,
+    "bubble_pad": 8,
+    "use_edge_density": true,
+    "min_gutter_run": 4,
+    "blur_sigma": 0.5
+  },
+  "panels": [
+    {
+      "id": "001aa",
+      "panel_index": 1,
+      "y_start": 0,
+      "y_end": 115,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001aa.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001aba",
+      "panel_index": 1,
+      "y_start": 115,
+      "y_end": 173,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001aba.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001abba",
+      "panel_index": 1,
+      "y_start": 173,
+      "y_end": 202,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001abba.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001abbba",
+      "panel_index": 1,
+      "y_start": 202,
+      "y_end": 216,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001abbba.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001abbbba",
+      "panel_index": 1,
+      "y_start": 216,
+      "y_end": 223,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001abbbba.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001abbbbba",
+      "panel_index": 1,
+      "y_start": 223,
+      "y_end": 227,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001abbbbba.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001abbbbbbaa",
+      "panel_index": 1,
+      "y_start": 227,
+      "y_end": 229,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001abbbbbbaa.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001abbbbbbabaa",
+      "panel_index": 1,
+      "y_start": 229,
+      "y_end": 1725,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001abbbbbbabaa.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001abbbbbbabab",
+      "panel_index": 1,
+      "y_start": 1725,
+      "y_end": 3222,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001abbbbbbabab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001abbbbbbabba",
+      "panel_index": 1,
+      "y_start": 3222,
+      "y_end": 4719,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001abbbbbbabba.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001abbbbbbabbb",
+      "panel_index": 1,
+      "y_start": 4719,
+      "y_end": 6216,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001abbbbbbabbb.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001abbbbbbb",
+      "panel_index": 1,
+      "y_start": 6216,
+      "y_end": 6220,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001abbbbbbb.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001ba",
+      "panel_index": 1,
+      "y_start": 6220,
+      "y_end": 6350,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001ba.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001bbaaaaaa",
+      "panel_index": 1,
+      "y_start": 6350,
+      "y_end": 6353,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001bbaaaaaa.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001bbaaaaabaa",
+      "panel_index": 1,
+      "y_start": 6353,
+      "y_end": 6354,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001bbaaaaabaa.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001bbaaaaababaa",
+      "panel_index": 1,
+      "y_start": 6354,
+      "y_end": 7320,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001bbaaaaababaa.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001bbaaaaababab",
+      "panel_index": 1,
+      "y_start": 7320,
+      "y_end": 8286,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001bbaaaaababab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001bbaaaaababba",
+      "panel_index": 1,
+      "y_start": 8286,
+      "y_end": 9252,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001bbaaaaababba.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001bbaaaaababbb",
+      "panel_index": 1,
+      "y_start": 9252,
+      "y_end": 10218,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001bbaaaaababbb.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001bbaaaaabb",
+      "panel_index": 1,
+      "y_start": 10218,
+      "y_end": 10222,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001bbaaaaabb.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001bbaaaab",
+      "panel_index": 1,
+      "y_start": 10222,
+      "y_end": 10228,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001bbaaaab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001bbaaab",
+      "panel_index": 1,
+      "y_start": 10228,
+      "y_end": 10241,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001bbaaab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001bbaab",
+      "panel_index": 1,
+      "y_start": 10241,
+      "y_end": 10267,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001bbaab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001bbab",
+      "panel_index": 1,
+      "y_start": 10267,
+      "y_end": 10318,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001bbab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "001bbb",
+      "panel_index": 1,
+      "y_start": 10318,
+      "y_end": 10420,
+      "narration": "THIS BASTARD IS EVEN MORE DANGEROUS THAN THE DRAGONSLAYER. UNLIKE THAT GUY WHO LOST HIS MEMORIES, HE BEARS CLEAR HOSTILITY TOWARD 'BJORN.' IF I CAN'T TAKE HIM OUT THIS TIME, SOMEDAY HE'LL... HE'LL HURT MY COMPANIONS. HE'LL HURT MY COMPANIONS A SUDDEN PRESSURE IN MY BRAIN... I'VE HIT MY LIMIT.",
+      "dialogue": "... The Dragonslayer",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_001bbb.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007aa",
+      "panel_index": 7,
+      "y_start": 10420,
+      "y_end": 10493,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007aa.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007abaa",
+      "panel_index": 7,
+      "y_start": 10493,
+      "y_end": 10529,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007abaa.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007ababaa",
+      "panel_index": 7,
+      "y_start": 10529,
+      "y_end": 10547,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007ababaa.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007abababaa",
+      "panel_index": 7,
+      "y_start": 10547,
+      "y_end": 10556,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007abababaa.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007ababababaa",
+      "panel_index": 7,
+      "y_start": 10556,
+      "y_end": 10561,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007ababababaa.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007abababababaa",
+      "panel_index": 7,
+      "y_start": 10561,
+      "y_end": 10563,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007abababababaa.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007ababababababaa",
+      "panel_index": 7,
+      "y_start": 10563,
+      "y_end": 10564,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007ababababababaa.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007abababababababa",
+      "panel_index": 7,
+      "y_start": 10564,
+      "y_end": 11610,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007abababababababa.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007abababababababb",
+      "panel_index": 7,
+      "y_start": 11610,
+      "y_end": 12657,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007abababababababb.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007ababababababb",
+      "panel_index": 7,
+      "y_start": 12657,
+      "y_end": 12659,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007ababababababb.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007abababababb",
+      "panel_index": 7,
+      "y_start": 12659,
+      "y_end": 12663,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007abababababb.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007ababababb",
+      "panel_index": 7,
+      "y_start": 12663,
+      "y_end": 12672,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007ababababb.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007abababb",
+      "panel_index": 7,
+      "y_start": 12672,
+      "y_end": 12689,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007abababb.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007ababb",
+      "panel_index": 7,
+      "y_start": 12689,
+      "y_end": 12723,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007ababb.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007abb",
+      "panel_index": 7,
+      "y_start": 12723,
+      "y_end": 12791,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007abb.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007ba",
+      "panel_index": 7,
+      "y_start": 12791,
+      "y_end": 14095,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007ba.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "007bb",
+      "panel_index": 7,
+      "y_start": 14095,
+      "y_end": 15232,
+      "narration": "I'VE HIT MY LIMIT. DAMN IT! URRGH! BLEEERGH! COUGH, HACK... NGH...",
+      "dialogue": "I FELT LIKE I COULD'VE DONE IT WITH JUST A LITTLE MORE. ...",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007bb.png",
+      "split_of": "007",
+      "merged_with": [
+        7,
+        8,
+        9,
+        10,
+        11
+      ],
+      "snap_distances": [
+        0,
+        0
+      ]
+    }
+  ]
+}

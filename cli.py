@@ -11,9 +11,10 @@ Commands (group `guided`):
   guided run   STRIP                           Phase 1 + Phase 2;
                        --dry-run stops after Phase 1.
 
-Backends (--backend): gemini (default) | openai | anthropic | ollama | cloudflare | fixture | none.
+Backends (--backend): gemini (default) | openai | anthropic | ollama | cloudflare | zai | fixture | none.
 "fixture" is for offline tests; "none" forces the gutter-detector fallback.
-API keys come ONLY from environment variables (GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID).
+Z AI (--backend zai) authenticates via chat.z.ai cookies (--zai-cookies or ZAI_COOKIES / ZAI_TOKEN env vars).
+Other backends use API keys from environment variables (GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID).
 """
 from __future__ import annotations
 
@@ -55,11 +56,14 @@ def guided_plan(
         None, "--out-plan", help="also write the plan JSON here"),
     backend: str = typer.Option(
         "gemini", "--backend",
-        help="gemini|openai|anthropic|ollama|cloudflare|fixture|none"),
+        help="gemini|openai|anthropic|ollama|cloudflare|zai|fixture|none"),
     model: str | None = typer.Option(
         None, "--model",
         help="vision model id (gemini defaults to gemini-2.5-flash; "
-             "required for openai/anthropic/ollama)"),
+             "zai defaults to glm-4.6v-flash; required for openai/anthropic/ollama)"),
+    zai_cookies: str | None = typer.Option(
+        None, "--zai-cookies",
+        help="Z AI cookie string from chat.z.ai (or set ZAI_COOKIES env var)"),
     chunk_height: int = typer.Option(2000, "--chunk-height",
                                      help="reading-chunk height in px"),
     overlap: int = typer.Option(200, "--overlap",
@@ -92,7 +96,7 @@ def guided_plan(
             strip, Path("."), backend_name=backend, model=model,
             chunk_height=chunk_height, overlap=overlap,
             cache_dir=used_cache_dir, chunk_dir=chunk_dir,
-            out_plan=out_plan,
+            out_plan=out_plan, zai_cookies=zai_cookies,
             force=force, dry_run=True)
     except (gp.VisionAnalysisError, FileNotFoundError, ValueError) as exc:
         if log.isEnabledFor(logging.DEBUG):
@@ -166,11 +170,14 @@ def guided_run(
     out_dir: Path = typer.Option("guided_out", "--out-dir"),
     backend: str = typer.Option(
         "gemini", "--backend",
-        help="gemini|openai|anthropic|ollama|cloudflare|fixture|none"),
+        help="gemini|openai|anthropic|ollama|cloudflare|zai|fixture|none"),
     model: str | None = typer.Option(
         None, "--model",
         help="vision model id (gemini defaults to gemini-2.5-flash; "
-             "required for openai/anthropic/ollama)"),
+             "zai defaults to glm-4.6v-flash; required for openai/anthropic/ollama)"),
+    zai_cookies: str | None = typer.Option(
+        None, "--zai-cookies",
+        help="Z AI cookie string from chat.z.ai (or set ZAI_COOKIES env var)"),
     plan_path: Path | None = typer.Option(
         None, "--plan", help="reuse an existing plan JSON from 'guided plan'"),
     chunk_height: int = typer.Option(2000, "--chunk-height"),
@@ -207,6 +214,7 @@ def guided_run(
             strip, out_dir, backend_name=backend, model=model,
             plan_path=plan_path, chunk_height=chunk_height, overlap=overlap,
             cache_dir=used_cache_dir, chunk_dir=chunk_dir, out_plan=out_plan,
+            zai_cookies=zai_cookies,
             tolerance=tolerance,
             max_panel_height=max_panel_height,
             variance_threshold=variance_threshold,
@@ -278,12 +286,19 @@ def guided_video(
         None, "--out",
         help="output mp4 (default: <panels dir>/recap.mp4)"),
     tts: str = typer.Option(
-        "edge", "--tts", help="edge (default, needs internet) | none (silent)"),
+        "edge", "--tts", help="edge (default, needs internet) | kokoro (offline) | none (silent)"),
     voice: str = typer.Option(
         "en-US-AriaNeural", "--voice",
-        help="edge-tts voice id (list with: edge-tts --list-voices)"),
+        help="edge-tts / kokoro voice id"),
     rate: str = typer.Option("+0%", "--rate", help="speech rate, e.g. +10%"),
     pitch: str = typer.Option("+0Hz", "--pitch", help="speech pitch, e.g. -2Hz"),
+    speed: float = typer.Option(1.0, "--speed", help="kokoro speed multiplier (edge-tts ignores this)"),
+    kokoro_model_path: Path | None = typer.Option(
+        None, "--kokoro-model-path",
+        help="path to kokoro-v1.0.onnx (required for --tts kokoro)"),
+    kokoro_voices_path: Path | None = typer.Option(
+        None, "--kokoro-voices-path",
+        help="path to voices-v1.0.bin (required for --tts kokoro)"),
     dialogue: bool = typer.Option(
         True, "--dialogue/--no-dialogue",
         help="also read each panel's dialogue after its narration"),
@@ -318,11 +333,13 @@ def guided_video(
         raise typer.Exit(2)
     out_path = out or panels.parent / "recap.mp4"
     cfg = VideoConfig(
-        tts=tts, voice=voice, rate=rate, pitch=pitch,  # type: ignore[arg-type]
+        tts=tts, voice=voice, rate=rate, pitch=pitch, speed=speed,
         include_dialogue=dialogue, gap_seconds=gap,
         min_display_seconds=min_display, max_display_seconds=max_display,
         max_pan_px_per_sec=pan_speed, fps=fps,
-        ffmpeg_exe=ffmpeg, ffprobe_exe=ffprobe)
+        ffmpeg_exe=ffmpeg, ffprobe_exe=ffprobe,
+        kokoro_model_path=kokoro_model_path,
+        kokoro_voices_path=kokoro_voices_path)
     try:
         summary = make_recap_video(panels, out_path, cfg,
                                    force=force, dry_run=dry_run)

@@ -9,9 +9,6 @@ Endpoints:
 """
 from __future__ import annotations
 
-import json
-import os
-import shutil
 import threading
 import time
 import uuid
@@ -19,9 +16,11 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+
+# ruff: noqa: B008  # FastAPI's File(...) in defaults IS its supported API
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -56,21 +55,26 @@ def _update(job_id: str, **kwargs: Any) -> None:
 
 
 def _run_pipeline(job_id: str, strip_path: Path, backend: str,
-                  out_dir: Path) -> None:
+                  out_dir: Path, api_key: str = "", endpoint: str = "",
+                  model: str = "", cf_account_id: str = "",
+                  zai_cookies: str = "",
+                  tts: str = "edge", voice: str = "en-US-AriaNeural",
+                  style: str = "recap") -> None:
     try:
         _update(job_id, status="running", step="phase1",
                 message="Phase 1: AI pre-read...")
         import guided_pipeline as gp
-        import strip_analyzer as sa
         from narrator import narrate_plan
 
         cache_dir = BASE_DIR / ".cache" / "recap-comic"
         cache_dir.mkdir(parents=True, exist_ok=True)
 
-        # Phase 1 + 2: guided run
         plan, artifact, used = gp.run_guided(
             strip_path, out_dir, backend_name=backend,
-            cache_dir=cache_dir, force=False)
+            cache_dir=cache_dir, force=False, fallback=True,
+            api_key=api_key or None, model=model or None,
+            base_url=endpoint or None, cf_account_id=cf_account_id or None,
+            zai_cookies=zai_cookies or None)
 
         _update(job_id, step="narration",
                 message="Generating narration script...")
@@ -78,7 +82,7 @@ def _run_pipeline(job_id: str, strip_path: Path, backend: str,
         plan_path.write_text(plan.model_dump_json(indent=2), "utf-8")
 
         narration_path = out_dir / "narration.txt"
-        narrate_plan(plan_path, narration_path, style="recap")
+        narrate_plan(plan_path, narration_path, style=style)
 
         panels = []
         if artifact is not None:
@@ -106,7 +110,7 @@ def _run_pipeline(job_id: str, strip_path: Path, backend: str,
 
     except Exception as exc:
         _update(job_id, status="error", step="error",
-                message=str(exc))
+                message=f"{type(exc).__name__}: {exc}")
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -116,7 +120,15 @@ async def index() -> HTMLResponse:
 
 @app.post("/api/upload")
 async def upload(file: UploadFile = File(...),
-                 backend: str = "cloudflare") -> JSONResponse:
+                 backend: str = "cloudflare",
+                 tts: str = "edge",
+                 voice: str = "en-US-AriaNeural",
+                 style: str = "recap",
+                 api_key: str = "",
+                 endpoint: str = "",
+                 model: str = "",
+                 cf_account_id: str = "",
+                 zai_cookies: str = "") -> JSONResponse:
     allowed = {"png", "jpg", "jpeg", "webp"}
     suffix = Path(file.filename or "upload.png").suffix.lower().lstrip(".")
     if suffix not in allowed:
@@ -136,6 +148,9 @@ async def upload(file: UploadFile = File(...),
             "step": "queued",
             "message": "Queued",
             "backend": backend,
+            "tts": tts,
+            "voice": voice,
+            "style": style,
             "filename": file.filename,
             "strip_path": str(strip_path.relative_to(BASE_DIR)),
             "created_at": time.time(),
@@ -147,11 +162,20 @@ async def upload(file: UploadFile = File(...),
             "plan_path": "",
             "narration_path": "",
             "error": None,
+            "api_key": api_key,
+            "endpoint": endpoint,
+            "model_override": model,
+            "cf_account_id": cf_account_id,
+            "zai_cookies": zai_cookies,
         }
 
     thread = threading.Thread(
         target=_run_pipeline,
         args=(job_id, strip_path, backend, job_dir),
+        kwargs={"api_key": api_key, "endpoint": endpoint,
+                "model": model, "cf_account_id": cf_account_id,
+                "zai_cookies": zai_cookies,
+                "tts": tts, "voice": voice, "style": style},
         daemon=True)
     thread.start()
 

@@ -59,7 +59,9 @@ VisionAnalysisError = sa.VisionAnalysisError
 
 def build_backend(name: str, api_key: str | None = None,
                   model: str | None = None, base_url: str | None = None,
-                  timeout: int = 120) -> sa.VisionBackend | None:
+                  timeout: int = 120, cf_account_id: str | None = None,
+                  zai_cookies: str | None = None
+                  ) -> sa.VisionBackend | None:
     """Backend factory. "none" means no AI call at all (offline fallback).
     "local" uses Ollama's POST /api/generate (llava/qwen2-vl)."""
     name = name.lower()
@@ -68,24 +70,50 @@ def build_backend(name: str, api_key: str | None = None,
     if name == "fixture":
         return sa.FixtureVisionBackend()
     if name == "gemini":
-        return sa.GeminiVisionBackend(api_key=api_key,
-                                       model=model or "gemini-2.5-flash")
+        kw = {"api_key": api_key}
+        if model:
+            kw["model"] = model
+        return sa.GeminiVisionBackend(**kw)
     if name == "openai":
         if not model:
             raise ValueError("--model is required for the openai backend")
-        return sa.OpenAIVisionBackend(model=model, api_key=api_key)
+        kw = {"model": model, "api_key": api_key}
+        if base_url:
+            kw["base_url"] = base_url
+        return sa.OpenAIVisionBackend(**kw)
     if name == "anthropic":
         if not model:
             raise ValueError("--model is required for the anthropic backend")
-        return sa.AnthropicVisionBackend(model=model, api_key=api_key)
+        kw = {"model": model, "api_key": api_key}
+        if base_url:
+            kw["base_url"] = base_url
+        return sa.AnthropicVisionBackend(**kw)
     if name in ("local", "ollama"):
-        return sa.OllamaVisionBackend(model=model or "llava",
-                                      base_url=base_url, timeout=timeout)
+        kw = {"model": model or "llava", "timeout": timeout}
+        if base_url:
+            kw["base_url"] = base_url
+        return sa.OllamaVisionBackend(**kw)
     if name == "cloudflare":
-        return sa.CloudflareWorkersAIBackend(api_key=api_key)
+        kw = {"api_key": api_key}
+        if model:
+            kw["model"] = model
+        if cf_account_id:
+            kw["account_id"] = cf_account_id
+        return sa.CloudflareWorkersAIBackend(**kw)
+    if name == "zai":
+        kw: dict[str, object] = {}
+        if model:
+            kw["model"] = model
+        if base_url:
+            kw["base_url"] = base_url
+        if api_key:
+            kw["api_key"] = api_key
+        if zai_cookies:
+            kw["cookies"] = zai_cookies
+        return sa.ZaiVisionBackend(**kw)
     raise ValueError(
         f"unknown backend {name!r}; supported: gemini, openai, anthropic, "
-        "ollama, cloudflare, fixture, none")
+        "ollama, cloudflare, zai, fixture, none")
 
 
 def low_confidence_ratio(plan: sa.PanelPlan) -> float:
@@ -185,6 +213,9 @@ def run_guided(
     backend_name: str = "gemini",
     api_key: str | None = None,
     model: str | None = None,
+    base_url: str | None = None,
+    cf_account_id: str | None = None,
+    zai_cookies: str | None = None,
     plan_path: str | Path | None = None,
     chunk_height: int = sa.DEFAULT_CHUNK_HEIGHT,
     overlap: int = sa.DEFAULT_CHUNK_OVERLAP,
@@ -217,7 +248,9 @@ def run_guided(
         plan_from_file = True
     elif backend is not None or backend_name.lower() != "none":
         use = backend if backend is not None else build_backend(
-            backend_name, api_key=api_key, model=model)
+            backend_name, api_key=api_key, model=model,
+            base_url=base_url, cf_account_id=cf_account_id,
+            zai_cookies=zai_cookies)
         if use is None:
             raise sa.VisionAnalysisError("no vision backend available")
         try:

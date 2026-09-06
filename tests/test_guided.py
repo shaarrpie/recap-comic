@@ -524,3 +524,15 @@ def test_cloudflare_backend_name_accepted() -> None:
                 "build_backend rejected 'cloudflare' — backend name drift") from exc
     except RuntimeError:
         pass  # missing credentials is fine; we only care the name is recognized
+
+
+def test_zai_backend_name_accepted() -> None:
+    """Z AI vision backend must be accepted by build_backend."""
+    try:
+        gp.build_backend("zai")
+    except ValueError as exc:
+        if "unknown backend" in str(exc):
+            raise AssertionError(
+                "build_backend rejected 'zai' — backend name drift") from exc
+    except RuntimeError:
+        pass  # missing credentials is fine; we only care the name is recognized

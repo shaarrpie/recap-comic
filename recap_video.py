@@ -67,10 +67,11 @@ class VideoError(RuntimeError):
 # --------------------------------------------------------------------------- #
 @dataclass
 class VideoConfig:
-    tts: Literal["edge", "none"] = "edge"
+    tts: Literal["edge", "kokoro", "none"] = "edge"
     voice: str = "en-US-AriaNeural"
     rate: str = "+0%"            # edge-tts rate, e.g. "+10%"
     pitch: str = "+0Hz"
+    speed: float = 1.0           # kokoro speed multiplier
     include_dialogue: bool = True
     gap_seconds: float = 0.35    # trailing silence after each panel
     min_display_seconds: float = 2.0
@@ -80,6 +81,8 @@ class VideoConfig:
     fps: int = 30
     ffmpeg_exe: str = "ffmpeg"
     ffprobe_exe: str = "ffprobe"
+    kokoro_model_path: Path | None = None
+    kokoro_voices_path: Path | None = None
 
     def hash(self) -> str:
         return _sha256_text(json.dumps(asdict(self), sort_keys=True))
@@ -187,12 +190,23 @@ def build_narration(artifact: CutArtifact, cfg: VideoConfig,
 # Stage 2 — TTS
 # --------------------------------------------------------------------------- #
 def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
-                     cfg: VideoConfig, *, force: bool = False) -> AudioArtifact:
-    """One mp3 per non-empty entry.  Reuses audio.json when hashes match."""
+                     cfg: VideoConfig, *, force: bool = False,
+                     retries: int = 3) -> AudioArtifact:
+    """One mp3/wav per non-empty entry. Reuses audio.json when hashes match."""
     audio_dir.mkdir(parents=True, exist_ok=True)
     sidecar = audio_dir / "audio.json"
-    narration_hash = _sha256_text(narration.model_dump_json())
-    input_hashes = {"narration.json": narration_hash}
+    # B4: cache key includes text content + voice + provider so changing
+    # voice or provider invalidates the cache, but re-running with the same
+    # inputs reuses clips.
+    tts_input_parts = []
+    for e in narration.entries:
+        if e.text.strip():
+            tts_input_parts.append(f"{e.id}:{e.text}:{cfg.voice}:{cfg.tts}")
+    tts_input_hash = _sha256_text("\n".join(tts_input_parts))
+    input_hashes = {
+        "narration.json": _sha256_text(narration.model_dump_json()),
+        "tts_input": tts_input_hash,
+    }
 
     if cfg.tts == "none":
         return AudioArtifact(meta=_meta(cfg.hash(), input_hashes),
@@ -211,19 +225,23 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
             log.debug("ignoring unreadable audio.json: %s", exc)
 
     try:
-        from adapters.tts_edge import synthesize_entry
+        from adapters.tts import synthesize_entry as tts_synth
     except ImportError as exc:
-        raise VideoError("edge-tts is not installed: pip install edge-tts "
-                         "(or use --tts none)") from exc
+        raise VideoError(f"TTS provider not available: {exc}") from exc
 
     entries: list[AudioEntry] = []
     total = sum(1 for e in narration.entries if e.text.strip())
     done = 0
     for e in narration.entries:
-        out = synthesize_entry(
-            e, audio_dir, voice=cfg.voice, rate=cfg.rate, pitch=cfg.pitch,
-            probe_duration=lambda p: probe_duration(p, cfg.ffprobe_exe))
-        if out is None:
+        out, err = tts_synth(
+            e, audio_dir, provider=cfg.tts, voice=cfg.voice,
+            rate=cfg.rate, pitch=cfg.pitch, speed=cfg.speed,
+            probe_duration=lambda p: probe_duration(p, cfg.ffprobe_exe),
+            kokoro_model_path=cfg.kokoro_model_path,
+            kokoro_voices_path=cfg.kokoro_voices_path,
+            retries=retries)
+        if err is not None or out is None:
+            log.warning("TTS skipped %s: %s", e.id, err or "empty text")
             continue
         entries.append(out)
         done += 1

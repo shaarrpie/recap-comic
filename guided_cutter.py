@@ -422,7 +422,13 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
 
     cuts = build_cuts(gray_arr, plan, config=config)
     for c in cuts:
-        piece = rgb.crop((0, c.y_start, width, c.y_end))
+        y0 = max(0, c.y_start)
+        y1 = min(height, c.y_end)
+        if y1 <= y0:
+            log.warning("cut panel %s has empty/negative range [%d,%d]; skipping",
+                        c.id, c.y_start, c.y_end)
+            continue
+        piece = rgb.crop((0, y0, width, y1))
         dest = out / c.image_file
         if dest.exists() and not force:
             log.info("panel file already exists, skipping: %s", dest)

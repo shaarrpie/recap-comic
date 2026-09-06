@@ -59,7 +59,7 @@ MAX_ATTEMPTS = 3
 # normalization convention in _chunk_prompt() / parse_entries_from_json()
 # changes in a way that would make a previously cached plan stale. The
 # value is folded into the Phase-1 cache key so old plans are not reused.
-PROMPT_VERSION = "2026-09-05a"
+PROMPT_VERSION = "2026-09-06a"
 
 PANEL_TYPES = frozenset({
     "single", "tall_scenic", "transition_gutter", "multi_sub_panel", "unknown",
@@ -535,6 +535,10 @@ def _chunk_prompt(height: int, previous_context: str = "") -> str:
             "Do NOT repeat, re-narrate, or borrow panels from it.\n"
         )
     return (
+        "OUTPUT CONTRACT: respond with ONE JSON object ONLY. "
+        "No prose, no markdown, no code fences, no explanations. "
+        "Start with { and end with }. If you cannot comply, return "
+        '{"panels":[],"characters":[]}.\n\n'
         "You are dissecting a vertical manhwa (webtoon) strip image into its "
         "logical panels for a narrated recap video. The image you are viewing "
         f"is a SLICE of a taller strip and is {height} pixels tall.\n\n"
@@ -545,9 +549,8 @@ def _chunk_prompt(height: int, previous_context: str = "") -> str:
         "y_start=0, y_end=250; a bubble around the vertical middle is "
         "bubble_boxes: [[420, 480, 580, 540]]."
         f"{context_block}\n\n"
-        "Return STRICT JSON only - no prose, no commentary, no markdown, and "
-        "never merge two panels into one entry. Every entry is exactly one "
-        "logical panel. The JSON must match this exact shape:\n\n"
+        "Return STRICT JSON only. Every entry is exactly one logical panel. "
+        "The JSON must match this exact shape:\n\n"
         '{"panels": [{"panel_index": 1, "y_start": 120, "y_end": 520, '
         '"narration": "...", "dialogue": "...", "panel_type": "single", '
         '"confidence": 0.95, "bubble_boxes": [[x0, y0, x1, y1], ...]}], '
@@ -776,6 +779,106 @@ class OllamaVisionBackend:
         return parse_entries_from_json(text, image.size[1])
 
 
+class ZaiVisionBackend:
+    """Z AI (chat.z.ai) vision backend via the OpenAI-compatible chat completions API.
+
+    Authenticates with a JWT ``token`` extracted from chat.z.ai cookies
+    (``ZAI_COOKIES`` / ``ZAI_TOKEN`` env vars, on-disk cache, or the
+    ``cookies`` / ``api_key`` constructor args).  Default model is
+    ``glm-4.6v-flash`` (free).  Set ``base_url`` to ``https://api.z.ai`` to use the
+    public PAAS endpoint (``/api/paas/v4/chat/completions``); leave it as
+    ``https://chat.z.ai`` to use the web-chat endpoint (``/api/chat/completions``).
+    """
+    name = "zai"
+    DEFAULT_MODEL = "glm-4.6v-flash"
+
+    def __init__(self, model: str = DEFAULT_MODEL,
+                 api_key: str | None = None,
+                 cookies: dict[str, str] | str | None = None,
+                 base_url: str = "https://chat.z.ai",
+                 timeout: int = 120) -> None:
+        from adapters.zai_cookies import ZaiAuth
+
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.timeout = timeout
+        self._auth = ZaiAuth(cookies=cookies, token=api_key, auto_fetch=True)
+        self.usage_log: list[dict] = []
+        self.last_usage: dict | None = None
+
+    def analyze_chunk(self, image: Image.Image,
+                      previous_context: str = ""
+                      ) -> tuple[list[PanelPlanEntry], list[str]]:
+        import base64
+
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        prompt = _chunk_prompt(image.size[1], previous_context)
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": f"data:image/png;base64,{b64}"
+                            },
+                        },
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ],
+            "temperature": 0.0,
+            "max_tokens": 4096,
+        }
+        endpoint = (
+            "/api/paas/v4/chat/completions"
+            if self.base_url == "https://api.z.ai"
+            else "/api/chat/completions"
+        )
+        headers = self._auth.auth_headers()
+        headers["accept"] = "application/json"
+        req = urllib.request.Request(
+            f"{self.base_url}{endpoint}",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+        )
+        last_err: Exception | None = None
+        for attempt in range(1, 4):
+            try:
+                with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                break
+            except urllib.error.HTTPError as exc:
+                raw = exc.read().decode("utf-8", errors="replace")
+                if exc.code == 429 and attempt < 3:
+                    wait = 5 * attempt
+                    log.warning("Z AI rate-limited (429); retrying in %ds (%d/3)",
+                                wait, attempt)
+                    time.sleep(wait)
+                    continue
+                raise VisionAnalysisError(
+                    f"Z AI API error: HTTP {exc.code} {exc.reason}: {raw[:500]}"
+                ) from exc
+            except urllib.error.URLError as exc:
+                raise VisionAnalysisError(
+                    f"cannot reach Z AI API ({exc.reason})"
+                ) from exc
+        else:
+            assert last_err is not None
+            raise last_err
+        text = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        if not isinstance(text, str):
+            text = str(text) if text is not None else ""
+        text = text.strip()
+        self.last_usage = _capture_usage(data)
+        self.usage_log.append(self.last_usage or {})
+        return parse_entries_from_json(text, image.size[1])
+
+
 class CloudflareWorkersAIBackend:
     """Cloudflare Workers AI backend (default: Llama 3.2 11B Vision).
 
@@ -795,7 +898,8 @@ class CloudflareWorkersAIBackend:
 
     def __init__(self, model: str = DEFAULT_MODEL,
                  api_key: str | None = None,
-                 account_id: str | None = None) -> None:
+                 account_id: str | None = None,
+                 endpoint: str | None = None) -> None:
         self.model = model
         self._api_key = api_key or os.environ.get("CLOUDFLARE_API_TOKEN")
         if not self._api_key:
@@ -805,6 +909,7 @@ class CloudflareWorkersAIBackend:
         if not self._account_id:
             raise RuntimeError(
                 "CLOUDFLARE_ACCOUNT_ID is not set; pass account_id or set the env var")
+        self._endpoint = (endpoint or "").rstrip("/")
         self.usage_log: list[dict] = []
         self.last_usage: dict | None = None
         self._agreed_to_license: bool = False
@@ -839,6 +944,9 @@ class CloudflareWorkersAIBackend:
         image.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         url = (
+            f"{self._endpoint}/accounts/"
+            f"{self._account_id}/ai/run/{self.model}"
+        ) if self._endpoint else (
             f"https://api.cloudflare.com/client/v4/accounts/"
             f"{self._account_id}/ai/run/{self.model}"
         )
