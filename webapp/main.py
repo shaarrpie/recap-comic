@@ -70,7 +70,8 @@ def _run_pipeline(job_id: str, strip_path: Path, backend: str,
                   style: str = "recap") -> None:
     try:
         _update(job_id, status="running", step="phase1",
-                message="Phase 1: AI pre-read...")
+                message="Phase 1: AI pre-read...",
+                updated_at=time.time())
         log.info("job=%s pipeline started backend=%s style=%s", job_id, backend, style)
         import guided_pipeline as gp
         from narrator import narrate_plan
@@ -85,7 +86,8 @@ def _run_pipeline(job_id: str, strip_path: Path, backend: str,
             base_url=endpoint or None, cf_account_id=cf_account_id or None)
 
         _update(job_id, step="narration",
-                message="Generating narration script...")
+                message="Generating narration script...",
+                updated_at=time.time())
         plan_path = out_dir / "plan.json"
         plan_path.write_text(plan.model_dump_json(indent=2), "utf-8")
 
@@ -114,14 +116,16 @@ def _run_pipeline(job_id: str, strip_path: Path, backend: str,
                 panels_count=len(panels),
                 used_fallback=used,
                 provenance=plan.provenance,
-                model=plan.model)
+                model=plan.model,
+                updated_at=time.time())
         log.info("job=%s pipeline completed panels=%d fallback=%s model=%s",
                  job_id, len(panels), used, plan.model)
 
     except Exception as exc:
         log.exception("job=%s pipeline failed: %s", job_id, exc)
         _update(job_id, status="error", step="error",
-                message=f"{type(exc).__name__}: {exc}")
+                message=f"{type(exc).__name__}: {exc}",
+                updated_at=time.time())
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -167,6 +171,7 @@ async def upload(file: UploadFile = File(...),
             "filename": file.filename,
             "strip_path": str(strip_path.relative_to(BASE_DIR)),
             "created_at": time.time(),
+            "updated_at": time.time(),
             "panels": [],
             "panels_count": 0,
             "used_fallback": False,
@@ -175,10 +180,6 @@ async def upload(file: UploadFile = File(...),
             "plan_path": "",
             "narration_path": "",
             "error": None,
-            "api_key": api_key,
-            "endpoint": endpoint,
-            "model_override": model,
-            "cf_account_id": cf_account_id,
             "strip_suffix": suffix,
         }
 
@@ -240,21 +241,6 @@ async def reorder(job_id: str, body: ReorderRequest) -> JSONResponse:
     artifact = artifact.model_copy(update={"panels": new_panels})
     panels_json_path.write_text(artifact.model_dump_json(indent=2), "utf-8")
 
-    # Re-run narration so it follows the new panel order.
-    try:
-        from narrator import narrate_plan
-        plan_path = job_dir / "plan.json"
-        narration_path = job_dir / "narration.txt"
-        if plan_path.exists():
-            log.info("job=%s re-running narration after reorder", job_id)
-            narrate_plan(plan_path, narration_path,
-                         style=job.get("style", "recap"))
-    except Exception as exc:
-        log.exception("job=%s narration failed after reorder: %s", job_id, exc)
-        _update(job_id, status="error", step="error",
-                message=f"narration failed after reorder: {exc}")
-        return JSONResponse({"ok": False, "error": str(exc)})
-
     panels = []
     for p in new_panels:
         panels.append({
@@ -269,8 +255,29 @@ async def reorder(job_id: str, body: ReorderRequest) -> JSONResponse:
             "image_file": p.image_file,
         })
 
-    _update(job_id, panels=panels, panels_count=len(panels))
+    _update(job_id, panels=panels, panels_count=len(panels),
+            message="Order saved. Regenerating narration...")
     log.info("job=%s reorder complete new_order=%s", job_id, [p["id"] for p in panels])
+
+    def _run_narration(jid: str, jdir: Path, style: str) -> None:
+        try:
+            from narrator import narrate_plan
+            plan_path = jdir / "plan.json"
+            narration_path = jdir / "narration.txt"
+            if plan_path.exists():
+                log.info("job=%s re-running narration after reorder", jid)
+                narrate_plan(plan_path, narration_path, style=style)
+                _update(jid, message="Narration regenerated.")
+        except Exception as exc:
+            log.exception("job=%s narration failed after reorder: %s", jid, exc)
+            _update(jid, status="error", step="error",
+                    message=f"narration failed after reorder: {exc}")
+
+    threading.Thread(
+        target=_run_narration,
+        args=(job_id, job_dir, job.get("style", "recap")),
+        daemon=True).start()
+
     return JSONResponse({"ok": True, "panels": panels,
                          "panels_count": len(panels)})
 
