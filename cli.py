@@ -11,18 +11,21 @@ Commands (group `guided`):
   guided run   STRIP                           Phase 1 + Phase 2;
                        --dry-run stops after Phase 1.
 
-Backends (--backend): gemini (default) | openai | anthropic | ollama | cloudflare | fixture | none.
-"fixture" is for offline tests; "none" forces the gutter-detector fallback.
-API keys come ONLY from environment variables (GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY / CLOUDFLARE_API_TOKEN + CLOUDFLARE_ACCOUNT_ID).
+STRIP may be a PNG/JPG/WebP image or a CBZ/ZIP archive containing
+panel images in reading order. Archives are extracted and stitched
+into a single tall strip before processing.
 """
 from __future__ import annotations
 
 import logging
 import os
+import tempfile
+import zipfile
 from pathlib import Path
 
 import typer
 from dotenv import load_dotenv
+from PIL import Image
 
 import guided_pipeline as gp
 import strip_analyzer as sa
@@ -34,6 +37,41 @@ setup_logging(level=os.environ.get("LOG_LEVEL", "INFO"))
 log = get_logger(__name__)
 
 _WRITE_ATOMIC = sa.write_atomic
+
+_ARCHIVE_EXTS = {".zip", ".cbz"}
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _resolve_strip_path(strip: Path) -> Path:
+    """If `strip` is a CBZ/ZIP archive, extract images and stitch them
+    into a single tall PNG in a temp dir. Otherwise return `strip` as-is."""
+    if strip.suffix.lower() not in _ARCHIVE_EXTS:
+        return strip
+    log.info("archive detected suffix=%s extracting=%s", strip.suffix, strip.name)
+    with zipfile.ZipFile(strip, "r") as archive:
+        names = sorted(
+            f for f in archive.namelist()
+            if Path(f).suffix.lower() in _IMAGE_EXTS
+        )
+        if not names:
+            raise typer.BadParameter(
+                f"no images found in archive {strip.name}")
+        images = []
+        for name in names:
+            with archive.open(name) as fh:
+                images.append(Image.open(fh).convert("RGB"))
+    total_h = sum(img.height for img in images)
+    max_w = max(img.width for img in images)
+    stitched = Image.new("RGB", (max_w, total_h))
+    y = 0
+    for img in images:
+        stitched.paste(img, (0, y))
+        y += img.height
+    tmp = Path(tempfile.gettempdir()) / f"recap-comic-{strip.stem}-stitched.png"
+    stitched.save(tmp, "PNG")
+    log.info("archive stitched images=%d out=%s", len(images), tmp)
+    return tmp
+
 
 app = typer.Typer(
     help="manhwa-recap: AI-guided panels & narration for long strips")
@@ -79,7 +117,7 @@ def _validate_style(name: str) -> str:
 @guided_app.command("plan")
 def guided_plan(
     strip: Path = typer.Argument(..., exists=True, dir_okay=False,
-                                 help="tall strip image (PNG/JPG)"),
+                                 help="tall strip image (PNG/JPG) or CBZ/ZIP archive"),
     out_plan: Path | None = typer.Option(
         None, "--out-plan", help="also write the plan JSON here"),
     backend: str = typer.Option(
@@ -115,6 +153,7 @@ def guided_plan(
     --chunk-dir, also saves each chunk image the model received.
     """
     _configure_logging(log_level)
+    strip = _resolve_strip_path(strip)
     backend = _validate_backend(backend)
     used_cache_dir = cache_dir or _default_cache_dir()
     log.info("guided_plan start strip=%s backend=%s model=%s chunk_height=%d overlap=%d",
@@ -147,7 +186,7 @@ def guided_plan(
 @guided_app.command("cut")
 def guided_cut(
     strip: Path = typer.Argument(..., exists=True, dir_okay=False,
-                                 help="tall strip image"),
+                                 help="tall strip image or CBZ/ZIP archive"),
     plan: Path = typer.Argument(..., exists=True, dir_okay=False,
                                 help="plan JSON from 'guided plan'"),
     out_dir: Path = typer.Option("guided_out", "--out-dir"),
@@ -166,6 +205,7 @@ def guided_cut(
 ) -> None:
     """Phase 2 only: cut the strip using an existing plan JSON."""
     _configure_logging(log_level)
+    strip = _resolve_strip_path(strip)
     try:
         _plan, artifact, _used = gp.run_guided(
             strip, out_dir, backend_name="none", plan_path=plan,
@@ -197,7 +237,7 @@ def guided_cut(
 @guided_app.command("run")
 def guided_run(
     strip: Path = typer.Argument(..., exists=True, dir_okay=False,
-                                 help="tall strip image"),
+                                 help="tall strip image or CBZ/ZIP archive"),
     out_dir: Path = typer.Option("guided_out", "--out-dir"),
     backend: str = typer.Option(
         "gemini", "--backend",
@@ -236,6 +276,7 @@ def guided_run(
 ) -> None:
     """Phase 1 (AI pre-read) + Phase 2 (guided dissection) in one command."""
     _configure_logging(log_level)
+    strip = _resolve_strip_path(strip)
     backend = _validate_backend(backend)
     used_cache_dir = cache_dir or _default_cache_dir()
     log.info("guided_run start strip=%s backend=%s model=%s dry_run=%s",

@@ -24,6 +24,7 @@ the 1080x1920 frame (overflow axis gets the pan; exact-fit gets static).
 """
 from __future__ import annotations
 
+import platform
 import subprocess
 from pathlib import Path
 
@@ -36,6 +37,15 @@ class RenderError(RuntimeError):
     def __init__(self, cmd: list[str], stderr_tail: str):
         self.cmd, self.stderr_tail = cmd, stderr_tail
         super().__init__(f"ffmpeg failed (last stderr lines):\n{stderr_tail}")
+
+
+def get_hw_encoder() -> str:
+    system = platform.system()
+    if system == "Darwin":
+        return "hevc_videotoolbox"
+    if system == "Windows":
+        return "h264_nvenc"
+    return "libx264"
 
 
 def build_command(timeline: TimelineArtifact, out_path: Path,
@@ -79,9 +89,10 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
     else:
         chains.append("[acat]aresample=48000[aout]")
         alabel_out = "[aout]"
+    hw_encoder = get_hw_encoder()
     cmd += ["-filter_complex", ";".join(chains),
             "-map", "[vcat]", "-map", alabel_out,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:v", hw_encoder,
             "-pix_fmt", "yuv420p", "-r", str(timeline.fps),
             "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
             str(out_path)]

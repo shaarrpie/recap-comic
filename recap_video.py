@@ -53,6 +53,12 @@ from adapters.schemas import (
 )
 from guided_cutter import CutArtifact, CutPanel
 
+try:
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
+    _HAS_RICH = True
+except ImportError:
+    _HAS_RICH = False
+
 log = logging.getLogger(__name__)
 
 WIDTH, HEIGHT = 1080, 1920
@@ -245,20 +251,41 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
     entries: list[AudioEntry] = []
     total = sum(1 for e in narration.entries if e.text.strip())
     done = 0
-    for e in narration.entries:
-        out, err = tts_synth(
-            e, audio_dir, provider=cfg.tts, voice=cfg.voice,
-            rate=cfg.rate, pitch=cfg.pitch, speed=cfg.speed,
-            probe_duration=lambda p: probe_duration(p, cfg.ffprobe_exe),
-            kokoro_model_path=cfg.kokoro_model_path,
-            kokoro_voices_path=cfg.kokoro_voices_path,
-            retries=retries)
-        if err is not None or out is None:
-            log.warning("TTS skipped %s: %s", e.id, err or "empty text")
-            continue
-        entries.append(out)
-        done += 1
-        log.info("tts %d/%d  %s  %.2fs", done, total, e.id, out.duration_seconds)
+    if _HAS_RICH:
+        progress_ctx = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+        )
+        progress_ctx.start()
+        task_id = progress_ctx.add_task(
+            "[cyan]Synthesizing TTS audio...",
+            total=total,
+        )
+    else:
+        progress_ctx = None
+        task_id = None
+    try:
+        for e in narration.entries:
+            out, err = tts_synth(
+                e, audio_dir, provider=cfg.tts, voice=cfg.voice,
+                rate=cfg.rate, pitch=cfg.pitch, speed=cfg.speed,
+                probe_duration=lambda p: probe_duration(p, cfg.ffprobe_exe),
+                kokoro_model_path=cfg.kokoro_model_path,
+                kokoro_voices_path=cfg.kokoro_voices_path,
+                retries=retries)
+            if err is not None or out is None:
+                log.warning("TTS skipped %s: %s", e.id, err or "empty text")
+                continue
+            entries.append(out)
+            done += 1
+            log.info("tts %d/%d  %s  %.2fs", done, total, e.id, out.duration_seconds)
+            if progress_ctx is not None and task_id is not None:
+                progress_ctx.update(task_id, advance=1)
+    finally:
+        if progress_ctx is not None:
+            progress_ctx.stop()
 
     artifact = AudioArtifact(meta=_meta(cfg.hash(), input_hashes),
                              voice=cfg.voice, entries=entries)
@@ -423,10 +450,22 @@ def render_video(timeline: TimelineArtifact, out_path: Path,
     log.info("render_video start out=%s timeline_entries=%d",
              out_path, len(timeline.entries))
     t0 = time.time()
-    try:
-        render(timeline, tmp, ffmpeg_exe=exe)
-    except RenderError as exc:
-        raise VideoError(str(exc)) from exc
+    if _HAS_RICH:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            transient=True,
+        ) as progress_ctx:
+            progress_ctx.add_task("Rendering video with ffmpeg...")
+            try:
+                render(timeline, tmp, ffmpeg_exe=exe)
+            except RenderError as exc:
+                raise VideoError(str(exc)) from exc
+    else:
+        try:
+            render(timeline, tmp, ffmpeg_exe=exe)
+        except RenderError as exc:
+            raise VideoError(str(exc)) from exc
     elapsed = time.time() - t0
     tmp.replace(out_path)
     log.info("render_video complete out=%s duration=%.2fs", out_path, elapsed)

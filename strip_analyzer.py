@@ -50,6 +50,12 @@ from pydantic import BaseModel, Field, PrivateAttr, ValidationError, model_valid
 from adapters._logging import sanitize
 from adapters.schemas import BBox
 
+try:
+    from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
+    _HAS_RICH = True
+except ImportError:
+    _HAS_RICH = False
+
 log = logging.getLogger(__name__)
 
 DEFAULT_CHUNK_HEIGHT = 2000
@@ -403,29 +409,50 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
         bases: list[int] = []
         prev_entries: list[PanelPlanEntry] = []
         characters: list[str] = []
-        for idx, (base, chunk) in enumerate(chunks):
-            if chunk_dir_p is not None:
-                chunk_dir_p.mkdir(parents=True, exist_ok=True)
-                chunk.save(chunk_dir_p / f"chunk_{idx:02d}.png", "PNG")
-            context = build_context(prev_entries, characters)
-            log.debug("chunk %d/%d base_y=%d size=%dx%d context_len=%d",
-                       idx + 1, len(chunks), base, chunk.width, chunk.height, len(context))
-            try:
-                entries, new_chars = _call_with_retry(
-                    backend, chunk, attempts=attempts,
-                    previous_context=context)
-            except Exception as exc:
-                raise VisionAnalysisError(
-                    f"chunk {idx} (absolute y0={base}) failed after "
-                    f"{attempts} attempt(s): {exc}") from exc
-            log.info("chunk %d/%d panels=%d new_chars=%s",
-                     idx + 1, len(chunks), len(entries), new_chars)
-            prev_entries = entries
-            for name in new_chars:
-                if name not in characters:
-                    characters.append(name)
-            results.append(entries)
-            bases.append(base)
+        if _HAS_RICH:
+            progress_ctx = Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+            )
+            progress_ctx.start()
+            task_id = progress_ctx.add_task(
+                f"[cyan]Analyzing {len(chunks)} strip chunks via LLM...",
+                total=len(chunks),
+            )
+        else:
+            progress_ctx = None
+            task_id = None
+        try:
+            for idx, (base, chunk) in enumerate(chunks):
+                if chunk_dir_p is not None:
+                    chunk_dir_p.mkdir(parents=True, exist_ok=True)
+                    chunk.save(chunk_dir_p / f"chunk_{idx:02d}.png", "PNG")
+                context = build_context(prev_entries, characters)
+                log.debug("chunk %d/%d base_y=%d size=%dx%d context_len=%d",
+                           idx + 1, len(chunks), base, chunk.width, chunk.height, len(context))
+                try:
+                    entries, new_chars = _call_with_retry(
+                        backend, chunk, attempts=attempts,
+                        previous_context=context)
+                except Exception as exc:
+                    raise VisionAnalysisError(
+                        f"chunk {idx} (absolute y0={base}) failed after "
+                        f"{attempts} attempt(s): {exc}") from exc
+                log.info("chunk %d/%d panels=%d new_chars=%s",
+                         idx + 1, len(chunks), len(entries), new_chars)
+                prev_entries = entries
+                for name in new_chars:
+                    if name not in characters:
+                        characters.append(name)
+                results.append(entries)
+                bases.append(base)
+                if progress_ctx is not None and task_id is not None:
+                    progress_ctx.update(task_id, advance=1)
+        finally:
+            if progress_ctx is not None:
+                progress_ctx.stop()
 
     stitched = stitch_chunk_results(results, bases, height)
     if not stitched:
