@@ -1,318 +1,132 @@
 # webapp/main.py
-"""FastAPI webapp for recap-comic.
-
-Endpoints:
-  GET  /            — serve the single-page UI
-  POST /api/upload  — upload a strip, start processing
-  GET  /api/status/{job_id} — poll progress
-  GET  /api/download/{job_id}/{filename} — download output files
-  POST /api/reorder/{job_id} — persist a new panel order and re-run narration
-"""
+"""FastAPI layer: thin. Creates jobs, returns ids, serves status.
+All processing lives in webapp/pipeline.py."""
 from __future__ import annotations
 
 import os
 import threading
-import time
-import uuid
 from pathlib import Path
-from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from adapters._logging import get_logger, setup_logging
 
-# ruff: noqa: B008  # FastAPI's File(...) in defaults IS its supported API
+from . import pipeline
+from .jobs import store
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-
-# Load .env without overriding variables already set in the process
-# (the user may have exported them in the shell before starting uvicorn).
 load_dotenv(BASE_DIR / ".env", override=False)
-
 setup_logging(level=os.environ.get("LOG_LEVEL", "INFO"),
               log_dir=BASE_DIR / "logs")
 log = get_logger(__name__)
 
 app = FastAPI(title="recap-comic webapp")
-
 OUTPUT_DIR = BASE_DIR / "webapp_output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
-# In-memory job store (sufficient for single-user local use)
-jobs: dict[str, dict[str, Any]] = {}
-_lock = threading.Lock()
+_last_config_state: dict | None = None
 
 
-def _json_safe(obj: Any) -> Any:
-    """Convert numpy / non-JSON-serializable types to Python natives."""
-    if hasattr(obj, "item"):
-        return obj.item()
-    if isinstance(obj, dict):
-        return {k: _json_safe(v) for k, v in obj.items()}
-    if isinstance(obj, list):
-        return [_json_safe(v) for v in obj]
-    return obj
-
-
-def _update(job_id: str, **kwargs: Any) -> None:
-    with _lock:
-        jobs[job_id].update(kwargs)
-
-
-def _run_pipeline(job_id: str, strip_path: Path, backend: str,
-                  out_dir: Path, api_key: str = "", endpoint: str = "",
-                  model: str = "", cf_account_id: str = "",
-                  tts: str = "edge", voice: str = "en-US-AriaNeural",
-                  style: str = "recap") -> None:
-    try:
-        _update(job_id, status="running", step="phase1",
-                message="Phase 1: AI pre-read...",
-                updated_at=time.time())
-        log.info("job=%s pipeline started backend=%s style=%s", job_id, backend, style)
-        import guided_pipeline as gp
-        from narrator import narrate_plan
-
-        cache_dir = BASE_DIR / ".cache" / "recap-comic"
-        cache_dir.mkdir(parents=True, exist_ok=True)
-
-        plan, artifact, used = gp.run_guided(
-            strip_path, out_dir, backend_name=backend,
-            cache_dir=cache_dir, force=False, fallback=True,
-            api_key=api_key or None, model=model or None,
-            base_url=endpoint or None, cf_account_id=cf_account_id or None)
-
-        _update(job_id, step="narration",
-                message="Generating narration script...",
-                updated_at=time.time())
-        plan_path = out_dir / "plan.json"
-        plan_path.write_text(plan.model_dump_json(indent=2), "utf-8")
-
-        narration_path = out_dir / "narration.txt"
-        narrate_plan(plan_path, narration_path, style=style)
-
-        panels = []
-        if artifact is not None:
-            for p in artifact.panels:
-                panels.append({
-                    "id": p.id,
-                    "panel_index": p.panel_index,
-                    "y_start": p.y_start,
-                    "y_end": p.y_end,
-                    "narration": p.narration,
-                    "dialogue": p.dialogue,
-                    "panel_type": p.panel_type,
-                    "confidence": p.confidence,
-                    "image_file": p.image_file,
-                })
-
-        _update(job_id, status="done", step="done", message="Complete",
-                panels=panels,
-                plan_path=str(plan_path.relative_to(BASE_DIR)),
-                narration_path=str(narration_path.relative_to(BASE_DIR)),
-                panels_count=len(panels),
-                used_fallback=used,
-                provenance=plan.provenance,
-                model=plan.model,
-                updated_at=time.time())
-        log.info("job=%s pipeline completed panels=%d fallback=%s model=%s",
-                 job_id, len(panels), used, plan.model)
-
-    except Exception as exc:
-        log.exception("job=%s pipeline failed: %s", job_id, exc)
-        _update(job_id, status="error", step="error",
-                message=f"{type(exc).__name__}: {exc}",
-                updated_at=time.time())
-
-
-@app.get("/", response_class=HTMLResponse)
-async def index() -> HTMLResponse:
+@app.get("/")
+async def index():
     return FileResponse(BASE_DIR / "webapp" / "static" / "index.html")
 
 
-@app.post("/api/upload")
-async def upload(file: UploadFile = File(...),
-                 backend: str = "gemini",
-                 tts: str = "edge",
-                 voice: str = "en-US-AriaNeural",
-                 style: str = "recap",
-                 api_key: str = "",
-                 endpoint: str = "",
-                 model: str = "",
-                 cf_account_id: str = "") -> JSONResponse:
-    allowed = {"png", "jpg", "jpeg", "webp"}
-    suffix = Path(file.filename or "upload.png").suffix.lower().lstrip(".")
-    if suffix not in allowed:
-        log.warning("upload rejected unsupported format suffix=%s", suffix)
-        raise HTTPException(400, f"unsupported format: {suffix}")
-
-    job_id = uuid.uuid4().hex[:12]
-    job_dir = OUTPUT_DIR / job_id
-    job_dir.mkdir(parents=True, exist_ok=True)
-    strip_path = job_dir / f"strip{suffix}"
-    content = await file.read()
-    strip_path.write_bytes(content)
-    log.info("job=%s upload received filename=%s size=%d backend=%s",
-             job_id, file.filename, len(content), backend)
-
-    with _lock:
-        jobs[job_id] = {
-            "job_id": job_id,
-            "status": "queued",
-            "step": "queued",
-            "message": "Queued",
-            "backend": backend,
-            "tts": tts,
-            "voice": voice,
-            "style": style,
-            "filename": file.filename,
-            "strip_path": str(strip_path.relative_to(BASE_DIR)),
-            "created_at": time.time(),
-            "updated_at": time.time(),
-            "panels": [],
-            "panels_count": 0,
-            "used_fallback": False,
-            "provenance": "",
-            "model": "",
-            "plan_path": "",
-            "narration_path": "",
-            "error": None,
-            "strip_suffix": suffix,
-        }
-
-    thread = threading.Thread(
-        target=_run_pipeline,
-        args=(job_id, strip_path, backend, job_dir),
-        kwargs={"api_key": api_key, "endpoint": endpoint,
-                "model": model, "cf_account_id": cf_account_id,
-                "tts": tts, "voice": voice, "style": style},
-        daemon=True)
-    thread.start()
-    log.info("job=%s pipeline thread started", job_id)
-
-    return JSONResponse({"job_id": job_id, "status": "queued",
-                         "strip_file": f"strip{suffix}"})
-
-
-class ReorderRequest(BaseModel):
-    order: list[str]
-
-
-@app.post("/api/reorder/{job_id}")
-async def reorder(job_id: str, body: ReorderRequest) -> JSONResponse:
-    if job_id not in jobs:
-        raise HTTPException(404, "job not found")
-    job = jobs[job_id]
-    if job.get("status") != "done":
-        raise HTTPException(400, "job is not complete")
-
-    job_dir = OUTPUT_DIR / job_id
-    panels_json_path = job_dir / "panels.json"
-    if not panels_json_path.exists():
-        raise HTTPException(404, "panels.json not found")
-
-    try:
-        from guided_cutter import CutArtifact
-        artifact = CutArtifact.model_validate_json(
-            panels_json_path.read_text("utf-8"))
-    except Exception as exc:
-        log.exception("job=%s reorder failed to read panels.json: %s", job_id, exc)
-        raise HTTPException(400, f"cannot read panels.json: {exc}") from exc
-
-    old_order = [p.id for p in artifact.panels]
-    log.info("job=%s reorder request previous_order=%s new_order=%s",
-             job_id, old_order, body.order)
-
-    by_id = {p.id: p for p in artifact.panels}
-    new_panels = []
-    for pid in body.order:
-        if pid in by_id:
-            new_panels.append(by_id[pid])
-    if not new_panels:
-        raise HTTPException(400, "no valid panel ids in order")
-
-    # Re-index panels in the new order.
-    for i, p in enumerate(new_panels):
-        p.panel_index = i + 1
-
-    artifact = artifact.model_copy(update={"panels": new_panels})
-    panels_json_path.write_text(artifact.model_dump_json(indent=2), "utf-8")
-
-    panels = []
-    for p in new_panels:
-        panels.append({
-            "id": p.id,
-            "panel_index": p.panel_index,
-            "y_start": p.y_start,
-            "y_end": p.y_end,
-            "narration": p.narration,
-            "dialogue": p.dialogue,
-            "panel_type": p.panel_type,
-            "confidence": p.confidence,
-            "image_file": p.image_file,
-        })
-
-    _update(job_id, panels=panels, panels_count=len(panels),
-            message="Order saved. Regenerating narration...")
-    log.info("job=%s reorder complete new_order=%s", job_id, [p["id"] for p in panels])
-
-    def _run_narration(jid: str, jdir: Path, style: str) -> None:
-        try:
-            from narrator import narrate_plan
-            plan_path = jdir / "plan.json"
-            narration_path = jdir / "narration.txt"
-            if plan_path.exists():
-                log.info("job=%s re-running narration after reorder", jid)
-                narrate_plan(plan_path, narration_path, style=style)
-                _update(jid, message="Narration regenerated.")
-        except Exception as exc:
-            log.exception("job=%s narration failed after reorder: %s", jid, exc)
-            _update(jid, status="error", step="error",
-                    message=f"narration failed after reorder: {exc}")
-
-    threading.Thread(
-        target=_run_narration,
-        args=(job_id, job_dir, job.get("style", "recap")),
-        daemon=True).start()
-
-    return JSONResponse({"ok": True, "panels": panels,
-                         "panels_count": len(panels)})
-
-
-@app.get("/api/status/{job_id}")
-async def status(job_id: str) -> JSONResponse:
-    if job_id not in jobs:
-        raise HTTPException(404, "job not found")
-    with _lock:
-        data = _json_safe(dict(jobs[job_id]))
-    log.debug("job=%s status poll step=%s status=%s", job_id, data.get("step"), data.get("status"))
-    return JSONResponse(data)
-
-
-@app.get("/api/download/{job_id}/{filename}")
-async def download(job_id: str, filename: str) -> FileResponse:
-    if job_id not in jobs:
-        raise HTTPException(404, "job not found")
-    path = OUTPUT_DIR / job_id / filename
-    if not path.exists():
-        raise HTTPException(404, "file not found")
-    log.debug("job=%s download filename=%s", job_id, filename)
-    return FileResponse(path, filename=filename)
-
-
 @app.get("/api/config")
-async def config_status() -> JSONResponse:
-    gemini_key = bool(os.environ.get("GEMINI_API_KEY"))
-    log.debug("config check gemini_configured=%s", gemini_key)
-    return JSONResponse({
-        "gemini_configured": gemini_key,
-        "default_backend": "gemini",
+async def config():
+    global _last_config_state
+    configured = bool(os.environ.get("GEMINI_API_KEY"))
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+    state = {"gemini_configured": configured, "model": model}
+    if state != _last_config_state:
+        log.info("config check gemini_configured=%s model=%s",
+                 configured, model)
+        _last_config_state = state
+    return state
+
+
+@app.post("/api/upload")
+async def upload(file: UploadFile = File(...)):  # noqa: B008
+    allowed = {"png", "jpg", "jpeg", "webp"}
+    suffix = Path(file.filename or "x.png").suffix.lower().lstrip(".")
+    if suffix not in allowed:
+        raise HTTPException(400, f"unsupported format: {suffix}")
+    session = store.create("segment", {})
+    session_dir = OUTPUT_DIR / session.id
+    session_dir.mkdir(parents=True, exist_ok=True)
+    strip_file = f"strip.{suffix}"
+    content = await file.read()
+    (session_dir / strip_file).write_bytes(content)
+    session.config.update({"session": session.id,
+                           "strip_file": strip_file})
+    log.info("job=%s upload received filename=%s bytes=%d",
+             session.id, file.filename, len(content))
+    threading.Thread(target=pipeline.run_job, args=(session.id,),
+                     daemon=True).start()
+    log.info("job=%s worker started kind=segment", session.id)
+    return {"job_id": session.id, "status": session.status.value}
+
+
+class RunRequest(BaseModel):
+    session: str
+    order: list[str] | None = None
+    tts: str = "edge"
+    voice: str = "en-US-AriaNeural"
+    style: str = "recap"
+
+
+@app.post("/api/run")
+async def run(body: RunRequest):
+    src = store.get(body.session)
+    if src is None or not (OUTPUT_DIR / body.session
+                           / src.config.get("strip_file", "")).exists():
+        raise HTTPException(404, "session/strip not found; upload first")
+    job = store.create("generate", {
+        "session": body.session,
+        "strip_file": src.config["strip_file"],
+        "order": body.order,
+        "tts": body.tts, "voice": body.voice, "style": body.style,
     })
+    log.info("job=%s created kind=generate session=%s order=%s",
+             job.id, body.session,
+             "user" if body.order else "default")
+    threading.Thread(target=pipeline.run_job, args=(job.id,),
+                     daemon=True).start()
+    log.info("job=%s worker started kind=generate", job.id)
+    return {"job_id": job.id, "status": job.status.value}
 
 
-# Mount static files AFTER API routes so they don't shadow them
-app.mount("/static", StaticFiles(directory=str(BASE_DIR / "webapp" / "static")),
-          name="static")
+@app.get("/api/jobs/{job_id}")
+async def job_status(job_id: str, logs: int = 0):
+    job = store.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    return JSONResponse(job.to_dict(include_logs=bool(logs)))
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def cancel(job_id: str):
+    job = store.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    job.cancel_requested = True
+    job.log("INFO", "cancel requested")
+    return {"job_id": job_id, "cancel_requested": True}
+
+
+@app.get("/api/jobs/{job_id}/files/{name:path}")
+async def job_file(job_id: str, name: str):
+    job = store.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    session = job.config.get("session", job_id)
+    base = (OUTPUT_DIR / session).resolve()
+    target = (base / name).resolve()
+    if target.parent != base and base not in target.parents:
+        raise HTTPException(400, "bad path")
+    if not target.is_file():
+        raise HTTPException(404, "file not found")
+    return FileResponse(target)

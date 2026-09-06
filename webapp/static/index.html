@@ -37,16 +37,6 @@
     .status.running { background: #eef2ff; color: #1e3a8a; }
     .status.done { background: #ecfdf5; color: #064e3b; }
     .status.error { background: #fef2f2; color: #7f1d1d; }
-    .stepper {
-      display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap;
-    }
-    .step {
-      padding: 6px 12px; border-radius: 6px; background: #f0f0f0;
-      font-size: 0.85rem; color: #666;
-    }
-    .step.active { background: #4f46e5; color: #fff; }
-    .step.done { background: #10b981; color: #fff; }
-    .step.error { background: #ef4444; color: #fff; }
     .gallery {
       display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
       gap: 16px; margin-top: 16px;
@@ -113,6 +103,18 @@
       background: #eef2ff; border: 1px solid #c7d2fe;
     }
     .hidden { display: none; }
+    .stage-label { margin-top: 8px; font-size: 0.9rem; color: #555; }
+    .error-box {
+      margin-top: 8px; padding: 10px 12px; border-radius: 8px;
+      background: #fef2f2; color: #7f1d1d; font-size: 0.9rem;
+    }
+    .log-tail {
+      background: #f0f0f0; padding: 12px; border-radius: 8px;
+      font-family: ui-monospace, monospace; max-height: 300px;
+      overflow-y: auto; margin: 12px 0; font-size: 0.85rem;
+    }
+    .log-tail .log-line { margin: 2px 0; }
+    .log-tail .log-line.error { color: #7f1d1d; }
   </style>
 </head>
 <body>
@@ -150,12 +152,16 @@
         <input type="text" id="voice" value="en-US-AriaNeural" placeholder="edge-tts voice id">
       </div>
       <div class="field">
-        <label>Model</label>
-        <input type="text" id="model" placeholder="auto">
+        <label>Style</label>
+        <select id="style">
+          <option value="recap">recap</option>
+          <option value="dramatic">dramatic</option>
+          <option value="comedy">comedy</option>
+        </select>
       </div>
     </div>
     <div class="row">
-      <button id="run" disabled>Run</button>
+      <button id="run-btn" disabled>Run</button>
       <span id="file-count" class="empty"></span>
     </div>
     <details class="api-keys">
@@ -180,84 +186,324 @@
         <span id="key-status" class="empty"></span>
       </div>
     </details>
+    <div id="stage-label" class="stage-label empty"></div>
+    <div id="error-box" class="error-box hidden"></div>
     <div class="status empty" id="status">Idle</div>
   </div>
 
-  <div class="card" id="result" style="display:none">
-    <div class="stepper" id="stepper">
-      <div class="step" data-step="upload">Upload</div>
-      <div class="step" data-step="phase1">Phase 1: AI plan</div>
-      <div class="step" data-step="phase2">Phase 2: Cut</div>
-      <div class="step" data-step="narration">Narration</div>
-      <div class="step" data-step="done">Done</div>
-    </div>
-    <h2>Result</h2>
-    <div id="summary"></div>
-    <div class="actions" id="actions"></div>
-    <div class="reorder-tools hidden" id="reorder-tools">
-      <b>Panel order</b>
-      <p style="margin:4px 0 8px; font-size:0.9rem; color:#555;">
-        Drag panels to reorder them. The narration and final video will follow this sequence.
-      </p>
+  <div class="card" id="segment-card" style="display:none">
+    <h2>Panels</h2>
+    <p style="margin:4px 0 8px; font-size:0.9rem; color:#555;">
+      Drag panels to reorder them. The narration and final video will follow this sequence.
+    </p>
+    <div class="reorder-tools">
       <div class="row">
-        <button id="apply-order" type="button">Apply order & regenerate narration</button>
-        <button id="reset-order" type="button" class="secondary">Reset to detected order</button>
+        <button id="apply-order" type="button" class="secondary">Reset to detected order</button>
       </div>
       <p id="reorder-status" class="empty" style="margin-top:8px; font-size:0.85rem;"></p>
     </div>
     <div class="gallery" id="gallery"></div>
   </div>
 
+  <div class="card" id="generation-card" style="display:none">
+    <h2>Result</h2>
+    <div id="log-tail" class="log-tail"></div>
+    <div class="actions" id="actions"></div>
+  </div>
+
   <script>
+    const state = { session: null, panels: [], order: [], running: false };
+    const runBtn = document.getElementById("run-btn");
+    const stageLabel = document.getElementById("stage-label");
+    const errorBox = document.getElementById("error-box");
+    const logTail = document.getElementById("log-tail");
+    const dropzone = document.getElementById("dropzone");
+    const fileInput = document.getElementById("file");
+    const statusEl = document.getElementById("status");
+    const segmentCard = document.getElementById("segment-card");
+    const generationCard = document.getElementById("generation-card");
+    const galleryEl = document.getElementById("gallery");
+    const reorderStatus = document.getElementById("reorder-status");
+    const applyOrderBtn = document.getElementById("apply-order");
+    const fileCountEl = document.getElementById("file-count");
+
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
     function $(id) { return document.getElementById(id); }
-    var dropzone = $('dropzone');
-    var fileInput = $('file');
-    var runBtn = $('run');
-    var statusEl = $('status');
-    var resultCard = $('result');
-    var summaryEl = $('summary');
-    var actionsEl = $('actions');
-    var galleryEl = $('gallery');
-    var stepper = $('stepper');
-    var fileCountEl = $('file-count');
-    var reorderTools = $('reorder-tools');
-    var reorderStatus = $('reorder-status');
-    var stripPreviewContainer = $('strip-preview-container');
-    var geminiBadge = $('gemini-badge');
 
-    var currentJobId = null;
-    var currentPanels = [];
-    var detectedOrder = [];
-    var dragSrcIndex = null;
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.classList.remove("hidden");
+    }
 
-    function setStep(step) {
-      stepper.querySelectorAll('.step').forEach(function(el) {
-        var s = el.dataset.step;
-        el.classList.remove('active', 'done', 'error');
-        if (s === step) el.classList.add('active');
+    function hideError() {
+      errorBox.classList.add("hidden");
+      errorBox.textContent = "";
+    }
+
+    function setStatus(text, cls) {
+      statusEl.textContent = text;
+      statusEl.className = "status " + (cls || "");
+    }
+
+    async function api(path, opts = {}) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 10000);
+      try {
+        const res = await fetch(path, { ...opts, signal: ctrl.signal });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`);
+        return data;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    function renderGallery() {
+      galleryEl.innerHTML = "";
+      for (let i = 0; i < state.panels.length; i++) {
+        const p = state.panels[i];
+        const el = document.createElement("div");
+        el.className = "panel";
+        el.draggable = true;
+        el.dataset.index = i;
+        el.dataset.id = p.id;
+        const confPct = ((p.confidence || 0) * 100).toFixed(0);
+        const confClass = (p.confidence || 0) < 0.5 ? "low" : "";
+        el.innerHTML = `<img src="/api/jobs/${state.session}/files/${p.image_file}" alt="panel ${p.id}" loading="lazy">` +
+          `<div class="meta"><b>#${p.id} <span style="font-weight:normal;color:#666">#</span>${i + 1}</b>` +
+          `<span class="order-badge">Order ${i + 1}</span>` +
+          `<span class="tag">${p.panel_type || ""}</span>` +
+          `<span class="tag conf ${confClass}">${confPct}%</span>` +
+          `<div style="margin-top:6px; color:#444">${escapeHtml(p.narration || p.dialogue || "(no text)")}</div>` +
+          `</div>`;
+
+        el.addEventListener("dragstart", function(e) {
+          dragSrcIndex = i;
+          el.classList.add("dragging");
+          e.dataTransfer.effectAllowed = "move";
+        });
+        el.addEventListener("dragend", function() {
+          el.classList.remove("dragging");
+          galleryEl.querySelectorAll(".panel").forEach(function(p){ p.classList.remove("drag-over"); });
+        });
+        el.addEventListener("dragover", function(e) {
+          e.preventDefault();
+          el.classList.add("drag-over");
+        });
+        el.addEventListener("dragleave", function() {
+          el.classList.remove("drag-over");
+        });
+        el.addEventListener("drop", function(e) {
+          e.preventDefault();
+          el.classList.remove("drag-over");
+          if (dragSrcIndex === null || dragSrcIndex === i) return;
+          const item = state.panels.splice(dragSrcIndex, 1)[0];
+          state.panels.splice(i, 0, item);
+          dragSrcIndex = null;
+          renderGallery();
+        });
+
+        galleryEl.appendChild(el);
+      }
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, function(c) {
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c] || c;
       });
     }
-    function markStep(step, state) {
-      var el = stepper.querySelector('.step[data-step="' + step + '"]');
-      if (el) el.classList.add(state);
-    }
 
-    dropzone.addEventListener('click', function() { fileInput.click(); });
-    dropzone.addEventListener('dragover', function(e) { e.preventDefault(); dropzone.classList.add('over'); });
-    dropzone.addEventListener('dragleave', function() { dropzone.classList.remove('over'); });
-    dropzone.addEventListener('drop', function(e) {
-      e.preventDefault(); dropzone.classList.remove('over');
-      if (e.dataTransfer.files.length) pick(e.dataTransfer.files);
-    });
-    fileInput.addEventListener('change', function() {
-      if (fileInput.files.length) pick(fileInput.files);
+    let dragSrcIndex = null;
+
+    applyOrderBtn.addEventListener("click", function() {
+      if (!state.session || !state.panels.length) return;
+      state.order = state.panels.map(function(p) { return p.id; });
+      reorderStatus.textContent = "Order reset to detected order.";
+      reorderStatus.className = "status done";
+      setTimeout(function() { reorderStatus.textContent = ""; reorderStatus.className = "empty"; }, 2000);
     });
 
-    function pick(files) {
-      selectedFiles = files;
-      fileCountEl.textContent = files.length + ' file' + (files.length > 1 ? 's' : '') + ' selected';
-      runBtn.disabled = false;
+    async function uploadAndSegment(files) {
+      if (!files || !files.length) return;
+      state.running = true;
+      runBtn.disabled = true;
+      runBtn.textContent = "Uploading...";
+      hideError();
+      setStatus("Uploading...", "running");
+
+      try {
+        const sessionJobs = [];
+        for (let i = 0; i < files.length; i++) {
+          setStatus(`Uploading ${i + 1}/${files.length}...`, "running");
+          const j = await api("/api/upload", {
+            method: "POST",
+            body: (() => { const f = new FormData(); f.append("file", files[i]); return f; })()
+          });
+          sessionJobs.push(j);
+        }
+        const sessionId = sessionJobs[0].job_id;
+        state.session = sessionId;
+        fileCountEl.textContent = files.length + " file" + (files.length > 1 ? "s" : "") + " selected";
+
+        setStatus("Segmenting panels...", "running");
+        await monitorJob(sessionId, false);
+        runBtn.textContent = "Run";
+        runBtn.disabled = false;
+        setStatus("Ready to generate", "");
+      } catch (err) {
+        showError(err.message || String(err));
+        runBtn.textContent = "Run";
+        runBtn.disabled = false;
+        setStatus("Upload failed", "error");
+      } finally {
+        state.running = false;
+      }
     }
+
+    async function monitorJob(jobId, isGeneration) {
+      let netFails = 0;
+      while (true) {
+        let s;
+        try {
+          s = await api(`/api/jobs/${jobId}?logs=1`);
+          netFails = 0;
+        } catch (netErr) {
+          if (++netFails >= 5) {
+            throw new Error("lost contact with server while job " + jobId + " was running");
+          }
+          await sleep(2000);
+          continue;
+        }
+
+        if (isGeneration) {
+          renderStage(s);
+          renderLogs(s.logs || []);
+          const age = Date.now() / 1000 - (s.updated_at || 0);
+          if (s.status === "running" && age > 90) {
+            stageLabel.textContent = `${s.stage || "working"} (still working, ${Math.round(age)}s)`;
+          }
+        } else {
+          setStatus(s.message || s.status, s.status === "completed" ? "done" : (s.status === "error" ? "error" : "running"));
+        }
+
+        if (s.status === "completed" || s.status === "done") {
+          if (isGeneration) {
+            state.panels = s.panels || [];
+            renderOutputs(s.outputs || {}, jobId);
+          } else {
+            state.panels = s.panels || [];
+            renderGallery();
+            segmentCard.style.display = "block";
+            runBtn.disabled = false;
+            setStatus("Panels ready. Drag to reorder, then click Run.", "");
+          }
+          return;
+        }
+        if (s.status === "failed" || s.status === "error") {
+          if (isGeneration) {
+            throw new Error(s.error || s.message || "job failed");
+          } else {
+            showError(s.error || s.message || "segmentation failed");
+            setStatus("Segmentation failed", "error");
+            return;
+          }
+        }
+        if (s.status === "cancelled") {
+          if (isGeneration) {
+            throw new Error("job cancelled");
+          } else {
+            setStatus("Cancelled", "error");
+            return;
+          }
+        }
+        await sleep(1000);
+      }
+    }
+
+    function renderStage(s) {
+      const stage = s.stage || s.status;
+      stageLabel.textContent = stage;
+      stageLabel.className = "stage-label";
+      if (s.status === "running") stageLabel.classList.add("running");
+      else if (s.status === "completed") stageLabel.classList.add("done");
+      else if (s.status === "failed") stageLabel.classList.add("error");
+    }
+
+    function renderLogs(logs) {
+      logTail.innerHTML = "";
+      for (const line of logs) {
+        const div = document.createElement("div");
+        div.className = "log-line" + (line.level === "ERROR" ? " error" : "");
+        div.textContent = `[${line.level}] ${line.stage || ""}: ${line.msg}`;
+        logTail.appendChild(div);
+      }
+      logTail.scrollTop = logTail.scrollHeight;
+    }
+
+    function renderOutputs(outputs, jobId) {
+      const actionsEl = document.getElementById("actions");
+      actionsEl.innerHTML = "";
+      generationCard.style.display = "block";
+      const links = [];
+      for (const [name, path] of Object.entries(outputs)) {
+        links.push(`<a href="/api/jobs/${jobId}/files/${name}" download>${name}</a>`);
+      }
+      actionsEl.innerHTML = links.join("") || '<span class="empty">no outputs yet</span>';
+    }
+
+    async function runGeneration() {
+      if (state.running || !state.session) return;
+      state.running = true;
+      runBtn.disabled = true;
+      runBtn.textContent = "Running...";
+      runBtn.classList.add("is-running");
+      hideError();
+      setStatus("Queued", "running");
+      generationCard.style.display = "none";
+
+      try {
+        const body = {
+          session: state.session,
+          order: state.order.length ? state.order : undefined,
+          tts: document.getElementById("tts").value,
+          voice: document.getElementById("voice").value,
+          style: document.getElementById("style").value,
+        };
+        const { job_id } = await api("/api/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        stageLabel.textContent = "queued";
+        stageLabel.className = "stage-label";
+        await monitorJob(job_id, true);
+        runBtn.textContent = "Run again";
+        runBtn.classList.add("is-done");
+        setStatus("Complete", "done");
+      } catch (err) {
+        showError(err.message || String(err));
+        runBtn.textContent = "Run";
+        setStatus("Generation failed", "error");
+      } finally {
+        state.running = false;
+        runBtn.disabled = false;
+        runBtn.classList.remove("is-running");
+      }
+    }
+
+    runBtn.addEventListener("click", runGeneration);
+
+    dropzone.addEventListener("click", function() { fileInput.click(); });
+    dropzone.addEventListener("dragover", function(e) { e.preventDefault(); dropzone.classList.add("over"); });
+    dropzone.addEventListener("dragleave", function() { dropzone.classList.remove("over"); });
+    dropzone.addEventListener("drop", function(e) {
+      e.preventDefault(); dropzone.classList.remove("over");
+      if (e.dataTransfer.files.length) uploadAndSegment(e.dataTransfer.files);
+    });
+    fileInput.addEventListener("change", function() {
+      if (fileInput.files.length) uploadAndSegment(fileInput.files);
+    });
 
     $('save-keys').addEventListener('click', function() {
       var keys = {};
@@ -289,219 +535,18 @@
 
     async function loadConfig() {
       try {
-        var res = await fetch('/api/config');
-        if (!res.ok) return;
-        var cfg = await res.json();
+        const cfg = await api("/api/config");
+        const badge = $("gemini-badge");
         if (cfg.gemini_configured) {
-          geminiBadge.className = 'gemini-badge';
-          geminiBadge.textContent = 'Gemini configured';
+          badge.className = "gemini-badge";
+          badge.textContent = "Gemini configured";
         } else {
-          geminiBadge.className = 'gemini-badge missing';
-          geminiBadge.textContent = 'Gemini not configured';
-        }
-        if (cfg.default_backend && !$('backend').value) {
-          $('backend').value = cfg.default_backend;
+          badge.className = "gemini-badge missing";
+          badge.textContent = "Gemini not configured";
         }
       } catch(e) {}
     }
     loadConfig();
-
-    async function uploadOne(file, backend) {
-      var form = new FormData();
-      form.append('file', file);
-      form.append('backend', backend);
-      form.append('tts', $('tts').value);
-      form.append('voice', $('voice').value);
-      form.append('style', $('style').value);
-      form.append('api_key', $('key-api-key').value);
-      form.append('endpoint', $('key-endpoint').value);
-      form.append('model', $('key-model').value);
-      form.append('cf_account_id', $('key-cf-account-id').value);
-      var res = await fetch('/api/upload', { method: 'POST', body: form });
-      if (!res.ok) throw new Error((await res.text()) || 'upload failed');
-      return await res.json();
-    }
-
-    runBtn.addEventListener('click', async function() {
-      if (!selectedFiles || !selectedFiles.length) return;
-      var backend = $('backend').value;
-      var tts = $('tts').value;
-      var voice = $('voice').value;
-      var style = $('style').value;
-
-      resultCard.style.display = 'none';
-      galleryEl.innerHTML = '';
-      actionsEl.innerHTML = '';
-      reorderTools.classList.add('hidden');
-      stripPreviewContainer.innerHTML = '';
-      statusEl.className = 'status running';
-      statusEl.textContent = 'Uploading...';
-      setStep('upload');
-
-      try {
-        var jobs = [];
-        for (var i = 0; i < selectedFiles.length; i++) {
-          statusEl.textContent = 'Uploading ' + (i + 1) + '/' + selectedFiles.length + '...';
-          var j = await uploadOne(selectedFiles[i], backend);
-          jobs.push(j);
-        }
-        markStep('upload', 'done');
-        setStep('phase1');
-        statusEl.textContent = 'Processing...';
-        var first = jobs[0];
-        currentJobId = first.job_id;
-        if (first.strip_file) {
-          stripPreviewContainer.innerHTML = '<div class="strip-preview">' +
-            '<img src="/api/download/' + first.job_id + '/' + first.strip_file + '" alt="uploaded strip">' +
-            '<div class="meta">Original: ' + escapeHtml((selectedFiles[0] && selectedFiles[0].name) || 'strip') + '</div>' +
-            '</div>';
-        }
-        poll(first.job_id, jobs.map(function(j) { return j.job_id; }));
-      } catch (err) {
-        statusEl.className = 'status error';
-        statusEl.textContent = 'Upload failed: ' + err.message;
-      }
-    });
-
-    async function poll(job_id, allJobIds) {
-      var interval = setInterval(async function() {
-        try {
-          var res = await fetch('/api/status/' + job_id);
-          if (!res.ok) throw new Error('job not found');
-          var data = await res.json();
-          var state = data.status === 'done' ? 'done' : (data.status === 'error' ? 'error' : 'running');
-          statusEl.className = 'status ' + state;
-          statusEl.textContent = data.message + (data.panels_count ? ' — ' + data.panels_count + ' panels' : '');
-
-          if (state === 'done') {
-            markStep('phase1', 'done');
-            markStep('phase2', 'done');
-            markStep('narration', 'done');
-            markStep('done', 'done');
-            clearInterval(interval);
-            renderResult(job_id, data);
-          } else if (state === 'error') {
-            markStep(data.step || 'phase1', 'error');
-            clearInterval(interval);
-          } else {
-            if (data.step === 'phase1') setStep('phase1');
-            else if (data.step === 'narration') { markStep('phase2', 'done'); setStep('narration'); }
-            else setStep('phase2');
-          }
-        } catch (err) {
-          clearInterval(interval);
-          statusEl.className = 'status error';
-          statusEl.textContent = 'Lost connection to server.';
-        }
-      }, 1000);
-    }
-
-    function renderResult(job_id, data) {
-      resultCard.style.display = 'block';
-      summaryEl.innerHTML = '<b>' + data.panels_count + ' panels</b> · model: ' + (data.model || '—') + ' · provenance: ' + (data.provenance || '—') + ' · used fallback: ' + (data.used_fallback ? 'yes' : 'no');
-
-      var links = [];
-      if (data.plan_path) links.push('<a href="/api/download/' + job_id + '/' + data.plan_path.split('/').pop() + '" download>plan.json</a>');
-      if (data.narration_path) links.push('<a href="/api/download/' + job_id + '/' + data.narration_path.split('/').pop() + '" download>narration.txt</a>');
-      actionsEl.innerHTML = links.join('') || '<span class="empty">no downloads yet</span>';
-
-      currentPanels = data.panels || [];
-      detectedOrder = currentPanels.map(function(p) { return p.id; });
-      renderGallery();
-      reorderTools.classList.remove('hidden');
-    }
-
-    function renderGallery() {
-      galleryEl.innerHTML = '';
-      for (var i = 0; i < currentPanels.length; i++) {
-        var p = currentPanels[i];
-        var el = document.createElement('div');
-        el.className = 'panel';
-        el.draggable = true;
-        el.dataset.index = i;
-        el.dataset.id = p.id;
-        var confPct = (p.confidence * 100).toFixed(0);
-        var confClass = p.confidence < 0.5 ? 'low' : '';
-        el.innerHTML = '<img src="/api/download/' + currentJobId + '/' + p.image_file + '" alt="panel ' + p.id + '" loading="lazy">' +
-          '<div class="meta"><b>#' + p.id + ' <span style="font-weight:normal;color:#666">#</span>' + (i + 1) + '</b>' +
-          '<span class="order-badge">Order ' + (i + 1) + '</span>' +
-          '<span class="tag">' + p.panel_type + '</span>' +
-          '<span class="tag conf ' + confClass + '">' + confPct + '%</span>' +
-          '<div style="margin-top:6px; color:#444">' + escapeHtml(p.narration || p.dialogue || '(no text)') + '</div>' +
-          '</div>';
-
-        el.addEventListener('dragstart', function(e) {
-          dragSrcIndex = i;
-          el.classList.add('dragging');
-          e.dataTransfer.effectAllowed = 'move';
-        });
-        el.addEventListener('dragend', function() {
-          el.classList.remove('dragging');
-          galleryEl.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('drag-over'); });
-        });
-        el.addEventListener('dragover', function(e) {
-          e.preventDefault();
-          el.classList.add('drag-over');
-        });
-        el.addEventListener('dragleave', function() {
-          el.classList.remove('drag-over');
-        });
-        el.addEventListener('drop', function(e) {
-          e.preventDefault();
-          el.classList.remove('drag-over');
-          if (dragSrcIndex === null || dragSrcIndex === i) return;
-          var item = currentPanels.splice(dragSrcIndex, 1)[0];
-          currentPanels.splice(i, 0, item);
-          dragSrcIndex = null;
-          renderGallery();
-        });
-
-        galleryEl.appendChild(el);
-      }
-    }
-
-    $('apply-order').addEventListener('click', async function() {
-      if (!currentJobId || !currentPanels.length) return;
-      var order = currentPanels.map(function(p) { return p.id; });
-      reorderStatus.textContent = 'Applying order...';
-      reorderStatus.className = '';
-      try {
-        var res = await fetch('/api/reorder/' + currentJobId, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order: order })
-        });
-        if (!res.ok) throw new Error((await res.text()) || 'reorder failed');
-        var data = await res.json();
-        if (data.ok) {
-          currentPanels = data.panels;
-          renderGallery();
-          reorderStatus.textContent = 'Order applied. Narration regenerated.';
-          reorderStatus.className = 'status done';
-        } else {
-          throw new Error(data.error || 'unknown error');
-        }
-      } catch (err) {
-        reorderStatus.textContent = 'Failed: ' + err.message;
-        reorderStatus.className = 'status error';
-      }
-    });
-
-    $('reset-order').addEventListener('click', function() {
-      if (!detectedOrder.length) return;
-      var byId = {};
-      currentPanels.forEach(function(p) { byId[p.id] = p; });
-      currentPanels = detectedOrder.map(function(id) { return byId[id]; }).filter(Boolean);
-      renderGallery();
-      reorderStatus.textContent = 'Reset to detected order.';
-      reorderStatus.className = '';
-    });
-
-    function escapeHtml(s) {
-      return s.replace(/[&<>"']/g, function(c) {
-        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c] || c;
-      });
-    }
   </script>
 </body>
 </html>
