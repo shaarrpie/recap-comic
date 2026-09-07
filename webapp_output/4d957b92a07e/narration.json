@@ -1,0 +1,350 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "generator": "recap_video.1",
+    "config_hash": "42ee8185dd18cfe2b81699d2f11aa708be8d064afc0779ce46a5509e1db7118f",
+    "input_hashes": {
+      "panels.json": "ea64f498ed5d0ebaf0117d6724a917b1ee1f92a34ac68e47bf2958ec6d46958b"
+    }
+  },
+  "mode": "narrator",
+  "entries": [
+    {
+      "id": "001",
+      "panel_id": "001",
+      "order": 1,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "003aaaa",
+      "panel_id": "003aaaa",
+      "order": 2,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "003aaabaaa",
+      "panel_id": "003aaabaaa",
+      "order": 3,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "003aaabaab",
+      "panel_id": "003aaabaab",
+      "order": 4,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "003aaababa",
+      "panel_id": "003aaababa",
+      "order": 5,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "003aaababb",
+      "panel_id": "003aaababb",
+      "order": 6,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "003aaabb",
+      "panel_id": "003aaabb",
+      "order": 7,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "003aab",
+      "panel_id": "003aab",
+      "order": 8,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "003ab",
+      "panel_id": "003ab",
+      "order": 9,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "003b",
+      "panel_id": "003b",
+      "order": 10,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "007",
+      "panel_id": "007",
+      "order": 11,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "008",
+      "panel_id": "008",
+      "order": 12,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "009",
+      "panel_id": "009",
+      "order": 13,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "010",
+      "panel_id": "010",
+      "order": 14,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "011",
+      "panel_id": "011",
+      "order": 15,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "012",
+      "panel_id": "012",
+      "order": 16,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "013",
+      "panel_id": "013",
+      "order": 17,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "014",
+      "panel_id": "014",
+      "order": 18,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "015",
+      "panel_id": "015",
+      "order": 19,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "016",
+      "panel_id": "016",
+      "order": 20,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "017",
+      "panel_id": "017",
+      "order": 21,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "018",
+      "panel_id": "018",
+      "order": 22,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "019",
+      "panel_id": "019",
+      "order": 23,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "020",
+      "panel_id": "020",
+      "order": 24,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "021a",
+      "panel_id": "021a",
+      "order": 25,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "021baa",
+      "panel_id": "021baa",
+      "order": 26,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "021babaa",
+      "panel_id": "021babaa",
+      "order": 27,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "021bababaa",
+      "panel_id": "021bababaa",
+      "order": 28,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "021babababa",
+      "panel_id": "021babababa",
+      "order": 29,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "021babababbaa",
+      "panel_id": "021babababbaa",
+      "order": 30,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "021babababbab",
+      "panel_id": "021babababbab",
+      "order": 31,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "021babababbb",
+      "panel_id": "021babababbb",
+      "order": 32,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "021bababb",
+      "panel_id": "021bababb",
+      "order": 33,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "021babb",
+      "panel_id": "021babb",
+      "order": 34,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "021bb",
+      "panel_id": "021bb",
+      "order": 35,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "023",
+      "panel_id": "023",
+      "order": 36,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "024",
+      "panel_id": "024",
+      "order": 37,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "025",
+      "panel_id": "025",
+      "order": 38,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "026",
+      "panel_id": "026",
+      "order": 39,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "027",
+      "panel_id": "027",
+      "order": 40,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "028",
+      "panel_id": "028",
+      "order": 41,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "029",
+      "panel_id": "029",
+      "order": 42,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    }
+  ],
+  "ungrounded_quotes": []
+}

@@ -48,8 +48,17 @@ async def config():
     return state
 
 
+class UploadRequest(BaseModel):
+    backend: str = "none"
+    api_key: str = ""
+    model: str = ""
+    endpoint: str = ""
+    cf_account_id: str = ""
+
+
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...)):  # noqa: B008
+async def upload(file: UploadFile = File(...),  # noqa: B008
+                 body: UploadRequest | None = None):
     allowed = {"png", "jpg", "jpeg", "webp"}
     suffix = Path(file.filename or "x.png").suffix.lower().lstrip(".")
     if suffix not in allowed:
@@ -58,12 +67,28 @@ async def upload(file: UploadFile = File(...)):  # noqa: B008
     session_dir = OUTPUT_DIR / session.id
     session_dir.mkdir(parents=True, exist_ok=True)
     strip_file = f"strip.{suffix}"
-    content = await file.read()
+    max_bytes = 200 * 1024 * 1024
+    content = b""
+    while True:
+        chunk = await file.read(4 * 1024 * 1024)
+        if not chunk:
+            break
+        content += chunk
+        if len(content) > max_bytes:
+            raise HTTPException(413, "upload too large; max 200 MB")
     (session_dir / strip_file).write_bytes(content)
-    session.config.update({"session": session.id,
-                           "strip_file": strip_file})
-    log.info("job=%s upload received filename=%s bytes=%d",
-             session.id, file.filename, len(content))
+    cfg = {
+        "session": session.id,
+        "strip_file": strip_file,
+        "backend": (body.backend if body else "none"),
+        "api_key": (body.api_key if body else ""),
+        "model": (body.model if body else ""),
+        "endpoint": (body.endpoint if body else ""),
+        "cf_account_id": (body.cf_account_id if body else ""),
+    }
+    session.config.update(cfg)
+    log.info("job=%s upload received filename=%s bytes=%d backend=%s",
+             session.id, file.filename, len(content), cfg["backend"])
     threading.Thread(target=pipeline.run_job, args=(session.id,),
                      daemon=True).start()
     log.info("job=%s worker started kind=segment", session.id)
@@ -76,6 +101,11 @@ class RunRequest(BaseModel):
     tts: str = "edge"
     voice: str = "en-US-AriaNeural"
     style: str = "recap"
+    backend: str = "none"
+    api_key: str = ""
+    model: str = ""
+    endpoint: str = ""
+    cf_account_id: str = ""
 
 
 @app.post("/api/run")
@@ -89,6 +119,11 @@ async def run(body: RunRequest):
         "strip_file": src.config["strip_file"],
         "order": body.order,
         "tts": body.tts, "voice": body.voice, "style": body.style,
+        "backend": body.backend,
+        "api_key": body.api_key,
+        "model": body.model,
+        "endpoint": body.endpoint,
+        "cf_account_id": body.cf_account_id,
     })
     log.info("job=%s created kind=generate session=%s order=%s",
              job.id, body.session,

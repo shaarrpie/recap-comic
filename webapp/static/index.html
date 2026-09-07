@@ -140,6 +140,10 @@
         </select>
       </div>
       <div class="field">
+        <label>Model</label>
+        <input type="text" id="model" placeholder="model id (optional)">
+      </div>
+      <div class="field">
         <label>TTS</label>
         <select id="tts">
           <option value="edge">edge-tts (cloud)</option>
@@ -164,6 +168,7 @@
       <button id="run-btn" disabled>Run</button>
       <span id="file-count" class="empty"></span>
     </div>
+    <div id="session-list" style="margin-top:10px"></div>
     <details class="api-keys">
       <summary>Connection settings (stored locally in your browser only)</summary>
       <div class="settings-grid">
@@ -212,7 +217,7 @@
   </div>
 
   <script>
-    const state = { session: null, panels: [], order: [], running: false };
+    const state = { session: null, panels: [], order: [], running: false, sessions: [] };
     const runBtn = document.getElementById("run-btn");
     const stageLabel = document.getElementById("stage-label");
     const errorBox = document.getElementById("error-box");
@@ -226,6 +231,7 @@
     const reorderStatus = document.getElementById("reorder-status");
     const applyOrderBtn = document.getElementById("apply-order");
     const fileCountEl = document.getElementById("file-count");
+    const sessionListEl = document.getElementById("session-list");
 
     const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -246,9 +252,64 @@
       statusEl.className = "status " + (cls || "");
     }
 
-    async function api(path, opts = {}) {
+    function renderSessionList() {
+      if (!sessionListEl) return;
+      sessionListEl.innerHTML = "";
+      if (!state.sessions.length) {
+        sessionListEl.innerHTML = '<span class="empty">No strips uploaded yet</span>';
+        return;
+      }
+      const ul = document.createElement("div");
+      ul.style.cssText = "display:flex;flex-direction:column;gap:6px;margin-top:8px";
+      for (const s of state.sessions) {
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #e0e0e0;border-radius:8px;background:#fff";
+        const name = document.createElement("span");
+        name.textContent = s.filename;
+        name.style.cssText = "flex:1;font-size:0.9rem";
+        const badge = document.createElement("span");
+        badge.className = "tag conf " + (s.status === "completed" ? "" : s.status === "error" ? "low" : "");
+        badge.textContent = s.status || "uploading";
+        row.appendChild(name);
+        row.appendChild(badge);
+        row.style.cursor = "pointer";
+        row.addEventListener("click", () => selectSession(s.session_id));
+        ul.appendChild(row);
+      }
+      sessionListEl.appendChild(ul);
+    }
+
+    async function selectSession(sessionId) {
+      if (state.running) return;
+      state.session = sessionId;
+      const s = state.sessions.find(x => x.session_id === sessionId);
+      if (s && s.filename) fileCountEl.textContent = s.filename;
+      segmentCard.style.display = "none";
+      generationCard.style.display = "none";
+      setStatus("Loading panels...", "running");
+      try {
+        const data = await api(`/api/jobs/${sessionId}?logs=0`, {}, 15000);
+        if (data.status === "completed" || data.status === "done") {
+          state.panels = data.panels || [];
+          renderGallery();
+          segmentCard.style.display = "block";
+          runBtn.disabled = false;
+          setStatus("Panels ready. Drag to reorder, then click Run.", "");
+        } else if (data.status === "failed" || data.status === "error") {
+          showError(data.error || data.message || "segmentation failed");
+          setStatus("Segmentation failed", "error");
+        } else {
+          setStatus("Session is still processing", "running");
+        }
+      } catch (err) {
+        showError(err.message || String(err));
+        setStatus("Failed to load session", "error");
+      }
+    }
+
+    async function api(path, opts = {}, timeoutMs = 300000) {
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 10000);
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
       try {
         const res = await fetch(path, { ...opts, signal: ctrl.signal });
         const data = await res.json().catch(() => ({}));
@@ -331,23 +392,31 @@
       runBtn.textContent = "Uploading...";
       hideError();
       setStatus("Uploading...", "running");
+      state.sessions = [];
 
       try {
-        const sessionJobs = [];
         for (let i = 0; i < files.length; i++) {
           setStatus(`Uploading ${i + 1}/${files.length}...`, "running");
+          const fd = new FormData();
+          fd.append("file", files[i]);
+          fd.append("backend", document.getElementById("backend").value);
+          fd.append("api_key", document.getElementById("api-key").value);
+          fd.append("model", (document.getElementById("model")?.value || "").trim());
+          fd.append("endpoint", (document.getElementById("endpoint")?.value || "").trim());
+          fd.append("cf_account_id", (document.getElementById("cf-account-id")?.value || "").trim());
           const j = await api("/api/upload", {
             method: "POST",
-            body: (() => { const f = new FormData(); f.append("file", files[i]); return f; })()
+            body: fd,
           });
-          sessionJobs.push(j);
+          state.sessions.push({ session_id: j.job_id, filename: files[i].name, status: "uploaded" });
         }
-        const sessionId = sessionJobs[0].job_id;
-        state.session = sessionId;
-        fileCountEl.textContent = files.length + " file" + (files.length > 1 ? "s" : "") + " selected";
-
-        setStatus("Segmenting panels...", "running");
-        await monitorJob(sessionId, false);
+        renderSessionList();
+        if (state.sessions.length) {
+          state.session = state.sessions[0].session_id;
+          fileCountEl.textContent = state.sessions.length + " strip" + (state.sessions.length > 1 ? "s" : "") + " uploaded";
+          setStatus("Segmenting panels...", "running");
+          await monitorJob(state.session, false);
+        }
         runBtn.textContent = "Run";
         runBtn.disabled = false;
         setStatus("Ready to generate", "");
@@ -375,6 +444,10 @@
           await sleep(2000);
           continue;
         }
+
+        const sessionEntry = state.sessions.find(x => x.session_id === jobId);
+        if (sessionEntry) sessionEntry.status = s.status;
+        renderSessionList();
 
         if (isGeneration) {
           renderStage(s);
@@ -469,6 +542,11 @@
           tts: document.getElementById("tts").value,
           voice: document.getElementById("voice").value,
           style: document.getElementById("style").value,
+          backend: document.getElementById("backend").value,
+          api_key: document.getElementById("api-key").value,
+          model: document.getElementById("model")?.value || "",
+          endpoint: document.getElementById("endpoint")?.value || "",
+          cf_account_id: document.getElementById("cf-account-id")?.value || "",
         };
         const { job_id } = await api("/api/run", {
           method: "POST",

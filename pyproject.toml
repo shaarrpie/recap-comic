@@ -54,7 +54,7 @@ recap-comic = "cli:app"
 recap-web = "webapp.main:app"
 
 [tool.setuptools]
-packages = ["adapters"]
+packages = ["adapters", "webapp"]
 py-modules = [
     "cli",
     "guided_cutter",

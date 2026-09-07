@@ -1,0 +1,302 @@
+{
+  "source": "strip.webp",
+  "width": 800,
+  "height": 9455,
+  "model": "gutter-fallback",
+  "config_hash": "fallback",
+  "input_hash": "fallback",
+  "provenance": "fallback",
+  "characters": [],
+  "entries": [
+    {
+      "panel_index": 1,
+      "y_start": 0,
+      "y_end": 2,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 2,
+      "y_start": 2,
+      "y_end": 3,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 3,
+      "y_start": 3,
+      "y_end": 1194,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 4,
+      "y_start": 1194,
+      "y_end": 2385,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 5,
+      "y_start": 2385,
+      "y_end": 3576,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 6,
+      "y_start": 3576,
+      "y_end": 4768,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 7,
+      "y_start": 4768,
+      "y_end": 4773,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 8,
+      "y_start": 4773,
+      "y_end": 4782,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 9,
+      "y_start": 4782,
+      "y_end": 4800,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 10,
+      "y_start": 4800,
+      "y_end": 4836,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 11,
+      "y_start": 4836,
+      "y_end": 4909,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 12,
+      "y_start": 4909,
+      "y_end": 5055,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 13,
+      "y_start": 5055,
+      "y_end": 5200,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 14,
+      "y_start": 5200,
+      "y_end": 5272,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 15,
+      "y_start": 5272,
+      "y_end": 5308,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 16,
+      "y_start": 5308,
+      "y_end": 5326,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 17,
+      "y_start": 5326,
+      "y_end": 5335,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 18,
+      "y_start": 5335,
+      "y_end": 5340,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 19,
+      "y_start": 5340,
+      "y_end": 5342,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 20,
+      "y_start": 5342,
+      "y_end": 5343,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 21,
+      "y_start": 5343,
+      "y_end": 6687,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 22,
+      "y_start": 6687,
+      "y_end": 8031,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 23,
+      "y_start": 8031,
+      "y_end": 8034,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 24,
+      "y_start": 8034,
+      "y_end": 8040,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 25,
+      "y_start": 8040,
+      "y_end": 8053,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 26,
+      "y_start": 8053,
+      "y_end": 8078,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 27,
+      "y_start": 8078,
+      "y_end": 8128,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 28,
+      "y_start": 8128,
+      "y_end": 8228,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 29,
+      "y_start": 8228,
+      "y_end": 9455,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    }
+  ]
+}

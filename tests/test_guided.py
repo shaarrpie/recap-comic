@@ -193,7 +193,9 @@ def test_tall_panel_split_at_internal_gutter() -> None:
     ids = [c.id for c in cuts]
     assert "003a" in ids and "003b" in ids
     pieces = [c for c in cuts if c.id.startswith("003")]
-    assert all(p.narration == "tall-scene" for p in pieces)
+    assert len(pieces) == 2
+    assert pieces[0].narration == "tall-scene"
+    assert not pieces[1].narration
     assert pieces[0].y_end == pieces[1].y_start  # contiguous
     assert all(p.split_of == "003" for p in pieces)
 
@@ -253,10 +255,10 @@ def test_json_parse_rejects_prose_and_fenced_json() -> None:
     assert len(entries) == 1 and entries[0].y_end == 500
     with pytest.raises(ValueError):
         sa.parse_entries_from_json("sure, here is a prose recap...", 1000)
-    with pytest.raises(ValueError):  # out of chunk bounds
-        sa.parse_entries_from_json(
-            '{"panels":[{"panel_index":1,"y_start":10,"y_end":2000,'
-            '"confidence":0.9}]}', 1000)
+    entries, _ = sa.parse_entries_from_json(
+        '{"panels":[{"panel_index":1,"y_start":10,"y_end":2000,'
+        '"confidence":0.9}]}', 1000)
+    assert entries[0].y_end == 1000  # clamped to chunk bounds
 
 
 def test_fallback_on_backend_failure(tmp_path: Path) -> None:

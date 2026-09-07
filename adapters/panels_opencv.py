@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 import cv2
@@ -39,6 +40,11 @@ def _config_hash(cfg: dict) -> str:
     return hashlib.sha256(
         json.dumps(cfg, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
+
+
+def _natural_sort_key(name: str) -> list[str | int]:
+    return [int(t) if t.isdigit() else t.lower()
+            for t in re.split(r"(\d+)", name)]
 
 
 def detect_panels(gray: np.ndarray, *, tol: int = 28,
@@ -77,8 +83,11 @@ def run_panels(pages_dir: Path, out_path: Path, *,
     """Produce panels.json. Reads only pages/, writes only out_path."""
     cfg = {"reading_order": reading_order, "tol": tol,
            "min_area_frac": min_area_frac}
-    images = sorted(p for p in pages_dir.iterdir()
-                    if p.suffix.lower() in {".jpg", ".jpeg", ".png"})
+    images = sorted(
+        (p for p in pages_dir.iterdir()
+         if p.suffix.lower() in {".jpg", ".jpeg", ".png"}),
+        key=lambda p: _natural_sort_key(p.name),
+    )
     if not images:
         raise PanelsError(f"no supported images in {pages_dir}")
     if not force and out_path.exists():

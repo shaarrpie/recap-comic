@@ -39,10 +39,14 @@ from strip_analyzer import PanelPlan, PanelPlanEntry
 
 log = logging.getLogger(__name__)
 
-# Image bomb guard: reject strips above ~80 MP (e.g. 800x100000). Legitimate
-# manhwa strips are well under 10 MP. Setting this explicitly avoids Pillow's
-# DecompressionBombWarning at import time and gives a clear error.
-Image.MAX_IMAGE_PIXELS = 80_000_000
+
+def _check_image_size(path: Path) -> None:
+    with Image.open(path) as img:
+        pixels = img.width * img.height
+    if pixels > 80_000_000:
+        raise ValueError(
+            f"image too large for safe processing: {img.width}x{img.height} "
+            f"({pixels / 1_000_000:.1f} MP); refusing to load")
 
 
 def _blur(gray: np.ndarray, sigma: float = 0.5) -> np.ndarray:
@@ -122,7 +126,9 @@ def compute_strip_metrics(gray: np.ndarray, use_edge_density: bool,
 
 
 def bubble_rows(plan: PanelPlan, pad: int = 0,
-                 gray: np.ndarray | None = None) -> set[int]:
+               gray: np.ndarray | None = None,
+               max_box_width_frac: float = 0.4,
+               max_box_height_frac: float = 0.15) -> set[int]:
     """All strip rows occupied by any speech bubble (expanded by pad).
 
     Includes both the AI's bubble_boxes AND bubbles detected by the offline
@@ -131,8 +137,14 @@ def bubble_rows(plan: PanelPlan, pad: int = 0,
     effort: if it fails, we fall back to the AI bubbles alone.
     """
     rows: set[int] = set()
+    max_w = plan.width * max_box_width_frac
+    max_h = plan.height * max_box_height_frac
     for e in plan.entries:
         for b in e.bubble_boxes:
+            if b.w > max_w or b.h > max_h:
+                log.debug("ignoring oversized bubble box %s on panel %d",
+                          b, e.panel_index)
+                continue
             rows.update(range(max(0, b.y - pad),
                               min(plan.height, b.y + b.h + pad) + 1))
     if gray is not None:
@@ -281,12 +293,33 @@ def _split_panel(gray: np.ndarray, panel: CutPanel,
             blur_sigma=config.blur_sigma,
             variances=variances, edge_density=edge_density)
         if row is None or row <= y0 or row >= y1:
-            row = mid
-            log.warning("no usable gutter inside panel %s; splitting at "
-                        "midpoint %d", frag_id, row)
+            for scan in range(1, (y1 - y0) // 4 + 1):
+                for candidate in [(mid - scan), (mid + scan)]:
+                    if y0 < candidate < y1 and candidate not in forbidden:
+                        row = candidate
+                        log.warning("no usable gutter inside panel %s; "
+                                    "using nearby non-forbidden row %d",
+                                    frag_id, row)
+                        break
+                else:
+                    continue
+                break
+            if row is None or row <= y0 or row >= y1:
+                row = mid
+                log.warning("no usable gutter inside panel %s; splitting at "
+                            "midpoint %d", frag_id, row)
         stack.append((y0, row, frag_id + "a"))
         stack.append((row, y1, frag_id + "b"))
-    return sorted(pieces, key=lambda c: c.y_start)
+    pieces = sorted(pieces, key=lambda c: c.y_start)
+    if len(pieces) > 1:
+        cleaned: list[CutPanel] = [pieces[0]]
+        for p in pieces[1:]:
+            if p.narration or p.dialogue:
+                cleaned.append(p.model_copy(update={"narration": "", "dialogue": ""}))
+            else:
+                cleaned.append(p)
+        pieces = cleaned
+    return pieces
 
 def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
                config: CutterConfig) -> list[CutPanel]:
@@ -390,6 +423,7 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
             prev.unlink()
     out.mkdir(parents=True, exist_ok=True)
 
+    _check_image_size(strip)
     with Image.open(strip) as img:
         img.load()
         width, height = img.size

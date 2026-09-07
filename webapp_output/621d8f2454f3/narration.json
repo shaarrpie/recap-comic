@@ -1,0 +1,86 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "generator": "recap_video.1",
+    "config_hash": "42ee8185dd18cfe2b81699d2f11aa708be8d064afc0779ce46a5509e1db7118f",
+    "input_hashes": {
+      "panels.json": "8f0e8b8c3b6fbdcbd14857bbe8da48a233b464975ad8d25ef3793336deb8b110"
+    }
+  },
+  "mode": "narrator",
+  "entries": [
+    {
+      "id": "001aaaaa",
+      "panel_id": "001aaaaa",
+      "order": 1,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "001aaaab",
+      "panel_id": "001aaaab",
+      "order": 2,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "001aaaba",
+      "panel_id": "001aaaba",
+      "order": 3,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "001aaabb",
+      "panel_id": "001aaabb",
+      "order": 4,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "001aab",
+      "panel_id": "001aab",
+      "order": 5,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "001ab",
+      "panel_id": "001ab",
+      "order": 6,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "001b",
+      "panel_id": "001b",
+      "order": 7,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "008",
+      "panel_id": "008",
+      "order": 8,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    },
+    {
+      "id": "009",
+      "panel_id": "009",
+      "order": 9,
+      "speaker": null,
+      "text": "",
+      "quotes": []
+    }
+  ],
+  "ungrounded_quotes": []
+}

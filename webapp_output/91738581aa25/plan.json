@@ -1,0 +1,442 @@
+{
+  "source": "strip.webp",
+  "width": 800,
+  "height": 10000,
+  "model": "gutter-fallback",
+  "config_hash": "fallback",
+  "input_hash": "fallback",
+  "provenance": "fallback",
+  "characters": [],
+  "entries": [
+    {
+      "panel_index": 1,
+      "y_start": 0,
+      "y_end": 1396,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 2,
+      "y_start": 1396,
+      "y_end": 2793,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 3,
+      "y_start": 2793,
+      "y_end": 4189,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 4,
+      "y_start": 4189,
+      "y_end": 5585,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 5,
+      "y_start": 5585,
+      "y_end": 5587,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 6,
+      "y_start": 5587,
+      "y_end": 5590,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 7,
+      "y_start": 5590,
+      "y_end": 5597,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 8,
+      "y_start": 5597,
+      "y_end": 5611,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 9,
+      "y_start": 5611,
+      "y_end": 5774,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 10,
+      "y_start": 5774,
+      "y_end": 5823,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 11,
+      "y_start": 5823,
+      "y_end": 5847,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 12,
+      "y_start": 5847,
+      "y_end": 5859,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 13,
+      "y_start": 5859,
+      "y_end": 5865,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 14,
+      "y_start": 5865,
+      "y_end": 5868,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 15,
+      "y_start": 5868,
+      "y_end": 5870,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 16,
+      "y_start": 5870,
+      "y_end": 6735,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 17,
+      "y_start": 6735,
+      "y_end": 7600,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 18,
+      "y_start": 7600,
+      "y_end": 7603,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 19,
+      "y_start": 7603,
+      "y_end": 7607,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 20,
+      "y_start": 7607,
+      "y_end": 7615,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 21,
+      "y_start": 7615,
+      "y_end": 7632,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 22,
+      "y_start": 7632,
+      "y_end": 7665,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 23,
+      "y_start": 7665,
+      "y_end": 7732,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 24,
+      "y_start": 7732,
+      "y_end": 7866,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 25,
+      "y_start": 7866,
+      "y_end": 8281,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 26,
+      "y_start": 8281,
+      "y_end": 8652,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 27,
+      "y_start": 8652,
+      "y_end": 8870,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 28,
+      "y_start": 8870,
+      "y_end": 9010,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 29,
+      "y_start": 9010,
+      "y_end": 9066,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 30,
+      "y_start": 9066,
+      "y_end": 9109,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 31,
+      "y_start": 9109,
+      "y_end": 9152,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 32,
+      "y_start": 9152,
+      "y_end": 9194,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 33,
+      "y_start": 9194,
+      "y_end": 9252,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 34,
+      "y_start": 9252,
+      "y_end": 9315,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 35,
+      "y_start": 9315,
+      "y_end": 9360,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 36,
+      "y_start": 9360,
+      "y_end": 9441,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 37,
+      "y_start": 9441,
+      "y_end": 9525,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 38,
+      "y_start": 9525,
+      "y_end": 9619,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 39,
+      "y_start": 9619,
+      "y_end": 9707,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 40,
+      "y_start": 9707,
+      "y_end": 9795,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 41,
+      "y_start": 9795,
+      "y_end": 9897,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 42,
+      "y_start": 9897,
+      "y_end": 9946,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    },
+    {
+      "panel_index": 43,
+      "y_start": 9946,
+      "y_end": 10000,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "bubble_boxes": []
+    }
+  ]
+}

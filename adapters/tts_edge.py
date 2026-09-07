@@ -70,6 +70,7 @@ def synthesize_entry(entry: NarrationEntry, out_dir: Path, *, voice: str,
             if attempt < retries:
                 time.sleep(2 ** attempt)
     retry_txt = out_path.with_suffix(".txt")
+    retry_txt.parent.mkdir(parents=True, exist_ok=True)
     retry_txt.write_text(entry.text, encoding="utf-8")
     raise RuntimeError(
         f"edge-tts failed for entry {entry.id} after {retries} attempts "
@@ -103,6 +104,7 @@ async def synthesize_entry_async(entry: NarrationEntry, out_dir: Path, *,
             if attempt < retries:
                 await asyncio.sleep(2 ** attempt)
     retry_txt = out_path.with_suffix(".txt")
+    retry_txt.parent.mkdir(parents=True, exist_ok=True)
     retry_txt.write_text(entry.text, encoding="utf-8")
     raise RuntimeError(
         f"edge-tts failed for entry {entry.id} after {retries} attempts "

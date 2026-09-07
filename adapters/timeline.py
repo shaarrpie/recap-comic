@@ -72,7 +72,7 @@ def display_seconds(*, audio_seconds: float | None, words: int,
     if audio_seconds is not None:
         return max(audio_seconds + gap, min_display, pan_floor)
     read = (words / silent_wpm) * 60.0 if words else 0.0
-    return min(max(read + gap, min_display), max_display)
+    return min(max(read + gap, min_display, pan_floor), max_display)
 
 
 def build(panels: PanelsArtifact, narration: NarrationArtifact,

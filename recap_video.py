@@ -35,6 +35,7 @@ import re
 import shutil
 import subprocess
 import time
+import wave
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -138,27 +139,79 @@ def _word_count(text: str) -> int:
     return len(_WORD_RE.findall(text)) + len(_CJK_RE.findall(text))
 
 
-def probe_duration(path: Path, ffprobe_exe: str = "ffprobe") -> float:
-    """MEASURED media duration in seconds via ffprobe (never estimated)."""
-    exe = shutil.which(ffprobe_exe)
-    if exe is None:
-        raise VideoError(f"{ffprobe_exe!r} not found on PATH; install FFmpeg "
-                         "(https://ffmpeg.org/download.html)")
-    cmd = [exe, "-v", "error", "-show_entries", "format=duration",
-           "-of", "default=noprint_wrappers=1:nokey=1", str(path)]
+def _resolve_ffmpeg(exe: str = "ffmpeg") -> str:
+    resolved = shutil.which(exe)
+    if resolved is not None:
+        return resolved
+    try:
+        import imageio_ffmpeg
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        pass
+    raise VideoError(f"{exe!r} not found on PATH or via imageio-ffmpeg; "
+                     "install FFmpeg (https://ffmpeg.org/download.html)")
+
+
+def _resolve_ffprobe(exe: str = "ffprobe") -> str | None:
+    resolved = shutil.which(exe)
+    if resolved is not None:
+        return resolved
+    ffmpeg_path = _resolve_ffmpeg()
+    parent = Path(ffmpeg_path).parent
+    candidate = parent / exe
+    if candidate.is_file():
+        return str(candidate)
+    return None
+
+
+def _probe_with_ffmpeg(path: Path, ffmpeg_exe: str) -> float:
+    cmd = [ffmpeg_exe, "-i", str(path)]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False,
                           shell=False)
-    if proc.returncode != 0 or not proc.stdout.strip():
-        raise VideoError(f"ffprobe could not read {path}: "
-                         f"{proc.stderr.strip()[-300:]}")
-    try:
-        dur = float(proc.stdout.strip())
-    except ValueError as exc:
-        raise VideoError(f"ffprobe returned non-numeric duration for {path}: "
-                         f"{proc.stdout!r}") from exc
+    stderr = proc.stderr or ""
+    m = re.search(r"Duration: (\d+):(\d+):(\d+\.\d+)", stderr)
+    if not m:
+        raise VideoError(f"ffmpeg could not probe duration for {path}: "
+                         f"{stderr.strip()[-300:]}")
+    hours, minutes, seconds = m.groups()
+    dur = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
     if dur <= 0:
         raise VideoError(f"{path} has zero duration")
     return dur
+
+
+def probe_duration(path: Path, ffprobe_exe: str = "ffprobe") -> float:
+    """MEASURED media duration in seconds via ffprobe (or ffmpeg fallback)."""
+    path = Path(path)
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    if path.suffix.lower() == ".wav":
+        try:
+            with wave.open(str(path), "rb") as f:
+                n_frames = f.getnframes()
+                rate = f.getframerate()
+                if rate > 0:
+                    dur = n_frames / rate
+                    if dur > 0:
+                        return dur
+        except Exception:
+            pass
+    ffprobe = _resolve_ffprobe(ffprobe_exe)
+    if ffprobe is not None:
+        exe = ffprobe
+        cmd = [exe, "-v", "error", "-show_entries", "format=duration",
+               "-of", "default=noprint_wrappers=1:nokey=1", str(path)]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False,
+                              shell=False)
+        if proc.returncode == 0 and proc.stdout.strip():
+            try:
+                dur = float(proc.stdout.strip())
+                if dur > 0:
+                    return dur
+            except ValueError:
+                pass
+    ffmpeg = _resolve_ffmpeg()
+    return _probe_with_ffmpeg(path, ffmpeg)
 
 
 # --------------------------------------------------------------------------- #
@@ -440,10 +493,7 @@ def write_srt(timeline: TimelineArtifact, narration: NarrationArtifact,
 # --------------------------------------------------------------------------- #
 def render_video(timeline: TimelineArtifact, out_path: Path,
                  cfg: VideoConfig) -> None:
-    exe = shutil.which(cfg.ffmpeg_exe)
-    if exe is None:
-        raise VideoError(f"{cfg.ffmpeg_exe!r} not found on PATH; install "
-                         "FFmpeg (https://ffmpeg.org/download.html)")
+    exe = _resolve_ffmpeg(cfg.ffmpeg_exe)
     from adapters.render_ffmpeg import RenderError, render
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(out_path.stem + ".partial.mp4")

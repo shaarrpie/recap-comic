@@ -1,0 +1,941 @@
+{
+  "source": "strip.webp",
+  "width": 800,
+  "height": 9530,
+  "plan_hash": "1f78fcb841959393a64123ba3801e9e4060dd5425589cd71865737f1d70f2abf",
+  "config": {
+    "tolerance": 80,
+    "max_panel_height": 1600,
+    "variance_threshold": 6.0,
+    "edge_threshold": 30.0,
+    "bubble_pad": 8,
+    "use_edge_density": true,
+    "min_gutter_run": 4,
+    "blur_sigma": 0.5
+  },
+  "panels": [
+    {
+      "id": "001aaaaaaa",
+      "panel_index": 1,
+      "y_start": 0,
+      "y_end": 838,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_001aaaaaaa.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "snap_distances": [
+        0,
+        39
+      ]
+    },
+    {
+      "id": "001aaaaaab",
+      "panel_index": 1,
+      "y_start": 838,
+      "y_end": 1677,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_001aaaaaab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "snap_distances": [
+        0,
+        39
+      ]
+    },
+    {
+      "id": "001aaaaaba",
+      "panel_index": 1,
+      "y_start": 1677,
+      "y_end": 2515,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_001aaaaaba.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "snap_distances": [
+        0,
+        39
+      ]
+    },
+    {
+      "id": "001aaaaabb",
+      "panel_index": 1,
+      "y_start": 2515,
+      "y_end": 3354,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_001aaaaabb.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "snap_distances": [
+        0,
+        39
+      ]
+    },
+    {
+      "id": "001aaaabaa",
+      "panel_index": 1,
+      "y_start": 3354,
+      "y_end": 4192,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_001aaaabaa.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "snap_distances": [
+        0,
+        39
+      ]
+    },
+    {
+      "id": "001aaaabab",
+      "panel_index": 1,
+      "y_start": 4192,
+      "y_end": 5031,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_001aaaabab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "snap_distances": [
+        0,
+        39
+      ]
+    },
+    {
+      "id": "001aaaabba",
+      "panel_index": 1,
+      "y_start": 5031,
+      "y_end": 5869,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_001aaaabba.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "snap_distances": [
+        0,
+        39
+      ]
+    },
+    {
+      "id": "001aaaabbb",
+      "panel_index": 1,
+      "y_start": 5869,
+      "y_end": 6708,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_001aaaabbb.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "snap_distances": [
+        0,
+        39
+      ]
+    },
+    {
+      "id": "001aaab",
+      "panel_index": 1,
+      "y_start": 6708,
+      "y_end": 6711,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_001aaab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "snap_distances": [
+        0,
+        39
+      ]
+    },
+    {
+      "id": "001aab",
+      "panel_index": 1,
+      "y_start": 6711,
+      "y_end": 6716,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_001aab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "snap_distances": [
+        0,
+        39
+      ]
+    },
+    {
+      "id": "001ab",
+      "panel_index": 1,
+      "y_start": 6716,
+      "y_end": 6726,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_001ab.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "snap_distances": [
+        0,
+        39
+      ]
+    },
+    {
+      "id": "001b",
+      "panel_index": 1,
+      "y_start": 6726,
+      "y_end": 6746,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_001b.png",
+      "split_of": "001",
+      "merged_with": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8
+      ],
+      "snap_distances": [
+        0,
+        39
+      ]
+    },
+    {
+      "id": "009",
+      "panel_index": 9,
+      "y_start": 6746,
+      "y_end": 6747,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_009.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        39,
+        38
+      ]
+    },
+    {
+      "id": "010",
+      "panel_index": 10,
+      "y_start": 6747,
+      "y_end": 6749,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_010.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        38,
+        37
+      ]
+    },
+    {
+      "id": "011",
+      "panel_index": 11,
+      "y_start": 6749,
+      "y_end": 6752,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_011.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        37,
+        34
+      ]
+    },
+    {
+      "id": "012",
+      "panel_index": 12,
+      "y_start": 6752,
+      "y_end": 6758,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_012.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        34,
+        28
+      ]
+    },
+    {
+      "id": "013",
+      "panel_index": 13,
+      "y_start": 6758,
+      "y_end": 6770,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_013.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        28,
+        16
+      ]
+    },
+    {
+      "id": "014",
+      "panel_index": 14,
+      "y_start": 6770,
+      "y_end": 6803,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_014.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        16,
+        0
+      ]
+    },
+    {
+      "id": "015",
+      "panel_index": 15,
+      "y_start": 6803,
+      "y_end": 6901,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_015.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "016",
+      "panel_index": 16,
+      "y_start": 6901,
+      "y_end": 7097,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_016.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "017",
+      "panel_index": 17,
+      "y_start": 7097,
+      "y_end": 7293,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_017.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "018",
+      "panel_index": 18,
+      "y_start": 7293,
+      "y_end": 7391,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_018.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": "019",
+      "panel_index": 19,
+      "y_start": 7391,
+      "y_end": 7424,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_019.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        16
+      ]
+    },
+    {
+      "id": "020",
+      "panel_index": 20,
+      "y_start": 7424,
+      "y_end": 7436,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_020.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        16,
+        28
+      ]
+    },
+    {
+      "id": "021",
+      "panel_index": 21,
+      "y_start": 7436,
+      "y_end": 7442,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_021.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        28,
+        34
+      ]
+    },
+    {
+      "id": "022",
+      "panel_index": 22,
+      "y_start": 7442,
+      "y_end": 7445,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_022.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        34,
+        37
+      ]
+    },
+    {
+      "id": "023",
+      "panel_index": 23,
+      "y_start": 7445,
+      "y_end": 7447,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_023.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        37,
+        38
+      ]
+    },
+    {
+      "id": "024",
+      "panel_index": 24,
+      "y_start": 7447,
+      "y_end": 7448,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_024.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        38,
+        39
+      ]
+    },
+    {
+      "id": "025a",
+      "panel_index": 25,
+      "y_start": 7448,
+      "y_end": 7468,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_025a.png",
+      "split_of": "025",
+      "merged_with": [
+        25,
+        26
+      ],
+      "snap_distances": [
+        39,
+        39
+      ]
+    },
+    {
+      "id": "025baa",
+      "panel_index": 25,
+      "y_start": 7468,
+      "y_end": 7478,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_025baa.png",
+      "split_of": "025",
+      "merged_with": [
+        25,
+        26
+      ],
+      "snap_distances": [
+        39,
+        39
+      ]
+    },
+    {
+      "id": "025babaa",
+      "panel_index": 25,
+      "y_start": 7478,
+      "y_end": 7483,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_025babaa.png",
+      "split_of": "025",
+      "merged_with": [
+        25,
+        26
+      ],
+      "snap_distances": [
+        39,
+        39
+      ]
+    },
+    {
+      "id": "025bababaa",
+      "panel_index": 25,
+      "y_start": 7483,
+      "y_end": 7486,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_025bababaa.png",
+      "split_of": "025",
+      "merged_with": [
+        25,
+        26
+      ],
+      "snap_distances": [
+        39,
+        39
+      ]
+    },
+    {
+      "id": "025babababaa",
+      "panel_index": 25,
+      "y_start": 7486,
+      "y_end": 7487,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_025babababaa.png",
+      "split_of": "025",
+      "merged_with": [
+        25,
+        26
+      ],
+      "snap_distances": [
+        39,
+        39
+      ]
+    },
+    {
+      "id": "025bababababa",
+      "panel_index": 25,
+      "y_start": 7487,
+      "y_end": 8364,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_025bababababa.png",
+      "split_of": "025",
+      "merged_with": [
+        25,
+        26
+      ],
+      "snap_distances": [
+        39,
+        39
+      ]
+    },
+    {
+      "id": "025bababababb",
+      "panel_index": 25,
+      "y_start": 8364,
+      "y_end": 9242,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_025bababababb.png",
+      "split_of": "025",
+      "merged_with": [
+        25,
+        26
+      ],
+      "snap_distances": [
+        39,
+        39
+      ]
+    },
+    {
+      "id": "025babababb",
+      "panel_index": 25,
+      "y_start": 9242,
+      "y_end": 9244,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_025babababb.png",
+      "split_of": "025",
+      "merged_with": [
+        25,
+        26
+      ],
+      "snap_distances": [
+        39,
+        39
+      ]
+    },
+    {
+      "id": "025bababb",
+      "panel_index": 25,
+      "y_start": 9244,
+      "y_end": 9250,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_025bababb.png",
+      "split_of": "025",
+      "merged_with": [
+        25,
+        26
+      ],
+      "snap_distances": [
+        39,
+        39
+      ]
+    },
+    {
+      "id": "025babb",
+      "panel_index": 25,
+      "y_start": 9250,
+      "y_end": 9260,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_025babb.png",
+      "split_of": "025",
+      "merged_with": [
+        25,
+        26
+      ],
+      "snap_distances": [
+        39,
+        39
+      ]
+    },
+    {
+      "id": "025bb",
+      "panel_index": 25,
+      "y_start": 9260,
+      "y_end": 9280,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_025bb.png",
+      "split_of": "025",
+      "merged_with": [
+        25,
+        26
+      ],
+      "snap_distances": [
+        39,
+        39
+      ]
+    },
+    {
+      "id": "027",
+      "panel_index": 27,
+      "y_start": 9280,
+      "y_end": 9282,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_027.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        39,
+        38
+      ]
+    },
+    {
+      "id": "028",
+      "panel_index": 28,
+      "y_start": 9282,
+      "y_end": 9284,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_028.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        38,
+        36
+      ]
+    },
+    {
+      "id": "029",
+      "panel_index": 29,
+      "y_start": 9284,
+      "y_end": 9288,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_029.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        36,
+        31
+      ]
+    },
+    {
+      "id": "030",
+      "panel_index": 30,
+      "y_start": 9288,
+      "y_end": 9297,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_030.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        31,
+        22
+      ]
+    },
+    {
+      "id": "031",
+      "panel_index": 31,
+      "y_start": 9297,
+      "y_end": 9315,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_031.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        22,
+        4
+      ]
+    },
+    {
+      "id": "032",
+      "panel_index": 32,
+      "y_start": 9315,
+      "y_end": 9384,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_032.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        4,
+        0
+      ]
+    },
+    {
+      "id": "033",
+      "panel_index": 33,
+      "y_start": 9384,
+      "y_end": 9530,
+      "narration": "",
+      "dialogue": "",
+      "panel_type": "unknown",
+      "confidence": 0.0,
+      "image_file": "panel_033.png",
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        0
+      ]
+    }
+  ]
+}

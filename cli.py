@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import tempfile
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -35,6 +37,12 @@ _WRITE_ATOMIC = sa.write_atomic
 
 _ARCHIVE_EXTS = {".zip", ".cbz"}
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+
+
+def _natural_sort_key(name: str) -> list[str | int]:
+    return [int(t) if t.isdigit() else t.lower()
+            for t in re.split(r"(\d+)", name)]
+
 
 log = get_logger(__name__)
 
@@ -53,8 +61,9 @@ def _resolve_strip_path(strip: Path) -> Path:
     log.info("archive detected suffix=%s extracting=%s", strip.suffix, strip.name)
     with zipfile.ZipFile(strip, "r") as archive:
         names = sorted(
-            f for f in archive.namelist()
-            if Path(f).suffix.lower() in _IMAGE_EXTS
+            (f for f in archive.namelist()
+             if Path(f).suffix.lower() in _IMAGE_EXTS),
+            key=_natural_sort_key,
         )
         if not names:
             raise typer.BadParameter(
@@ -70,7 +79,7 @@ def _resolve_strip_path(strip: Path) -> Path:
     for img in images:
         stitched.paste(img, (0, y))
         y += img.height
-    tmp = Path(tempfile.gettempdir()) / f"recap-comic-{strip.stem}-stitched.png"
+    tmp = Path(tempfile.gettempdir()) / f"recap-comic-{strip.stem}-{uuid.uuid4().hex[:8]}-stitched.png"
     stitched.save(tmp, "PNG")
     log.info("archive stitched images=%d out=%s", len(images), tmp)
     return tmp
@@ -85,10 +94,8 @@ app.add_typer(guided_app, name="guided")
 def _default_cache_dir() -> Path:
     return Path.home() / ".cache" / "recap-comic"
 
-def _configure_logging(level: str) -> None:
-    logging.getLogger().setLevel(getattr(logging, level.upper(), logging.INFO))
 
-_VALID_BACKENDS = {"gemini", "openai", "anthropic", "ollama", "cloudflare", "fixture", "none"}
+_VALID_BACKENDS = {"gemini", "openai", "anthropic", "ollama", "local", "cloudflare", "fixture", "none"}
 _VALID_TTS = {"edge", "kokoro", "none"}
 _VALID_STYLES = {"recap", "literal"}
 
@@ -98,7 +105,18 @@ def _validate_backend(name: str) -> str:
     if n not in _VALID_BACKENDS:
         raise typer.BadParameter(
             f"unknown backend {name!r}; choose from: {', '.join(sorted(_VALID_BACKENDS))}")
+    if n == "local":
+        n = "ollama"
     return n
+
+
+def _validate_chunk_params(chunk_height: int, overlap: int) -> None:
+    if overlap >= chunk_height:
+        raise typer.BadParameter(
+            f"--overlap ({overlap}) must be smaller than --chunk-height ({chunk_height})")
+    if chunk_height < 100:
+        raise typer.BadParameter(
+            f"--chunk-height must be at least 100px, got {chunk_height}")
 
 
 def _validate_tts(name: str) -> str:
@@ -125,11 +143,11 @@ def guided_plan(
         None, "--out-plan", help="also write the plan JSON here"),
     backend: str = typer.Option(
         "gemini", "--backend",
-        help="gemini|openai|anthropic|ollama|cloudflare|fixture|none"),
+        help="gemini|openai|anthropic|ollama|local|cloudflare|fixture|none"),
     model: str | None = typer.Option(
         None, "--model",
         help="vision model id (gemini defaults to gemini-2.5-flash; "
-             "required for openai/anthropic/ollama)"),
+             "required for openai/anthropic/local)"),
     chunk_height: int = typer.Option(2000, "--chunk-height",
                                      help="reading-chunk height in px"),
     overlap: int = typer.Option(200, "--overlap",
@@ -158,6 +176,7 @@ def guided_plan(
     _configure_logging(log_level)
     strip = _resolve_strip_path(strip)
     backend = _validate_backend(backend)
+    _validate_chunk_params(chunk_height, overlap)
     used_cache_dir = cache_dir or _default_cache_dir()
     log.info("guided_plan start strip=%s backend=%s model=%s chunk_height=%d overlap=%d",
              strip.name, backend, model, chunk_height, overlap)
@@ -244,11 +263,11 @@ def guided_run(
     out_dir: Path = typer.Option("guided_out", "--out-dir"),
     backend: str = typer.Option(
         "gemini", "--backend",
-        help="gemini|openai|anthropic|ollama|cloudflare|fixture|none"),
+        help="gemini|openai|anthropic|ollama|local|cloudflare|fixture|none"),
     model: str | None = typer.Option(
         None, "--model",
         help="vision model id (gemini defaults to gemini-2.5-flash; "
-             "required for openai/anthropic/ollama)"),
+             "required for openai/anthropic/local)"),
     plan_path: Path | None = typer.Option(
         None, "--plan", help="reuse an existing plan JSON from 'guided plan'"),
     chunk_height: int = typer.Option(2000, "--chunk-height"),
@@ -281,6 +300,7 @@ def guided_run(
     _configure_logging(log_level)
     strip = _resolve_strip_path(strip)
     backend = _validate_backend(backend)
+    _validate_chunk_params(chunk_height, overlap)
     used_cache_dir = cache_dir or _default_cache_dir()
     log.info("guided_run start strip=%s backend=%s model=%s dry_run=%s",
              strip.name, backend, model, dry_run)

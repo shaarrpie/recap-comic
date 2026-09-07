@@ -308,9 +308,14 @@ def parse_entries_from_json(text: str, chunk_height: int, *,
         except ValidationError as exc:
             raise ValueError(f"invalid panel entry: {exc}") from exc
         if entry.y_start < 0 or entry.y_end > max_unit:
-            raise ValueError(
-                f"panel {entry.panel_index} y range [{entry.y_start},"
-                f"{entry.y_end}] outside the valid range 0..{max_unit}")
+            log.debug("panel %d y range [%d,%d] outside 0..%d; clamping",
+                      entry.panel_index, entry.y_start, entry.y_end, max_unit)
+            normalized_entry["y_start"] = max(0, entry.y_start)
+            normalized_entry["y_end"] = min(max_unit, entry.y_end)
+            try:
+                entry = PanelPlanEntry.model_validate(normalized_entry)
+            except ValidationError as exc:
+                raise ValueError(f"invalid panel entry after clamping: {exc}") from exc
         entry = entry.model_copy(update={
             "y_start": min(chunk_height, round(entry.y_start * scale)),
             "y_end": min(chunk_height, round(entry.y_end * scale)),
@@ -669,10 +674,8 @@ class GeminiVisionBackend:
     def __init__(self, model: str = "gemini-2.5-flash",
                  api_key: str | None = None) -> None:
         self.model = model
-        self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        if not self._api_key:
-            raise RuntimeError(
-                "GEMINI_API_KEY is not set; pass api_key or set the env var")
+        from adapters._gemini_keys import from_env
+        self._rotator = from_env()
         self.usage_log: list[dict] = []
         self.last_usage: dict | None = None
 
@@ -684,32 +687,57 @@ class GeminiVisionBackend:
 
         buf = io.BytesIO()
         image.save(buf, format="PNG")
-        client = genai.Client(api_key=self._api_key)
         prompt = _chunk_prompt(image.size[1], previous_context)
-        log.info("gemini request start model=%s image=%dx%d prompt_len=%d",
-                 self.model, image.width, image.height, len(prompt))
+        log.info("gemini request start model=%s image=%dx%d prompt_len=%d keys=%d",
+                 self.model, image.width, image.height, len(prompt),
+                 self._rotator.total)
         t0 = time.time()
-        resp = client.models.generate_content(
-            model=self.model,
-            contents=[  # type: ignore[arg-type]  # SDK stub list-variance quirk
-                types.Part.from_text(text=prompt),
-                types.Part.from_bytes(
-                    data=buf.getvalue(), mime_type="image/png"),
-            ],
-            config=types.GenerateContentConfig(
-                temperature=0.0,
-                response_mime_type="application/json",
-            ),
-        )
-        elapsed = time.time() - t0
-        raw = resp.text
-        if raw is None:
-            raw = ""
-        self.last_usage = _capture_usage(resp)
-        self.usage_log.append(self.last_usage or {})
-        log.info("gemini request complete duration=%.2fs response_len=%d usage=%s",
-                 elapsed, len(raw), sanitize(self.last_usage))
-        return parse_entries_from_json(raw, image.size[1])
+        last_exc: Exception | None = None
+        attempts = 0
+        max_attempts = self._rotator.total + 1  # allow one retry across all keys
+        while attempts < max_attempts:
+            api_key = self._rotator.current()
+            try:
+                client = genai.Client(api_key=api_key)
+                resp = client.models.generate_content(
+                    model=self.model,
+                    contents=[  # type: ignore[arg-type]  # SDK stub list-variance quirk
+                        types.Part.from_text(text=prompt),
+                        types.Part.from_bytes(
+                            data=buf.getvalue(), mime_type="image/png"),
+                    ],
+                    config=types.GenerateContentConfig(
+                        temperature=0.0,
+                        response_mime_type="application/json",
+                    ),
+                )
+                elapsed = time.time() - t0
+                raw = resp.text
+                if raw is None:
+                    raw = ""
+                self.last_usage = _capture_usage(resp)
+                self.usage_log.append(self.last_usage or {})
+                log.info("gemini request complete duration=%.2fs response_len=%d usage=%s",
+                         elapsed, len(raw), sanitize(self.last_usage))
+                return parse_entries_from_json(raw, image.size[1])
+            except Exception as exc:  # noqa: BLE001 - retry on quota/transient
+                last_exc = exc
+                msg = str(exc).lower()
+                is_quota = (
+                    "429" in msg
+                    or "resource_exhausted" in msg
+                    or "quota" in msg
+                )
+                if is_quota and attempts + 1 < max_attempts:
+                    self._rotator.advance()
+                    log.warning(
+                        "gemini quota/429 on key ending %s; rotating to next key (%d/%d)",
+                        api_key[-4:], attempts + 2, max_attempts
+                    )
+                    attempts += 1
+                    continue
+                raise
+        raise last_exc  # type: ignore[misc]
 
 
 class OpenAIVisionBackend:

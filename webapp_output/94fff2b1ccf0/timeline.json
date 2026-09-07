@@ -1,0 +1,199 @@
+{
+  "meta": {
+    "schema_version": 1,
+    "generator": "recap_video.1",
+    "config_hash": "42ee8185dd18cfe2b81699d2f11aa708be8d064afc0779ce46a5509e1db7118f",
+    "input_hashes": {
+      "panels.json": "8f0e8b8c3b6fbdcbd14857bbe8da48a233b464975ad8d25ef3793336deb8b110",
+      "narration.json": "d6bf292c5a467651d825ae820010ed9c645092601a9cdccc41e1069769a54683",
+      "audio.json": "ddf37990e0fb6f78f94625459c7d0de9379fd8c7ec479c7d5157972386dfea47"
+    }
+  },
+  "width": 1080,
+  "height": 1920,
+  "fps": 30,
+  "gap_seconds": 0.35,
+  "min_display_seconds": 2.0,
+  "entries": [
+    {
+      "panel_id": "001aaaaa",
+      "order": 1,
+      "source_image": "C:\\Users\\tiajungba\\.cline\\data\\workspaces\\chat\\manhwa-recap\\webapp_output\\94fff2b1ccf0\\panel_001aaaaa.png",
+      "bbox": {
+        "x": 0,
+        "y": 0,
+        "w": 800,
+        "h": 1593
+      },
+      "start_seconds": 0.0,
+      "duration_seconds": 2.0,
+      "audio_path": null,
+      "pan": {
+        "kind": "pan_down",
+        "scaled_w": 1080,
+        "scaled_h": 2151,
+        "travel_px": 231
+      }
+    },
+    {
+      "panel_id": "001aaaab",
+      "order": 2,
+      "source_image": "C:\\Users\\tiajungba\\.cline\\data\\workspaces\\chat\\manhwa-recap\\webapp_output\\94fff2b1ccf0\\panel_001aaaab.png",
+      "bbox": {
+        "x": 0,
+        "y": 1593,
+        "w": 800,
+        "h": 1594
+      },
+      "start_seconds": 2.0,
+      "duration_seconds": 2.0,
+      "audio_path": null,
+      "pan": {
+        "kind": "pan_down",
+        "scaled_w": 1080,
+        "scaled_h": 2152,
+        "travel_px": 232
+      }
+    },
+    {
+      "panel_id": "001aaaba",
+      "order": 3,
+      "source_image": "C:\\Users\\tiajungba\\.cline\\data\\workspaces\\chat\\manhwa-recap\\webapp_output\\94fff2b1ccf0\\panel_001aaaba.png",
+      "bbox": {
+        "x": 0,
+        "y": 3187,
+        "w": 800,
+        "h": 1593
+      },
+      "start_seconds": 4.0,
+      "duration_seconds": 2.0,
+      "audio_path": null,
+      "pan": {
+        "kind": "pan_down",
+        "scaled_w": 1080,
+        "scaled_h": 2151,
+        "travel_px": 231
+      }
+    },
+    {
+      "panel_id": "001aaabb",
+      "order": 4,
+      "source_image": "C:\\Users\\tiajungba\\.cline\\data\\workspaces\\chat\\manhwa-recap\\webapp_output\\94fff2b1ccf0\\panel_001aaabb.png",
+      "bbox": {
+        "x": 0,
+        "y": 4780,
+        "w": 800,
+        "h": 1594
+      },
+      "start_seconds": 6.0,
+      "duration_seconds": 2.0,
+      "audio_path": null,
+      "pan": {
+        "kind": "pan_down",
+        "scaled_w": 1080,
+        "scaled_h": 2152,
+        "travel_px": 232
+      }
+    },
+    {
+      "panel_id": "001aab",
+      "order": 5,
+      "source_image": "C:\\Users\\tiajungba\\.cline\\data\\workspaces\\chat\\manhwa-recap\\webapp_output\\94fff2b1ccf0\\panel_001aab.png",
+      "bbox": {
+        "x": 0,
+        "y": 6374,
+        "w": 800,
+        "h": 3
+      },
+      "start_seconds": 8.0,
+      "duration_seconds": 1135.378,
+      "audio_path": null,
+      "pan": {
+        "kind": "pan_right",
+        "scaled_w": 512000,
+        "scaled_h": 1920,
+        "travel_px": 510920
+      }
+    },
+    {
+      "panel_id": "001ab",
+      "order": 6,
+      "source_image": "C:\\Users\\tiajungba\\.cline\\data\\workspaces\\chat\\manhwa-recap\\webapp_output\\94fff2b1ccf0\\panel_001ab.png",
+      "bbox": {
+        "x": 0,
+        "y": 6377,
+        "w": 800,
+        "h": 6
+      },
+      "start_seconds": 1143.378,
+      "duration_seconds": 566.489,
+      "audio_path": null,
+      "pan": {
+        "kind": "pan_right",
+        "scaled_w": 256000,
+        "scaled_h": 1920,
+        "travel_px": 254920
+      }
+    },
+    {
+      "panel_id": "001b",
+      "order": 7,
+      "source_image": "C:\\Users\\tiajungba\\.cline\\data\\workspaces\\chat\\manhwa-recap\\webapp_output\\94fff2b1ccf0\\panel_001b.png",
+      "bbox": {
+        "x": 0,
+        "y": 6383,
+        "w": 800,
+        "h": 12
+      },
+      "start_seconds": 1709.867,
+      "duration_seconds": 282.044,
+      "audio_path": null,
+      "pan": {
+        "kind": "pan_right",
+        "scaled_w": 128000,
+        "scaled_h": 1920,
+        "travel_px": 126920
+      }
+    },
+    {
+      "panel_id": "008",
+      "order": 8,
+      "source_image": "C:\\Users\\tiajungba\\.cline\\data\\workspaces\\chat\\manhwa-recap\\webapp_output\\94fff2b1ccf0\\panel_008.png",
+      "bbox": {
+        "x": 0,
+        "y": 6395,
+        "w": 800,
+        "h": 1590
+      },
+      "start_seconds": 1991.911,
+      "duration_seconds": 2.0,
+      "audio_path": null,
+      "pan": {
+        "kind": "pan_down",
+        "scaled_w": 1080,
+        "scaled_h": 2147,
+        "travel_px": 227
+      }
+    },
+    {
+      "panel_id": "009",
+      "order": 9,
+      "source_image": "C:\\Users\\tiajungba\\.cline\\data\\workspaces\\chat\\manhwa-recap\\webapp_output\\94fff2b1ccf0\\panel_009.png",
+      "bbox": {
+        "x": 0,
+        "y": 7985,
+        "w": 800,
+        "h": 245
+      },
+      "start_seconds": 1993.911,
+      "duration_seconds": 11.533,
+      "audio_path": null,
+      "pan": {
+        "kind": "pan_right",
+        "scaled_w": 6270,
+        "scaled_h": 1920,
+        "travel_px": 5190
+      }
+    }
+  ]
+}

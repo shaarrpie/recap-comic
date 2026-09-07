@@ -5,6 +5,7 @@ timeout that converts a hang into an explicit failure."""
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -76,13 +77,13 @@ def _stage(job: Job, name: str, fn: Callable[[], Any]) -> Any:
 
 def _validate_config(job: Job) -> None:
     backend = job.config.get("backend", "none")
-    api_key = job.config.get("api_key", "")
+    api_key = job.config.get("api_key", "") or os.environ.get("GEMINI_API_KEY", "")
     job.log("INFO",
             f"backend={backend} api_key={'set' if api_key else 'missing'}",
             "validate_config")
     if backend != "none" and not api_key:
         raise RuntimeError(
-            f"{backend.upper()}_API_KEY not set; enter it in the webapp settings")
+            f"{backend.upper()}_API_KEY not set; enter it in the webapp settings or .env")
 
 
 def _load_images(job: Job) -> Path:
