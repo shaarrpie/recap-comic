@@ -18,6 +18,8 @@ from . import pipeline
 from .editor_api import (
     add_panel,
     create_project_from_generation,
+    get_ai_review_data,
+    get_panel_confidence,
     load_project,
     redo,
     reorder_panels,
@@ -31,8 +33,10 @@ from .editor_api import (
     start_render,
     undo,
     update_caption,
+    update_narration,
 )
 from .jobs import store
+from adapters.editor import Editor
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env", override=False)
@@ -57,7 +61,7 @@ def _default_backend() -> str:
 
 @app.get("/")
 async def index():
-    return FileResponse(BASE_DIR / "webapp" / "static" / "index.html")
+    return FileResponse(BASE_DIR / "webapp" / "static" / "app.html")
 
 
 @app.get("/api/config")
@@ -300,6 +304,16 @@ async def editor_caption(session: str, body: dict):
         raise HTTPException(400, "bad request")
 
 
+@app.post("/api/editor/{session}/narration")
+async def editor_narration(session: str, body: dict):
+    try:
+        panel_id = body["panel_id"]
+        text = body.get("text", "")
+        return update_narration(session, panel_id, text)
+    except (FileNotFoundError, KeyError, TypeError):
+        raise HTTPException(400, "bad request")
+
+
 @app.post("/api/editor/{session}/transition")
 async def editor_transition(session: str, body: dict):
     try:
@@ -356,3 +370,66 @@ async def editor_render(session: str, body: dict | None = None):
         return start_render(session, body.get("cfg", {}))
     except FileNotFoundError:
         raise HTTPException(404, "editor project not found")
+
+
+@app.get("/api/editor/{session}/ai-review")
+async def editor_ai_review(session: str):
+    try:
+        return editor_api.get_ai_review_data(session)
+    except FileNotFoundError:
+        raise HTTPException(404, "panels not found")
+
+
+@app.get("/api/editor/{session}/panel-confidence")
+async def editor_panel_confidence(session: str):
+    try:
+        return editor_api.get_panel_confidence(session)
+    except FileNotFoundError:
+        raise HTTPException(404, "panels not found")
+
+
+@app.post("/api/editor/{session}/narration/regenerate")
+async def editor_narration_regenerate(session: str, body: dict):
+    panel_id = body.get("panel_id")
+    if not panel_id:
+        raise HTTPException(400, "panel_id required")
+    d = OUTPUT_DIR / session
+    panels_json = d / "panels.json"
+    narration_json = d / "narration.json"
+    if not panels_json.is_file() or not narration_json.is_file():
+        raise HTTPException(404, "missing panels.json or narration.json")
+    try:
+        from guided_cutter import CutArtifact
+        from adapters.schemas import NarrationArtifact
+        artifact = CutArtifact.model_validate_json(panels_json.read_text("utf-8"))
+        narration = NarrationArtifact.model_validate_json(narration_json.read_text("utf-8"))
+    except Exception as exc:
+        raise HTTPException(500, f"cannot read project files: {exc}")
+    panel = next((p for p in artifact.panels if p.id == panel_id), None)
+    if not panel:
+        raise HTTPException(404, f"panel {panel_id} not found")
+    entry = next((n for n in narration.entries if n.id == panel_id), None)
+    if not entry:
+        raise HTTPException(404, f"narration for {panel_id} not found")
+    cut_art = CutArtifact(
+        source=artifact.source, width=artifact.width, height=artifact.height,
+        plan_hash=artifact.plan_hash, config=artifact.config, panels=[panel])
+    n_art = NarrationArtifact(
+        meta=narration.meta, mode=narration.mode, entries=[entry])
+    try:
+        import narrator
+        new_entry = narrator.make_script_from_cut(cut_art, style="recap").entries[0]
+        entry.text = new_entry.text
+        narration_json.write_text(narration.model_dump_json(indent=2) + "\n", "utf-8")
+        editor_path = d / "editor.json"
+        if editor_path.is_file():
+            proj = editor_api._get_project(session)
+            if proj:
+                for e in proj.edited_timeline:
+                    if e.get("panel_id") == panel_id:
+                        e["narration"] = new_entry.text
+                        e["needs_render"] = True
+                Editor(proj).save(editor_path)
+        return {"ok": True, "panel_id": panel_id, "text": new_entry.text}
+    except Exception as exc:
+        raise HTTPException(500, f"narration regeneration failed: {exc}")

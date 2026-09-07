@@ -326,3 +326,88 @@ def start_render(session: str, cfg: dict[str, Any]) -> dict[str, Any]:
     import threading
     threading.Thread(target=_run, daemon=True).start()
     return {"job_id": job.id, "status": job.status.value}
+
+
+def update_narration(session: str, panel_id: str, text: str) -> dict[str, Any]:
+    """Update narration text for a single panel across panels.json, editor.json, and job store."""
+    d = _session_dir(session)
+    panels_json = d / "panels.json"
+    if panels_json.is_file():
+        try:
+            from guided_cutter import CutArtifact
+            artifact = CutArtifact.model_validate_json(panels_json.read_text("utf-8"))
+            for p in artifact.panels:
+                if p.id == panel_id:
+                    p.narration = text
+                    break
+            panels_json.write_text(artifact.model_dump_json(indent=2) + "\n", "utf-8")
+        except Exception as exc:
+            log.warning("narration update panels.json failed session=%s panel=%s err=%s",
+                        session, panel_id, exc)
+
+    editor_path = d / "editor.json"
+    if editor_path.is_file():
+        try:
+            proj = _get_project(session)
+            if proj is not None:
+                for e in proj.edited_timeline:
+                    if e.get("panel_id") == panel_id:
+                        e["narration"] = text
+                        e["needs_render"] = True
+                Editor(proj).save(editor_path)
+        except Exception as exc:
+            log.warning("narration update editor.json failed session=%s panel=%s err=%s",
+                        session, panel_id, exc)
+
+    for j in store._jobs.values():
+        if j.config.get("session") == session:
+            for p in j.panels:
+                if p.get("id") == panel_id:
+                    p["narration"] = text
+
+    return {"ok": True, "panel_id": panel_id, "text": text}
+
+
+def get_ai_review_data(session: str) -> dict[str, Any]:
+    """Return panels flagged for review (low confidence)."""
+    d = _session_dir(session)
+    panels_json = d / "panels.json"
+    if not panels_json.is_file():
+        raise FileNotFoundError("missing panels.json")
+    try:
+        from guided_cutter import CutArtifact
+        artifact = CutArtifact.model_validate_json(panels_json.read_text("utf-8"))
+    except Exception:
+        raise HTTPException(500, "cannot read panels.json")
+    flagged = []
+    for p in artifact.panels:
+        conf = getattr(p, "confidence", 1.0) or 1.0
+        if conf < 0.7:
+            flagged.append({
+                "id": p.id,
+                "confidence": conf,
+                "panel_index": p.panel_index,
+                "y_start": p.y_start,
+                "y_end": p.y_end,
+                "narration": p.narration or "",
+            })
+    flagged.sort(key=lambda x: x["confidence"])
+    return {"session": session, "flagged_count": len(flagged), "total_panels": len(artifact.panels), "flagged": flagged}
+
+
+def get_panel_confidence(session: str) -> dict[str, Any]:
+    """Return per-panel confidence for the AI Review sidebar."""
+    d = _session_dir(session)
+    panels_json = d / "panels.json"
+    if not panels_json.is_file():
+        raise FileNotFoundError("missing panels.json")
+    try:
+        from guided_cutter import CutArtifact
+        artifact = CutArtifact.model_validate_json(panels_json.read_text("utf-8"))
+    except Exception:
+        raise HTTPException(500, "cannot read panels.json")
+    panels = []
+    for p in artifact.panels:
+        conf = getattr(p, "confidence", 1.0) or 1.0
+        panels.append({"id": p.id, "confidence": conf, "needs_review": conf < 0.7})
+    return {"panels": panels}
