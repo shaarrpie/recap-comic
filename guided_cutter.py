@@ -292,6 +292,11 @@ def _split_panel(gray: np.ndarray, panel: CutPanel,
             min_gutter_run=config.min_gutter_run,
             blur_sigma=config.blur_sigma,
             variances=variances, edge_density=edge_density)
+        min_piece = 50
+        if row is not None and (row <= y0 + min_piece or row >= y1 - min_piece):
+            log.debug("split row %d too close to edge for %s; falling back to midpoint",
+                      row, frag_id)
+            row = None
         if row is None or row <= y0 or row >= y1:
             for scan in range(1, (y1 - y0) // 4 + 1):
                 for candidate in [(mid - scan), (mid + scan)]:
@@ -482,12 +487,17 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
 
     cuts = build_cuts(gray_arr, plan, config=config)
     saved: list[CutPanel] = []
+    min_panel_height = 30
     for c in cuts:
         y0 = max(0, c.y_start)
         y1 = min(height, c.y_end)
         if y1 <= y0:
             log.warning("cut panel %s has empty/negative range [%d,%d]; skipping",
                         c.id, c.y_start, c.y_end)
+            continue
+        if (y1 - y0) < min_panel_height:
+            log.warning("cut panel %s is too thin (%dpx < %dpx); likely gutter "
+                        "debris, skipping", c.id, y1 - y0, min_panel_height)
             continue
         piece = rgb.crop((0, y0, width, y1))
         dest = out / c.image_file
