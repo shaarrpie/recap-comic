@@ -25,7 +25,7 @@ STAGE_TIMEOUT_S = {
     "gemini_narration": 300,
     "build_script": 10,
     "tts_audio": 600,
-    "render_video": 900,
+    "render_video": 3600,
     "save_outputs": 10,
 }
 JOB_TIMEOUT_S = 1800
