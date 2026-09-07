@@ -67,6 +67,52 @@ async def config():
     return state
 
 
+@app.get("/api/projects")
+async def projects():
+    """List sessions with derived status for the Library/Dashboard view."""
+    import json
+    result = []
+    jobs_by_session: dict[str, list] = {}
+    for j in store._jobs.values():
+        s = j.config.get("session")
+        if s:
+            jobs_by_session.setdefault(s, []).append(j)
+    for session_dir in sorted(OUTPUT_DIR.iterdir()):
+        if not session_dir.is_dir():
+            continue
+        sid = session_dir.name
+        panels_json = session_dir / "panels.json"
+        tl_json = session_dir / "timeline.json"
+        mp4 = session_dir / "recap.mp4"
+        editor_json = session_dir / "editor.json"
+        panel_count = 0
+        if panels_json.is_file():
+            try:
+                data = json.loads(panels_json.read_text("utf-8"))
+                panel_count = len(data.get("panels", []))
+            except Exception:
+                pass
+        jobs = sorted(jobs_by_session.get(sid, []), key=lambda j: j.created_at)
+        last_job = jobs[-1] if jobs else None
+        status = last_job.status.value if last_job else "no_job"
+        stage = last_job.stage if last_job else None
+        result.append({
+            "id": sid,
+            "name": sid,
+            "panels": panel_count,
+            "status": status,
+            "stage": stage,
+            "progress": last_job.progress if last_job else 0,
+            "has_video": mp4.is_file(),
+            "has_editor_project": editor_json.is_file(),
+            "has_timeline": tl_json.is_file(),
+            "error": last_job.error if last_job else None,
+            "created_at": last_job.created_at if last_job else None,
+            "updated_at": last_job.updated_at if last_job else None,
+        })
+    return {"projects": result}
+
+
 @app.post("/api/upload")
 async def upload(file: UploadFile = File(...)):  # noqa: B008
     allowed = {"png", "jpg", "jpeg", "webp"}
@@ -114,6 +160,7 @@ class RunRequest(BaseModel):
     model: str = ""
     endpoint: str = ""
     cf_account_id: str = ""
+    start_stage: str | None = None  # resume from a specific stage (retry)
 
 
 @app.post("/api/run")
@@ -128,6 +175,7 @@ async def run(body: RunRequest):
         "order": body.order,
         "tts": body.tts, "voice": body.voice, "style": body.style,
         "backend": body.backend,
+        "start_stage": body.start_stage,
     })
     log.info("job=%s created kind=generate session=%s order=%s",
              job.id, body.session,
@@ -221,7 +269,7 @@ async def editor_reorder(session: str, body: dict):
 async def editor_duration(session: str, body: dict):
     try:
         return set_duration(session, body["panel_id"], float(body["duration"]))
-    except (FileNotFoundError, KeyError):
+    except (FileNotFoundError, KeyError, ValueError, TypeError):
         raise HTTPException(400, "bad request")
 
 
@@ -229,7 +277,7 @@ async def editor_duration(session: str, body: dict):
 async def editor_effect(session: str, body: dict):
     try:
         return set_effect(session, body["panel_id"], body["kind"], float(body.get("duration", 0.0)))
-    except (FileNotFoundError, KeyError):
+    except (FileNotFoundError, KeyError, ValueError, TypeError):
         raise HTTPException(400, "bad request")
 
 
@@ -237,7 +285,9 @@ async def editor_effect(session: str, body: dict):
 async def editor_caption(session: str, body: dict):
     try:
         cid = body.pop("id")
-        return update_caption(session, cid, **body)
+        allowed = {"text", "start_seconds", "end_seconds"}
+        filtered = {k: v for k, v in body.items() if k in allowed}
+        return update_caption(session, cid, **filtered)
     except (FileNotFoundError, KeyError):
         raise HTTPException(400, "bad request")
 

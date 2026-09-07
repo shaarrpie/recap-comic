@@ -29,7 +29,7 @@ STAGE_TIMEOUT_S = {
     "save_outputs": 10,
     "create_editor_project": 30,
 }
-JOB_TIMEOUT_S = 1800
+JOB_TIMEOUT_S = 5400
 
 
 class StageTimeoutError(RuntimeError):
@@ -78,7 +78,7 @@ def _stage(job: Job, name: str, fn: Callable[..., Any]) -> Any:
 
 def _validate_config(job: Job, **kwargs: Any) -> None:
     backend = job.config.get("backend", "none")
-    api_key = job.config.get("api_key", "") or os.environ.get("GEMINI_API_KEY", "")
+    api_key = kwargs.get("api_key") or job.config.get("api_key", "") or os.environ.get("GEMINI_API_KEY", "")
     job.log("INFO",
             f"backend={backend} api_key={'set' if api_key else 'missing'}",
             "validate_config")
@@ -105,15 +105,15 @@ def _segment_panels(job: Job, **kwargs: Any) -> None:
     cache = BASE_DIR / ".cache" / "recap-comic"
     cache.mkdir(parents=True, exist_ok=True)
     backend_name = job.config.get("backend", "none")
-    api_key = job.config.get("api_key", "")
-    model = job.config.get("model", "")
-    endpoint = job.config.get("endpoint", "")
-    cf_account_id = job.config.get("cf_account_id", "")
+    api_key = kwargs.get("api_key") or job.config.get("api_key", "") or os.environ.get("GEMINI_API_KEY", "")
+    model = kwargs.get("model") or job.config.get("model", "") or None
+    base_url = kwargs.get("base_url") or job.config.get("endpoint", "") or None
+    cf_account_id = kwargs.get("cf_account_id") or job.config.get("cf_account_id", "") or None
     _plan, artifact, _used = gp.run_guided(
         strip, session_dir, backend_name=backend_name,
         cache_dir=cache, force=False, fallback=True,
-        api_key=api_key or None, model=model or None,
-        base_url=endpoint or None, cf_account_id=cf_account_id or None)
+        api_key=api_key or None, model=model,
+        base_url=base_url, cf_account_id=cf_account_id)
     assert artifact is not None
     job.panels = [{
         "id": p.id, "panel_index": p.panel_index,
@@ -264,8 +264,17 @@ def run_job(job_id: str, **kwargs: Any) -> None:
     job.touch()
     job.log("INFO", f"worker started kind={job.kind}")
     t0 = time.time()
+    start_stage = job.config.get("start_stage")
     try:
         for name, fn in PIPELINES[job.kind]:
+            if start_stage and name != start_stage:
+                if not hasattr(job, "_start_passed") or not job._start_passed:
+                    job.log("INFO", f"skipping stage (before start_stage={start_stage}) {name}")
+                    if name == start_stage:
+                        job._start_passed = True
+                    continue
+                job._start_passed = True
+            job._start_passed = True
             if time.time() - t0 > JOB_TIMEOUT_S:
                 raise StageTimeoutError(
                     f"job exceeded {JOB_TIMEOUT_S}s total budget")

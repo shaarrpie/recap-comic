@@ -77,3 +77,60 @@ def test_failure_reaches_status_and_message():
     c = TestClient(webmain.app)
     r = c.post("/api/run", json={"session": "nope"})
     assert r.status_code == 404
+
+
+def test_credentials_passed_to_segment_stages():
+    c = TestClient(webmain.app)
+    up = c.post("/api/upload", files={"file": ("s.png", io.BytesIO(b"x"),
+                                               "image/png")})
+    assert up.status_code == 200
+    session = up.json()["job_id"]
+
+    captured = {}
+
+    def fake_validate(job, **kwargs):
+        captured["validate"] = kwargs
+        job.log("INFO", "ok")
+
+    def fake_segment(job, **kwargs):
+        captured["segment"] = kwargs
+        job.panels = [{"id": f"panel_{i:03d}", "panel_index": i,
+                       "y_start": 0, "y_end": 10, "narration": "n",
+                       "dialogue": "", "panel_type": "dialogue",
+                       "confidence": 0.9,
+                       "image_file": f"panel_{i:03d}.png"}
+                      for i in range(1, 5)]
+
+    saved = list(pipeline.PIPELINES["generate"])
+    saved[0] = ("validate_config", fake_validate)
+    new_pipeline = []
+    for i, name in enumerate(["load_images", "segment_panels",
+                              "apply_order", "gemini_narration",
+                              "build_script", "tts_audio",
+                              "render_video", "save_outputs"]):
+        if name == "segment_panels":
+            fn = fake_segment
+        elif name == "apply_order":
+            fn = pipeline._apply_order
+        else:
+            fn = lambda job, **kwargs: None
+        new_pipeline.append((name, fn))
+    pipeline.PIPELINES["generate"] = [("validate_config", fake_validate)] + new_pipeline
+    r = c.post("/api/run", json={
+        "session": session,
+        "backend": "gemini",
+        "api_key": "secret-key",
+        "model": "gemini-2.5-flash",
+        "endpoint": "https://custom.example.com",
+        "cf_account_id": "cf-123",
+    })
+    assert r.status_code == 200
+    job = _wait_done(r.json()["job_id"])
+    assert job.status.value == "completed"
+    assert captured["validate"]["api_key"] == "secret-key"
+    assert captured["validate"]["model"] == "gemini-2.5-flash"
+    assert captured["segment"]["api_key"] == "secret-key"
+    assert captured["segment"]["model"] == "gemini-2.5-flash"
+    assert captured["segment"]["base_url"] == "https://custom.example.com"
+    assert captured["segment"]["cf_account_id"] == "cf-123"
+    pipeline.PIPELINES["generate"] = saved

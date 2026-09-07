@@ -48,7 +48,7 @@
     .panel.dragging { opacity: 0.4; transform: scale(0.95); }
     .panel.drag-over { border-color: #4f46e5; box-shadow: 0 0 0 3px #eef2ff; }
     .panel img {
-      width: 100%; height: 260px; object-fit: cover; display: block;
+      width: 100%; height: 260px; object-fit: contain; display: block;
       background: #e5e5e5;
     }
     .panel .meta { padding: 10px 12px; font-size: 0.85rem; }
@@ -104,6 +104,18 @@
     }
     .hidden { display: none; }
     .stage-label { margin-top: 8px; font-size: 0.9rem; color: #555; }
+    .stage-stepper {
+      display: flex; gap: 6px; margin: 10px 0; flex-wrap: wrap;
+    }
+    .stage-step {
+      flex: 1; min-width: 110px; padding: 6px 8px; border-radius: 6px;
+      font-size: 0.75rem; text-align: center;
+      background: #f0f0f0; color: #888; border: 1px solid #d0d0d0;
+    }
+    .stage-step.active { background: #eef2ff; color: #3730a3; border-color: #4f46e5; }
+    .stage-step.done { background: #dcfce8; color: #166534; border-color: #22c55e; }
+    .stage-step.failed { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
+    .stage-step .num { font-weight: 700; }
     .error-box {
       margin-top: 8px; padding: 10px 12px; border-radius: 8px;
       background: #fef2f2; color: #7f1d1d; font-size: 0.9rem;
@@ -212,14 +224,17 @@
 
   <div class="card" id="generation-card" style="display:none">
     <h2>Result</h2>
+    <div class="stage-stepper" id="stage-stepper"></div>
     <div id="log-tail" class="log-tail"></div>
     <div class="actions" id="actions"></div>
   </div>
 
   <script>
-    const state = { session: null, panels: [], order: [], running: false, sessions: [] };
+    const state = { session: null, panels: [], order: [], running: false, sessions: [],
+                    tts: "edge", voice: "en-US-AriaNeural", style: "recap", backend: "" };
     const runBtn = document.getElementById("run-btn");
     const stageLabel = document.getElementById("stage-label");
+    const stageStepper = document.getElementById("stage-stepper");
     const errorBox = document.getElementById("error-box");
     const logTail = document.getElementById("log-tail");
     const dropzone = document.getElementById("dropzone");
@@ -451,6 +466,24 @@
 
         if (isGeneration) {
           renderStage(s);
+          if (s.status === "running") {
+            const existing = document.getElementById("cancel-gen-btn");
+            if (!existing) {
+              const btn = document.createElement("button");
+              btn.id = "cancel-gen-btn";
+              btn.textContent = "Cancel";
+              btn.style.cssText = "margin-left:8px;background:#ef4444;color:#fff;border:none;padding:4px 10px;border-radius:6px;font-size:0.8rem;cursor:pointer";
+              btn.onclick = async () => {
+                await api(`/api/jobs/${jobId}/cancel`, {method:"POST"});
+                btn.disabled = true;
+                btn.textContent = "Canceling...";
+              };
+              stageLabel.parentNode.insertBefore(btn, stageLabel.nextSibling);
+            }
+          } else {
+            const cb = document.getElementById("cancel-gen-btn");
+            if (cb) cb.remove();
+          }
           renderLogs(s.logs || []);
           const age = Date.now() / 1000 - (s.updated_at || 0);
           if (s.status === "running" && age > 90) {
@@ -463,7 +496,7 @@
         if (s.status === "completed" || s.status === "done") {
           if (isGeneration) {
             state.panels = s.panels || [];
-            renderOutputs(s.outputs || {}, jobId);
+            renderOutputs(s.outputs || {}, jobId, s);
           } else {
             state.panels = s.panels || [];
             renderGallery();
@@ -494,6 +527,16 @@
       }
     }
 
+    const STAGES = ["validate_config","load_images","segment_panels","apply_order",
+                    "gemini_narration","build_script","tts_audio","render_video",
+                    "save_outputs","create_editor_project"];
+    const STAGE_LABELS = {
+      validate_config:"Config",load_images:"Load",segment_panels:"Panels",
+      apply_order:"Order",gemini_narration:"AI",build_script:"Script",
+      tts_audio:"Audio",render_video:"Video",save_outputs:"Save",
+      create_editor_project:"Editor proj"
+    };
+
     function renderStage(s) {
       const stage = s.stage || s.status;
       stageLabel.textContent = stage;
@@ -501,6 +544,18 @@
       if (s.status === "running") stageLabel.classList.add("running");
       else if (s.status === "completed") stageLabel.classList.add("done");
       else if (s.status === "failed") stageLabel.classList.add("error");
+
+      stageStepper.innerHTML = "";
+      STAGES.forEach((st, i) => {
+        const div = document.createElement("div");
+        div.className = "stage-step";
+        div.innerHTML = `<span class="num">${i+1}</span> ${STAGE_LABELS[st] || st}`;
+        const idx = STAGES.indexOf(s.stage);
+        if (i < idx) div.classList.add("done");
+        else if (i === idx) div.classList.add("active");
+        if (s.status === "failed" && st === s.stage) div.classList.add("failed");
+        stageStepper.appendChild(div);
+      });
     }
 
     function renderLogs(logs) {
@@ -514,7 +569,7 @@
       logTail.scrollTop = logTail.scrollHeight;
     }
 
-    function renderOutputs(outputs, jobId) {
+    function renderOutputs(outputs, jobId, jobState) {
       const actionsEl = document.getElementById("actions");
       actionsEl.innerHTML = "";
       generationCard.style.display = "block";
@@ -523,7 +578,19 @@
         links.push(`<a href="/api/jobs/${jobId}/files/${name}" download>${name}</a>`);
       }
       links.push(`<a href="/editor/${state.session}?session=${state.session}" target="_blank" style="background:#2563eb;color:#fff;border-color:#2563eb;padding:8px 12px;border-radius:6px;text-decoration:none;font-size:0.85rem;margin-left:8px">Open in Editor</a>`);
+      if (jobState && jobState.status === "failed" && jobState.stage) {
+        links.push(`<button id="retry-btn" style="background:#059669;color:#fff;border:none;padding:8px 12px;border-radius:6px;font-size:0.85rem;cursor:pointer">Retry from ${STAGE_LABELS[jobState.stage] || jobState.stage}</button>`);
+      }
       actionsEl.innerHTML = links.join("");
+      const retryBtn = document.getElementById("retry-btn");
+      if (retryBtn) {
+        retryBtn.onclick = () => {
+          const body = {session: state.session, tts: state.tts, voice: state.voice, style: state.style, backend: state.backend, start_stage: jobState.stage};
+          api("/api/run", {method:"POST", body:JSON.stringify(body)}).then(r => monitorJob(r.job_id, true));
+          retryBtn.disabled = true;
+          retryBtn.textContent = "Queued...";
+        };
+      }
     }
 
     async function runGeneration() {
@@ -537,7 +604,7 @@
       generationCard.style.display = "none";
 
       try {
-        const body = {
+         const body = {
           session: state.session,
           order: state.order.length ? state.order : undefined,
           tts: document.getElementById("tts").value,
@@ -549,6 +616,8 @@
           endpoint: document.getElementById("endpoint")?.value || "",
           cf_account_id: document.getElementById("cf-account-id")?.value || "",
         };
+        state.tts = body.tts; state.voice = body.voice;
+        state.style = body.style; state.backend = body.backend;
         const { job_id } = await api("/api/run", {
           method: "POST",
           headers: { "Content-Type": "application/json" },

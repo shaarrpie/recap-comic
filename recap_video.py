@@ -375,10 +375,11 @@ def compute_pan(width: int, height: int) -> PanSpec:
     """
     if width <= 0 or height <= 0:
         raise ValueError("panel must have positive size")
-    scale = min(max(WIDTH / width, HEIGHT / height), 4.0)
-    # -1e-6 guards against float noise (800 * 1.35 == 1080.0000000000002)
-    scaled_w = max(WIDTH, math.ceil(width * scale - 1e-6))
-    scaled_h = max(HEIGHT, math.ceil(height * scale - 1e-6))
+    scale = max(WIDTH / width, HEIGHT / height)
+    if scale > 4.0:
+        scale = 4.0
+    scaled_w = math.ceil(width * scale)
+    scaled_h = math.ceil(height * scale)
     over_h, over_w = scaled_h - HEIGHT, scaled_w - WIDTH
     if over_h > 2 and over_h >= over_w:
         return PanSpec(kind="pan_down", scaled_w=scaled_w, scaled_h=scaled_h,

@@ -80,30 +80,38 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
         chains.append("[acat]aresample=48000[aout]")
         alabel_out = "[aout]"
 def _scale_crop(kind: str, sw: int, sh: int, dur: float, t: str = "t") -> str:
-    """Build the scale+crop filter segment for one panel."""
+    """Build the scale+crop filter segment for one panel.
+
+    When the scale cap leaves the scaled image smaller than the target frame
+    (tiny panel), a pad step fills to 1080x1920 with black so crop never sees
+    an undersized buffer — this replaces the old max(WIDTH, …) clamping that
+    stretched panels non-uniformly.
+    """
+    pad = "" if (sw >= WIDTH and sh >= HEIGHT) else \
+          f"pad={max(WIDTH,sw)}:{max(HEIGHT,sh)}:(ow-iw)/2:(oh-ih)/2:color=black,"
     if kind == "pan_down":
-        return (f"scale={sw}:{sh},crop={WIDTH}:{HEIGHT}:"
+        return (f"scale={sw}:{sh},{pad}crop={WIDTH}:{HEIGHT}:"
                 f"x=0:y='(ih-{HEIGHT})*{t}/{dur:.3f}'")
     if kind == "pan_right":
-        return (f"scale={sw}:{sh},crop={WIDTH}:{HEIGHT}:"
+        return (f"scale={sw}:{sh},{pad}crop={WIDTH}:{HEIGHT}:"
                 f"x='(iw-{WIDTH})*{t}/{dur:.3f}':y=0")
     if kind == "pan_left":
-        return (f"scale={sw}:{sh},crop={WIDTH}:{HEIGHT}:"
+        return (f"scale={sw}:{sh},{pad}crop={WIDTH}:{HEIGHT}:"
                 f"x='(iw-{WIDTH})*(1-{t}/{dur:.3f})':y=0")
     if kind == "pan_up":
-        return (f"scale={sw}:{sh},crop={WIDTH}:{HEIGHT}:"
+        return (f"scale={sw}:{sh},{pad}crop={WIDTH}:{HEIGHT}:"
                 f"x=0:y='(ih-{HEIGHT})*(1-{t}/{dur:.3f})'")
     if kind == "zoom_in":
-        zw = f"1080*(1+0.3*t/{dur:.3f})"
-        zh = f"1920*(1+0.3*t/{dur:.3f})"
+        zw = f"1080*(1+0.3*{t}/{dur:.3f})"
+        zh = f"1920*(1+0.3*{t}/{dur:.3f})"
         return (f"scale=w={zw}:h={zh}:eval=frame,crop={WIDTH}:{HEIGHT}:"
                 f"x='(iw-{WIDTH})/2':y='(ih-{HEIGHT})/2'")
     if kind == "zoom_out":
-        zw = f"1080*(1.3-0.3*t/{dur:.3f})"
-        zh = f"1920*(1.3-0.3*t/{dur:.3f})"
+        zw = f"1080*(1.3-0.3*{t}/{dur:.3f})"
+        zh = f"1920*(1.3-0.3*{t}/{dur:.3f})"
         return (f"scale=w={zw}:h={zh}:eval=frame,crop={WIDTH}:{HEIGHT}:"
                 f"x='(iw-{WIDTH})/2':y='(ih-{HEIGHT})/2'")
-    return f"scale={sw}:{sh},crop={WIDTH}:{HEIGHT}:x=0:y=0"
+    return f"scale={sw}:{sh},{pad}crop={WIDTH}:{HEIGHT}:x=0:y=0"
 
 
 def build_command(timeline: TimelineArtifact, out_path: Path,

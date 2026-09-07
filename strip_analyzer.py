@@ -751,7 +751,7 @@ class GeminiVisionBackend:
                      config=types.GenerateContentConfig(
                          temperature=0.0,
                          response_mime_type="application/json",
-                         max_output_tokens=256,
+                          max_output_tokens=1024,
                      ),
                 )
                 elapsed = time.time() - t0

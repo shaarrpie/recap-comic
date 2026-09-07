@@ -10,9 +10,12 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any
+
+from fastapi import HTTPException
 
 from webapp.jobs import Job, JobStatus, store
 
@@ -23,9 +26,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = BASE_DIR / "webapp_output"
 log = logging.getLogger(__name__)
 
+_SESSION_RE = re.compile(r"^[0-9a-f]{12}$")
+
+
+def _validate_session(session: str) -> None:
+    if not _SESSION_RE.match(session):
+        raise HTTPException(400, "invalid session id")
+
 
 def _session_dir(session: str) -> Path:
-    d = OUTPUT_DIR / session
+    _validate_session(session)
+    d = (OUTPUT_DIR / session).resolve()
+    base = OUTPUT_DIR.resolve()
+    if base not in d.parents and d != base:
+        raise HTTPException(400, "invalid session path")
     d.mkdir(parents=True, exist_ok=True)
     return d
 

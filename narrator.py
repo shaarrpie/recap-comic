@@ -67,7 +67,14 @@ def make_script_from_cut(artifact: CutArtifact, style: str = "recap") -> str:
     the output PNGs.
     """
     panels = sorted(artifact.panels, key=lambda p: p.y_start)
-    parts = [p.narration for p in panels if p.narration.strip()]
+    parts = []
+    _prev = None
+    for p in panels:
+        txt = p.narration.strip()
+        if not txt or txt == _prev:
+            continue
+        parts.append(txt)
+        _prev = txt
     if not parts:
         return ""
     if style == "literal":
