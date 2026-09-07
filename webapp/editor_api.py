@@ -113,11 +113,17 @@ def create_project_from_generation(session: str) -> dict[str, Any]:
         try:
             tl = TimelineArtifact.model_validate_json(tl_json.read_text("utf-8"))
             original_timeline = [e.model_dump() for e in tl.entries]
+            cfg = VideoConfig(tts="none", gap_seconds=tl.gap_seconds,
+                              min_display_seconds=tl.min_display_seconds)
         except Exception:
             pass
 
     if original_timeline is None:
+        log.warning("timeline.json missing for session %s; building timeline "
+                    "from panels without TTS (audio entries will be empty)",
+                    session)
         from adapters.editor import timeline_from_cut
+        cfg.tts = "none"
         original_timeline = timeline_from_cut(artifact, d, cfg)
 
     # enrich original timeline with automated start/end for later comparison
