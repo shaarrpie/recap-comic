@@ -66,7 +66,7 @@ MAX_ATTEMPTS = 3
 # normalization convention in _chunk_prompt() / parse_entries_from_json()
 # changes in a way that would make a previously cached plan stale. The
 # value is folded into the Phase-1 cache key so old plans are not reused.
-PROMPT_VERSION = "2026-09-06b"
+PROMPT_VERSION = "2026-09-06c"
 
 _PANEL_RESPONSE_SCHEMA = {
     "type": "object",
@@ -690,6 +690,8 @@ def _chunk_prompt(height: int, previous_context: str = "") -> str:
         "- y_start < y_end and both are integers inside [0, 1000].\n"
         "- narration describes ONLY what is visible in that panel: characters, "
         "action, setting, mood. Never invent events that are not shown.\n"
+        "- Keep narration SHORT and SIMPLE: 1 sentence max, plain language, "
+        "no flowery description. This is for a fast-paced recap.\n"
         "- dialogue lists speech-bubble and SFX text verbatim, or an empty "
         "string.\n"
         "- panel_type is exactly one of: single, tall_scenic, "
@@ -746,10 +748,11 @@ class GeminiVisionBackend:
                         types.Part.from_bytes(
                             data=buf.getvalue(), mime_type="image/png"),
                     ],
-                    config=types.GenerateContentConfig(
-                        temperature=0.0,
-                        response_mime_type="application/json",
-                    ),
+                     config=types.GenerateContentConfig(
+                         temperature=0.0,
+                         response_mime_type="application/json",
+                         max_output_tokens=256,
+                     ),
                 )
                 elapsed = time.time() - t0
                 raw = resp.text
