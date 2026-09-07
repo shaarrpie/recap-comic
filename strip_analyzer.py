@@ -703,6 +703,41 @@ def _chunk_prompt(height: int, previous_context: str = "") -> str:
         "empty list. Never invent names.\n"
     )
 
+_GEMINI_RESPONSE_SCHEMA = None  # lazily built in analyze_chunk
+
+
+def _build_gemini_response_schema():
+    """Build a strict JSON schema for Gemini's response_schema to enforce
+    valid JSON output (response_mime_type alone is insufficient)."""
+    from google.genai import types
+    panel_entry = types.Schema(
+        type="object",
+        properties={
+            "panel_index": types.Schema(type="integer"),
+            "y_start": types.Schema(type="integer"),
+            "y_end": types.Schema(type="integer"),
+            "narration": types.Schema(type="string"),
+            "dialogue": types.Schema(type="string"),
+            "panel_type": types.Schema(type="string"),
+            "confidence": types.Schema(type="number"),
+            "bubble_boxes": types.Schema(
+                type="array",
+                items=types.Schema(
+                    type="array",
+                    items=types.Schema(type="integer"),
+                ),
+            ),
+        },
+    )
+    return types.Schema(
+        type="object",
+        properties={
+            "panels": types.Schema(type="array", items=panel_entry),
+            "characters": types.Schema(type="array", items=types.Schema(type="string")),
+        },
+    )
+
+
 class GeminiVisionBackend:
     """Gemini backend (default). Verified in this session:
     - google-genai==2.22.0 import-checked: types.Part.from_bytes / from_text
@@ -749,10 +784,11 @@ class GeminiVisionBackend:
                             data=buf.getvalue(), mime_type="image/png"),
                     ],
                      config=types.GenerateContentConfig(
-                         temperature=0.0,
-                         response_mime_type="application/json",
+                          temperature=0.0,
+                          response_mime_type="application/json",
+                          response_schema=_build_gemini_response_schema(),
                           max_output_tokens=1024,
-                     ),
+                      ),
                 )
                 elapsed = time.time() - t0
                 raw = resp.text
