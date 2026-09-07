@@ -387,6 +387,40 @@ def stitch_chunk_results(results: list[list[PanelPlanEntry]],
     return entries
 
 
+def _parse_duration(raw: str) -> float:
+    """Parse a duration string like '51s', '1.5s', '2m' to seconds."""
+    raw = raw.strip()
+    if raw.endswith("ms"):
+        return float(raw[:-2]) / 1000.0
+    if raw.endswith("s"):
+        return float(raw[:-1])
+    if raw.endswith("m"):
+        return float(raw[:-1]) * 60.0
+    return float(raw)
+
+
+def _parse_retry_delay(exc: Exception) -> float | None:
+    """Extract retry delay in seconds from a quota/429 exception if present."""
+    msg = str(exc)
+    try:
+        data = json.loads(msg)
+        details = data.get("error", {}).get("details", [])
+        for d in details:
+            if isinstance(d, dict) and d.get("@type", "").endswith("RetryInfo"):
+                raw = d.get("retryDelay", "")
+                if raw:
+                    return _parse_duration(raw)
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        pass
+    m = re.search(r'"retryDelay"\s*:\s*"(\d+(?:\.\d+)?)\s*s"', msg)
+    if m:
+        return float(m.group(1))
+    m = re.search(r'[Rr]etry [Ii]n (\d+(?:\.\d+)?)\s*s', msg)
+    if m:
+        return float(m.group(1))
+    return None
+
+
 def _call_with_retry(
     backend: VisionBackend,
     image: Image.Image,
@@ -400,6 +434,12 @@ def _call_with_retry(
                 image, previous_context=previous_context)
         except Exception as exc:  # noqa: BLE001 - retried, then re-raised
             last = exc
+            retry_delay = _parse_retry_delay(exc)
+            if retry_delay is not None and attempt < attempts:
+                log.warning("chunk analysis attempt %d/%d failed: %s; retrying in %.1fs",
+                            attempt, attempts, exc, retry_delay)
+                time.sleep(retry_delay)
+                continue
             log.warning("chunk analysis attempt %d/%d failed: %s",
                         attempt, attempts, exc)
             time.sleep(attempt)

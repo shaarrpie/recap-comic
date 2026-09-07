@@ -560,3 +560,51 @@ def test_cloudflare_backend_name_accepted() -> None:
                 "build_backend rejected 'cloudflare' — backend name drift") from exc
     except RuntimeError:
         pass  # missing credentials is fine; we only care the name is recognized
+
+
+def test_parse_retry_delay_from_quota_error() -> None:
+    """_parse_retry_delay extracts seconds from a Gemini 429 JSON body."""
+    exc = ValueError(
+        '{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", '
+        '"details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", '
+        '"retryDelay": "51s"}]}}'
+    )
+    delay = sa._parse_retry_delay(exc)
+    assert delay == 51.0
+
+
+def test_parse_retry_delay_missing() -> None:
+    """_parse_retry_delay returns None when no retry info is present."""
+    exc = RuntimeError("some random error")
+    assert sa._parse_retry_delay(exc) is None
+
+
+def test_call_with_retry_sleeps_for_retry_delay(monkeypatch: pytest.MonkeyPatch,
+                                                 tmp_path: Path) -> None:
+    """_call_with_retry should sleep for the server-suggested retry delay."""
+    import strip_analyzer as sa
+
+    sleeps: list[float] = []
+
+    class FlakyBackend:
+        def analyze_chunk(self, image, previous_context=""):
+            raise ValueError(
+                '{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", '
+                '"details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", '
+                '"retryDelay": "2s"}]}}'
+            )
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(sa.time, "sleep", fake_sleep)
+
+    strip = tmp_path / "strip.png"
+    make_strip(1200).save(strip)
+    with pytest.raises(sa.VisionAnalysisError):
+        sa.analyze_strip(strip, FlakyBackend(), chunk_height=2000, overlap=0,
+                         attempts=2)
+
+    assert len(sleeps) == 2
+    assert sleeps[0] == 2.0
+    assert sleeps[1] == 2.0
