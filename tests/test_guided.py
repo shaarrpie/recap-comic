@@ -249,6 +249,23 @@ def test_overlapping_ai_panels_are_repaired() -> None:
     assert len(cuts) == 2
     assert cuts[0].y_end <= cuts[1].y_start  # no overlap after repair
 
+
+def test_thin_panel_filtered_in_guided_cut(tmp_path: Path) -> None:
+    """F8: panels thinner than min_panel_height are skipped, not saved as
+    blank/white images."""
+    strip = tmp_path / "strip.png"
+    img = make_strip(1000, panels=[(40, 400), (500, 980)],
+                     gutters=[(400, 500)])
+    img.save(strip)
+    # AI thinks there are 3 panels; the middle one (410..430) is just 20px
+    # of gutter — it should be filtered out.
+    plan = plan_from([(50, 390), (410, 430), (510, 950)], height=1000)
+    artifact = gc.guided_cut(strip, plan, out_dir=tmp_path / "panels")
+    ids = [p.id for p in artifact.panels]
+    assert "002" not in ids  # thin panel (20px after snap) skipped
+    assert len(artifact.panels) >= 2
+
+
 def test_phase1_cache_avoids_recall(tmp_path: Path) -> None:
     strip = tmp_path / "strip.png"
     make_strip(2200).save(strip)
