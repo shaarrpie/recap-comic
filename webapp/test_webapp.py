@@ -12,17 +12,17 @@ from webapp.jobs import store
 
 @pytest.fixture(autouse=True)
 def _stub_engine():
-    def fake_validate(job): job.log("INFO", "ok")
-    def fake_load(job): return None
-    def fake_segment(job):
+    def fake_validate(job, **kwargs): job.log("INFO", "ok")
+    def fake_load(job, **kwargs): return None
+    def fake_segment(job, **kwargs):
         job.panels = [{"id": f"panel_{i:03d}", "panel_index": i,
                        "y_start": 0, "y_end": 10, "narration": "n",
                        "dialogue": "", "panel_type": "dialogue",
                        "confidence": 0.9,
                        "image_file": f"panel_{i:03d}.png"}
                       for i in range(1, 5)]
-    def fake_gemini(job): pass
-    def fake_rest(job): pass
+    def fake_gemini(job, **kwargs): pass
+    def fake_rest(job, **kwargs): pass
 
     original = list(pipeline.PIPELINES["generate"])
     original[0] = ("validate_config", fake_validate)

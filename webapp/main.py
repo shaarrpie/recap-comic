@@ -38,7 +38,9 @@ async def index():
 @app.get("/api/config")
 async def config():
     global _last_config_state
-    configured = bool(os.environ.get("GEMINI_API_KEY"))
+    key_src = os.environ.get("GEMINI_API_KEYS", "").strip()
+    single_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    configured = bool(key_src or single_key)
     model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     state = {"gemini_configured": configured, "model": model}
     if state != _last_config_state:
@@ -48,17 +50,8 @@ async def config():
     return state
 
 
-class UploadRequest(BaseModel):
-    backend: str = "none"
-    api_key: str = ""
-    model: str = ""
-    endpoint: str = ""
-    cf_account_id: str = ""
-
-
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...),  # noqa: B008
-                 body: UploadRequest | None = None):
+async def upload(file: UploadFile = File(...)):  # noqa: B008
     allowed = {"png", "jpg", "jpeg", "webp"}
     suffix = Path(file.filename or "x.png").suffix.lower().lstrip(".")
     if suffix not in allowed:
@@ -67,28 +60,26 @@ async def upload(file: UploadFile = File(...),  # noqa: B008
     session_dir = OUTPUT_DIR / session.id
     session_dir.mkdir(parents=True, exist_ok=True)
     strip_file = f"strip.{suffix}"
+    dest = session_dir / strip_file
     max_bytes = 200 * 1024 * 1024
-    content = b""
-    while True:
-        chunk = await file.read(4 * 1024 * 1024)
-        if not chunk:
-            break
-        content += chunk
-        if len(content) > max_bytes:
-            raise HTTPException(413, "upload too large; max 200 MB")
-    (session_dir / strip_file).write_bytes(content)
+    written = 0
+    with dest.open("wb") as fh:
+        while True:
+            chunk = await file.read(4 * 1024 * 1024)
+            if not chunk:
+                break
+            written += len(chunk)
+            if written > max_bytes:
+                raise HTTPException(413, "upload too large; max 200 MB")
+            fh.write(chunk)
     cfg = {
         "session": session.id,
         "strip_file": strip_file,
-        "backend": (body.backend if body else "none"),
-        "api_key": (body.api_key if body else ""),
-        "model": (body.model if body else ""),
-        "endpoint": (body.endpoint if body else ""),
-        "cf_account_id": (body.cf_account_id if body else ""),
+        "backend": "none",
     }
     session.config.update(cfg)
     log.info("job=%s upload received filename=%s bytes=%d backend=%s",
-             session.id, file.filename, len(content), cfg["backend"])
+             session.id, file.filename, written, cfg["backend"])
     threading.Thread(target=pipeline.run_job, args=(session.id,),
                      daemon=True).start()
     log.info("job=%s worker started kind=segment", session.id)
@@ -120,16 +111,18 @@ async def run(body: RunRequest):
         "order": body.order,
         "tts": body.tts, "voice": body.voice, "style": body.style,
         "backend": body.backend,
-        "api_key": body.api_key,
-        "model": body.model,
-        "endpoint": body.endpoint,
-        "cf_account_id": body.cf_account_id,
     })
     log.info("job=%s created kind=generate session=%s order=%s",
              job.id, body.session,
              "user" if body.order else "default")
+    kwargs = {
+        "api_key": body.api_key or None,
+        "model": body.model or None,
+        "base_url": body.endpoint or None,
+        "cf_account_id": body.cf_account_id or None,
+    }
     threading.Thread(target=pipeline.run_job, args=(job.id,),
-                     daemon=True).start()
+                     kwargs=kwargs, daemon=True).start()
     log.info("job=%s worker started kind=generate", job.id)
     return {"job_id": job.id, "status": job.status.value}
 

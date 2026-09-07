@@ -47,7 +47,7 @@ def _with_timeout(fn: Callable[[], Any], seconds: float,
                 f"stage {stage} timed out after {int(seconds)}s") from exc
 
 
-def _stage(job: Job, name: str, fn: Callable[[], Any]) -> Any:
+def _stage(job: Job, name: str, fn: Callable[..., Any]) -> Any:
     job.check_cancelled()
     job.stage = name
     job.touch()
@@ -75,7 +75,7 @@ def _stage(job: Job, name: str, fn: Callable[[], Any]) -> Any:
     return result
 
 
-def _validate_config(job: Job) -> None:
+def _validate_config(job: Job, **kwargs: Any) -> None:
     backend = job.config.get("backend", "none")
     api_key = job.config.get("api_key", "") or os.environ.get("GEMINI_API_KEY", "")
     job.log("INFO",
@@ -86,7 +86,7 @@ def _validate_config(job: Job) -> None:
             f"{backend.upper()}_API_KEY not set; enter it in the webapp settings or .env")
 
 
-def _load_images(job: Job) -> Path:
+def _load_images(job: Job, **kwargs: Any) -> Path:
     from PIL import Image
     strip = OUTPUT_DIR / job.config["session"] / job.config["strip_file"]
     if not strip.is_file():
@@ -97,7 +97,7 @@ def _load_images(job: Job) -> Path:
     return strip
 
 
-def _segment_panels(job: Job) -> None:
+def _segment_panels(job: Job, **kwargs: Any) -> None:
     import guided_pipeline as gp
     session_dir = OUTPUT_DIR / job.config["session"]
     strip = session_dir / job.config["strip_file"]
@@ -126,7 +126,7 @@ def _segment_panels(job: Job) -> None:
     job.progress = 30
 
 
-def _apply_order(job: Job) -> list[str]:
+def _apply_order(job: Job, **kwargs: Any) -> list[str]:
     order = job.config.get("order") or [p["id"] for p in job.panels]
     have = {p["id"] for p in job.panels}
     if set(order) != have or len(order) != len(have):
@@ -141,22 +141,22 @@ def _apply_order(job: Job) -> list[str]:
     return order
 
 
-def _gemini_narration(job: Job) -> None:
+def _gemini_narration(job: Job, **kwargs: Any) -> None:
     session_dir = OUTPUT_DIR / job.config["session"]
     import guided_pipeline as gp
     strip = session_dir / job.config["strip_file"]
     cache = BASE_DIR / ".cache" / "recap-comic"
     backend_name = job.config.get("backend", "gemini")
-    api_key = job.config.get("api_key", "")
-    model = job.config.get("model", "")
-    endpoint = job.config.get("endpoint", "")
-    cf_account_id = job.config.get("cf_account_id", "")
+    api_key = kwargs.get("api_key") or job.config.get("api_key", "") or os.environ.get("GEMINI_API_KEY", "")
+    model = kwargs.get("model") or job.config.get("model", "") or None
+    endpoint = kwargs.get("base_url") or job.config.get("endpoint", "") or None
+    cf_account_id = kwargs.get("cf_account_id") or job.config.get("cf_account_id", "") or None
     job.log("INFO", f"{backend_name} narration started", "gemini_narration")
     plan, _artifact, _used = gp.run_guided(
         strip, session_dir, backend_name=backend_name,
         cache_dir=cache, force=False, fallback=True,
-        api_key=api_key or None, model=model or None,
-        base_url=endpoint or None, cf_account_id=cf_account_id or None)
+        api_key=api_key or None, model=model,
+        base_url=endpoint, cf_account_id=cf_account_id)
     job.log("INFO",
             f"narration completed panels={len(plan.entries)} "
             f"model={plan.model}", "gemini_narration")
@@ -170,7 +170,7 @@ def _gemini_narration(job: Job) -> None:
     job.progress = 60
 
 
-def _build_script(job: Job) -> None:
+def _build_script(job: Job, **kwargs: Any) -> None:
     from guided_cutter import CutArtifact
     from narrator import make_script_from_cut
     session_dir = OUTPUT_DIR / job.config["session"]
@@ -182,7 +182,7 @@ def _build_script(job: Job) -> None:
     job.log("INFO", f"narration script chars={len(script)}", "build_script")
 
 
-def _tts_audio(job: Job) -> None:
+def _tts_audio(job: Job, **kwargs: Any) -> None:
     if job.config.get("tts", "edge") == "none":
         job.log("INFO", "tts skipped (tts=none)", "tts_audio")
         return
@@ -200,7 +200,7 @@ def _tts_audio(job: Job) -> None:
         job.progress = 60 + int(20 * i / max(1, len(entries)))
 
 
-def _render_video(job: Job) -> None:
+def _render_video(job: Job, **kwargs: Any) -> None:
     session_dir = OUTPUT_DIR / job.config["session"]
     panels_json = session_dir / "panels.json"
     out_mp4 = session_dir / "recap.mp4"
@@ -213,7 +213,7 @@ def _render_video(job: Job) -> None:
     job.progress = 95
 
 
-def _save_outputs(job: Job) -> None:
+def _save_outputs(job: Job, **kwargs: Any) -> None:
     session_dir = OUTPUT_DIR / job.config["session"]
     for name in ("panels.json", "narration.txt", "recap.mp4",
                  "recap.srt", "timeline.json"):
@@ -242,7 +242,7 @@ PIPELINES: dict[str, list[tuple[str, Callable[[Job], Any]]]] = {
 }
 
 
-def run_job(job_id: str) -> None:
+def run_job(job_id: str, **kwargs: Any) -> None:
     job = store.get(job_id)
     if job is None:
         return
@@ -256,7 +256,7 @@ def run_job(job_id: str) -> None:
             if time.time() - t0 > JOB_TIMEOUT_S:
                 raise StageTimeoutError(
                     f"job exceeded {JOB_TIMEOUT_S}s total budget")
-            _stage(job, name, lambda fn=fn: fn(job))
+            _stage(job, name, lambda fn=fn: fn(job, **kwargs))
         job.status = JobStatus.COMPLETED
         job.stage = "done"
         job.finished_at = time.time()

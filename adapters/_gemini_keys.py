@@ -21,6 +21,8 @@ class KeyRotator:
         if not keys:
             raise ValueError("no Gemini API keys configured")
         self._keys = [k.strip() for k in keys if k and k.strip()]
+        if not self._keys:
+            raise ValueError("no Gemini API keys configured")
         self._idx = 0
         self._lock = threading.Lock()
 

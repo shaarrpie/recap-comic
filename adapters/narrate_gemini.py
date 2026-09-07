@@ -97,7 +97,6 @@ def generate(narration_request: str, ocr: OcrArtifact, panel_ids: list[str],
     from adapters._gemini_keys import from_env
 
     rotator = from_env()
-    api_key = rotator.current()
     dump = "\n".join(
         f"{r.panel_id or '?'} [{r.kind}] conf={r.confidence}: {r.text}"
         for r in ocr.regions)
@@ -107,12 +106,13 @@ def generate(narration_request: str, ocr: OcrArtifact, panel_ids: list[str],
                       "present in the OCR text; otherwise null.\n"
                       if mode == "characters" else "",
         ocr_dump=dump, n_panels=len(panel_ids))
-    client = genai.Client(api_key=api_key)
     last_err = ""
     last_raw = ""
     last_exc: Exception | None = None
     max_rotation = rotator.total + 1
     for attempt in range(1, max(max_attempts, max_rotation) + 1):
+        api_key = rotator.current()
+        client = genai.Client(api_key=api_key)
         try:
             resp = client.models.generate_content(
                 model=model, contents=[SYSTEM_PROMPT, user + last_err],
@@ -132,7 +132,8 @@ def generate(narration_request: str, ocr: OcrArtifact, panel_ids: list[str],
                 return narration
             narration = _grounding_retry(
                 client, narration, ocr, bad, model, debug_dir)
-            narration.ungrounded_quotes = []
+            remaining_bad = check_grounding(narration, ocr)
+            narration.ungrounded_quotes = remaining_bad
             return narration
         except Exception as exc:  # noqa: BLE001 - every failure is retried,
             # then re-raised with context; never silently swallowed
@@ -145,28 +146,21 @@ def generate(narration_request: str, ocr: OcrArtifact, panel_ids: list[str],
             )
             if is_quota and attempt < max_rotation:
                 rotator.advance()
-                last_err = (
-                    f"\n\nPrevious attempt failed with quota error "
-                    f"(key ending {api_key[-4:]}): {exc}\nFix it."
-                )
                 log.warning(
                     "gemini quota error on key ending %s; rotated to next key (%d/%d)",
                     api_key[-4:], attempt + 1, max_rotation
                 )
                 continue
-            debug_dir.mkdir(exist_ok=True)
-            (debug_dir / f"narration_raw_{int(time.time())}.txt").write_text(
-                last_raw, encoding="utf-8")
-            raise RuntimeError(
-                f"narration failed after {attempt} attempt(s): {exc}"
-            ) from exc
+            last_err = (
+                f"\n\nPrevious attempt failed validation: {exc}\nFix it."
+            )
+            time.sleep(attempt)
     debug_dir.mkdir(exist_ok=True)
     (debug_dir / f"narration_raw_{int(time.time())}.txt").write_text(
         last_raw, encoding="utf-8")
     raise RuntimeError(
-        f"narration failed after {max_attempts} attempts; all "
-        f"{rotator.total} Gemini keys quota-exhausted; raw response "
-        f"saved under {debug_dir}") from last_exc
+        f"narration failed after {max_attempts} attempts; raw "
+        f"response saved under {debug_dir}") from last_exc
 
 
 def _grounding_retry(client, narration: NarrationArtifact,

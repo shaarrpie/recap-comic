@@ -20,6 +20,8 @@ smoke_overlay.png
 smoke_plan.json
 narration.txt
 narration.index.json
+webapp_output/
+logs/
 
 # Environment (secrets)
 .env
