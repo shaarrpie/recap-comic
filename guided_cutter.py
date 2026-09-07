@@ -311,14 +311,6 @@ def _split_panel(gray: np.ndarray, panel: CutPanel,
         stack.append((y0, row, frag_id + "a"))
         stack.append((row, y1, frag_id + "b"))
     pieces = sorted(pieces, key=lambda c: c.y_start)
-    if len(pieces) > 1:
-        cleaned: list[CutPanel] = [pieces[0]]
-        for p in pieces[1:]:
-            if p.narration or p.dialogue:
-                cleaned.append(p.model_copy(update={"narration": "", "dialogue": ""}))
-            else:
-                cleaned.append(p)
-        pieces = cleaned
     return pieces
 
 def build_cuts(gray: np.ndarray, plan: PanelPlan, *,

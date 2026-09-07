@@ -302,7 +302,17 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
         raise VideoError(f"TTS provider not available: {exc}") from exc
 
     entries: list[AudioEntry] = []
-    total = sum(1 for e in narration.entries if e.text.strip())
+    prev_text = ""
+    synth_count = 0
+    for e in narration.entries:
+        if not e.text.strip():
+            continue
+        if e.text.strip() == prev_text:
+            log.info("TTS skipped %s: duplicate of previous narration", e.id)
+            continue
+        prev_text = e.text.strip()
+        synth_count += 1
+    total = synth_count
     done = 0
     if _HAS_RICH:
         progress_ctx = Progress(
@@ -320,7 +330,15 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
         progress_ctx = None
         task_id = None
     try:
+        prev_text = ""
         for e in narration.entries:
+            text = e.text.strip()
+            if not text:
+                continue
+            if text == prev_text:
+                log.info("TTS skipped %s: duplicate of previous narration", e.id)
+                continue
+            prev_text = text
             out, err = tts_synth(
                 e, audio_dir, provider=cfg.tts, voice=cfg.voice,
                 rate=cfg.rate, pitch=cfg.pitch, speed=cfg.speed,
@@ -518,7 +536,22 @@ def render_video(timeline: TimelineArtifact, out_path: Path,
             raise VideoError(str(exc)) from exc
     elapsed = time.time() - t0
     tmp.replace(out_path)
+    _apply_faststart(out_path, exe)
     log.info("render_video complete out=%s duration=%.2fs", out_path, elapsed)
+
+
+def _apply_faststart(path: Path, ffmpeg_exe: str) -> None:
+    tmp = path.with_name(path.stem + ".faststart.mp4")
+    cmd = [ffmpeg_exe, "-y", "-nostdin", "-i", str(path),
+           "-c", "copy", "-movflags", "+faststart", str(tmp)]
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        tail = "\n".join(proc.stderr.splitlines()[-10:])
+        log.warning("faststart post-process failed for %s: %s", path, tail)
+        if tmp.is_file():
+            tmp.unlink()
+    else:
+        tmp.replace(path)
 
 
 # --------------------------------------------------------------------------- #

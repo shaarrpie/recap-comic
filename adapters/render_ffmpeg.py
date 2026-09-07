@@ -83,7 +83,7 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
             "-map", "[vcat]", "-map", alabel_out,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
             "-pix_fmt", "yuv420p", "-r", str(timeline.fps),
-            "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart",
+            "-c:a", "aac", "-b:a", "192k", "-max_muxing_queue_size", "9999",
             str(out_path)]
     return cmd
 

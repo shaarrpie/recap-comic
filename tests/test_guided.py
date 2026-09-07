@@ -195,7 +195,7 @@ def test_tall_panel_split_at_internal_gutter() -> None:
     pieces = [c for c in cuts if c.id.startswith("003")]
     assert len(pieces) == 2
     assert pieces[0].narration == "tall-scene"
-    assert not pieces[1].narration
+    assert pieces[1].narration == "tall-scene"
     assert pieces[0].y_end == pieces[1].y_start  # contiguous
     assert all(p.split_of == "003" for p in pieces)
 
