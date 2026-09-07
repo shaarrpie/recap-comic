@@ -522,7 +522,8 @@
       for (const [name, path] of Object.entries(outputs)) {
         links.push(`<a href="/api/jobs/${jobId}/files/${name}" download>${name}</a>`);
       }
-      actionsEl.innerHTML = links.join("") || '<span class="empty">no outputs yet</span>';
+      links.push(`<a href="/editor/${state.session}?session=${state.session}" target="_blank" style="background:#2563eb;color:#fff;border-color:#2563eb;padding:8px 12px;border-radius:6px;text-decoration:none;font-size:0.85rem;margin-left:8px">Open in Editor</a>`);
+      actionsEl.innerHTML = links.join("");
     }
 
     async function runGeneration() {

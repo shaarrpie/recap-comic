@@ -27,6 +27,7 @@ STAGE_TIMEOUT_S = {
     "tts_audio": 600,
     "render_video": 3600,
     "save_outputs": 10,
+    "create_editor_project": 30,
 }
 JOB_TIMEOUT_S = 1800
 
@@ -222,6 +223,17 @@ def _save_outputs(job: Job, **kwargs: Any) -> None:
     job.progress = 100
 
 
+def _create_editor_project(job: Job, **kwargs: Any) -> None:
+    from .editor_api import create_project_from_generation
+    session = job.config["session"]
+    try:
+        proj = create_project_from_generation(session)
+        job.outputs["editor.json"] = "editor.json"
+        job.log("INFO", f"editor project created panels={len(proj['edited_timeline'])}", "create_editor_project")
+    except Exception as exc:
+        job.log("WARNING", f"editor project creation failed: {exc}", "create_editor_project")
+
+
 PIPELINES: dict[str, list[tuple[str, Callable[[Job], Any]]]] = {
     "segment": [
         ("validate_config", _validate_config),
@@ -238,6 +250,7 @@ PIPELINES: dict[str, list[tuple[str, Callable[[Job], Any]]]] = {
         ("tts_audio", _tts_audio),
         ("render_video", _render_video),
         ("save_outputs", _save_outputs),
+        ("create_editor_project", _create_editor_project),
     ],
 }
 

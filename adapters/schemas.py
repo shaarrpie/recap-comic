@@ -103,7 +103,7 @@ class AudioArtifact(BaseModel):
 
 
 class PanSpec(BaseModel):
-    kind: Literal["pan_down", "pan_right", "static"]
+    kind: Literal["pan_down", "pan_right", "pan_left", "pan_up", "zoom_in", "zoom_out", "static"]
     scaled_w: int  # panel scaled to this size before cropping to 1080x1920
     scaled_h: int
     travel_px: int  # total pan distance along the pan axis (0 when static)

@@ -628,3 +628,95 @@ def make_recap_video(panels_json: Path, out_path: Path,
     summary["video"] = str(out_path)
     log.info("make_recap_video complete summary=%s", summary)
     return summary
+
+
+# --------------------------------------------------------------------------- #
+# Editor render — reuse existing assets, apply user overrides
+# --------------------------------------------------------------------------- #
+def render_edited_project(editor_path: Path, out_path: Path,
+                          cfg: VideoConfig | None = None) -> dict[str, Any]:
+    """Render a video from an editor.json without regenerating narration/audio.
+
+    Reads the edited timeline, applies user overrides (duration, effect), rebuilds
+    captions from edited captions, and renders via the existing FFmpeg pipeline.
+    """
+    from adapters.editor import Editor
+    cfg = cfg or VideoConfig()
+    editor = Editor.load(editor_path)
+    session_dir = editor_path.parent
+    panels_dir = session_dir
+    audio_dir = session_dir / "audio"
+
+    # Reconstruct timeline from edited entries
+    tl_entries = []
+    for e in editor.project.edited_timeline:
+        effect = next((fx for fx in editor.project.effects if fx["panel_id"] == e["panel_id"]), None)
+        pan_kind = effect["kind"] if effect else e.get("pan", {}).get("kind", "static")
+        scaled_w = e.get("pan", {}).get("scaled_w", WIDTH)
+        scaled_h = e.get("pan", {}).get("scaled_h", HEIGHT)
+        travel_px = e.get("pan", {}).get("travel_px", 0)
+        if pan_kind in ("zoom_in", "zoom_out"):
+            scaled_w = WIDTH
+            scaled_h = HEIGHT
+            travel_px = 0
+        audio_path = e.get("audio_path")
+        if audio_path and not Path(audio_path).is_file():
+            audio_path = None
+        tl_entries.append(TimelineEntry(
+            panel_id=e["panel_id"],
+            order=e["order"],
+            source_image=e["source_image"],
+            bbox=BBox(**e["bbox"]),
+            start_seconds=e["start_seconds"],
+            duration_seconds=e["duration_seconds"],
+            audio_path=audio_path,
+            pan=PanSpec(kind=pan_kind, scaled_w=scaled_w, scaled_h=scaled_h, travel_px=travel_px),
+        ))
+
+    timeline = TimelineArtifact(
+        meta=_meta(cfg.hash(), {"editor.json": _sha256_text(editor_path.read_text("utf-8"))}),
+        width=editor.project.project.get("width", WIDTH),
+        height=editor.project.project.get("height", HEIGHT),
+        fps=editor.project.project.get("fps", cfg.fps),
+        gap_seconds=cfg.gap_seconds,
+        min_display_seconds=cfg.min_display_seconds,
+        entries=tl_entries,
+    )
+
+    # Build SRT from edited captions
+    srt_path = out_path.with_suffix(".srt")
+    _write_srt_from_editor(timeline, editor.project.captions, srt_path)
+
+    # Render
+    render_video(timeline, out_path, cfg)
+
+    summary: dict[str, Any] = {
+        "panels": len(timeline.entries),
+        "total_seconds": total_seconds(timeline),
+        "timeline": str(session_dir / "timeline.json"),
+        "srt": str(srt_path),
+        "srt_cues": len(editor.project.captions),
+        "video": str(out_path),
+    }
+    editor.project.last_rendered_at = time.time()
+    editor.project.needs_render = False
+    editor.save(editor_path)
+    log.info("render_edited_project complete out=%s", out_path)
+    return summary
+
+
+def _write_srt_from_editor(timeline: TimelineArtifact,
+                           captions: list[dict[str, Any]], out_path: Path) -> int:
+    lines: list[str] = []
+    n = 0
+    for cap in captions:
+        start = cap["start_seconds"]
+        end = cap["end_seconds"]
+        text = cap["text"].strip()
+        if end <= start or not text:
+            continue
+        n += 1
+        lines += [str(n), f"{srt_time(start)} --> {srt_time(end)}",
+                  " ".join(text.split()), ""]
+    _write_atomic(out_path, "\n".join(lines) + ("\n" if lines else ""))
+    return n

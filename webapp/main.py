@@ -15,6 +15,23 @@ from pydantic import BaseModel
 from adapters._logging import get_logger, setup_logging
 
 from . import pipeline
+from .editor_api import (
+    add_panel,
+    create_project_from_generation,
+    load_project,
+    redo,
+    reorder_panels,
+    remove_panel,
+    render_edited_project,
+    reset_to_automated,
+    save_project,
+    set_duration,
+    set_effect,
+    set_transition,
+    start_render,
+    undo,
+    update_caption,
+)
 from .jobs import store
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -158,3 +175,126 @@ async def job_file(job_id: str, name: str):
     if not target.is_file():
         raise HTTPException(404, "file not found")
     return FileResponse(target)
+
+
+# --------------------------------------------------------------------------- #
+# Editor routes
+# --------------------------------------------------------------------------- #
+@app.get("/editor/{session}")
+async def editor_page(session: str):
+    return FileResponse(BASE_DIR / "webapp" / "static" / "editor.html")
+
+
+@app.get("/api/editor/{session}")
+async def editor_get(session: str):
+    try:
+        return load_project(session)
+    except FileNotFoundError:
+        raise HTTPException(404, "editor project not found; generate a video first")
+
+
+@app.post("/api/editor/{session}/create")
+async def editor_create(session: str):
+    try:
+        return create_project_from_generation(session)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc))
+
+
+@app.post("/api/editor/{session}")
+async def editor_save(session: str, body: dict):
+    try:
+        return save_project(session, body)
+    except FileNotFoundError:
+        raise HTTPException(404, "editor project not found")
+
+
+@app.post("/api/editor/{session}/reorder")
+async def editor_reorder(session: str, body: dict):
+    try:
+        return reorder_panels(session, body.get("order", []))
+    except FileNotFoundError:
+        raise HTTPException(404, "editor project not found")
+
+
+@app.post("/api/editor/{session}/duration")
+async def editor_duration(session: str, body: dict):
+    try:
+        return set_duration(session, body["panel_id"], float(body["duration"]))
+    except (FileNotFoundError, KeyError):
+        raise HTTPException(400, "bad request")
+
+
+@app.post("/api/editor/{session}/effect")
+async def editor_effect(session: str, body: dict):
+    try:
+        return set_effect(session, body["panel_id"], body["kind"], float(body.get("duration", 0.0)))
+    except (FileNotFoundError, KeyError):
+        raise HTTPException(400, "bad request")
+
+
+@app.post("/api/editor/{session}/caption")
+async def editor_caption(session: str, body: dict):
+    try:
+        cid = body.pop("id")
+        return update_caption(session, cid, **body)
+    except (FileNotFoundError, KeyError):
+        raise HTTPException(400, "bad request")
+
+
+@app.post("/api/editor/{session}/transition")
+async def editor_transition(session: str, body: dict):
+    try:
+        return set_transition(session, body["from_panel_id"], body["to_panel_id"],
+                               body["type"], float(body["duration"]))
+    except (FileNotFoundError, KeyError):
+        raise HTTPException(400, "bad request")
+
+
+@app.post("/api/editor/{session}/panel/remove")
+async def editor_remove(session: str, body: dict):
+    try:
+        return remove_panel(session, body["panel_id"])
+    except (FileNotFoundError, KeyError):
+        raise HTTPException(400, "bad request")
+
+
+@app.post("/api/editor/{session}/panel/add")
+async def editor_add(session: str, body: dict):
+    try:
+        return add_panel(session, body["panel_id"], body.get("after"))
+    except (FileNotFoundError, KeyError):
+        raise HTTPException(400, "bad request")
+
+
+@app.post("/api/editor/{session}/undo")
+async def editor_undo(session: str):
+    try:
+        return undo(session)
+    except FileNotFoundError:
+        raise HTTPException(404, "editor project not found")
+
+
+@app.post("/api/editor/{session}/redo")
+async def editor_redo(session: str):
+    try:
+        return redo(session)
+    except FileNotFoundError:
+        raise HTTPException(404, "editor project not found")
+
+
+@app.post("/api/editor/{session}/reset")
+async def editor_reset(session: str):
+    try:
+        return reset_to_automated(session)
+    except FileNotFoundError:
+        raise HTTPException(404, "editor project not found")
+
+
+@app.post("/api/editor/{session}/render")
+async def editor_render(session: str, body: dict | None = None):
+    body = body or {}
+    try:
+        return start_render(session, body.get("cfg", {}))
+    except FileNotFoundError:
+        raise HTTPException(404, "editor project not found")

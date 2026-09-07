@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>recap-comic — Video Editor</title>
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f0f12; color: #e6e6e6; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+header { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; background: #18181b; border-bottom: 1px solid #2a2a2e; flex-shrink: 0; }
+header h1 { font-size: 1rem; margin: 0; }
+.toolbar { display: flex; gap: 8px; align-items: center; }
+.toolbar button { background: #27272a; color: #e6e6e6; border: 1px solid #3f3f46; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; }
+.toolbar button:hover { background: #3f3f46; }
+.toolbar button.primary { background: #2563eb; border-color: #2563eb; }
+.toolbar button.primary:hover { background: #1d4ed8; }
+.toolbar button.danger { background: #dc2626; border-color: #dc2626; }
+.toolbar button.danger:hover { background: #b91c1c; }
+.toolbar button:disabled { opacity: 0.5; cursor: not-allowed; }
+main { flex: 1; display: flex; min-height: 0; }
+.preview { flex: 1; display: flex; flex-direction: column; background: #0a0a0c; border-right: 1px solid #2a2a2e; min-width: 0; }
+.preview video { flex: 1; max-height: 70vh; background: #000; }
+.transport { display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #18181b; border-top: 1px solid #2a2a2e; }
+.transport input[type=range] { flex: 1; }
+.time-display { font-family: ui-monospace, monospace; font-size: 0.85rem; color: #a1a1aa; min-width: 100px; text-align: center; }
+.properties { width: 320px; background: #18181b; border-left: 1px solid #2a2a2e; overflow-y: auto; padding: 12px; flex-shrink: 0; }
+.properties h3 { margin: 0 0 8px; font-size: 0.9rem; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.05em; }
+.prop-group { margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #27272a; }
+.prop-group label { display: block; font-size: 0.8rem; color: #a1a1aa; margin-bottom: 4px; }
+.prop-group input, .prop-group select, .prop-group textarea { width: 100%; background: #0f0f12; color: #e6e6e6; border: 1px solid #3f3f46; border-radius: 6px; padding: 6px 8px; font-size: 0.9rem; }
+.prop-group textarea { min-height: 60px; resize: vertical; font-family: inherit; }
+.timeline-area { height: 280px; background: #18181b; border-top: 1px solid #2a2a2e; display: flex; flex-direction: column; flex-shrink: 0; }
+.timeline-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 12px; border-bottom: 1px solid #27272a; }
+.timeline-header h2 { margin: 0; font-size: 0.9rem; }
+.timeline-scroll { flex: 1; overflow-x: auto; overflow-y: auto; position: relative; }
+.timeline-inner { position: relative; min-width: 100%; padding-bottom: 8px; }
+.ruler { height: 24px; position: relative; border-bottom: 1px solid #27272a; }
+.ruler-tick { position: absolute; bottom: 0; font-size: 0.7rem; color: #71717a; transform: translateX(-50%); }
+.ruler-tick::after { content: ""; position: absolute; bottom: 0; left: 50%; width: 1px; height: 8px; background: #3f3f46; }
+.track { position: relative; height: 56px; margin-top: 4px; }
+.track-label { position: absolute; left: 0; top: 0; bottom: 0; width: 80px; background: #18181b; border-right: 1px solid #27272a; z-index: 2; display: flex; align-items: center; padding-left: 8px; font-size: 0.75rem; color: #a1a1aa; text-transform: uppercase; letter-spacing: 0.05em; }
+.track-content { position: relative; margin-left: 80px; height: 100%; }
+.clip { position: absolute; top: 4px; height: calc(100% - 8px); border-radius: 6px; border: 1px solid #3f3f46; cursor: pointer; overflow: hidden; display: flex; flex-direction: column; user-select: none; }
+.clip.selected { border-color: #2563eb; box-shadow: 0 0 0 2px #1d4ed8; }
+.clip.panel-clip { background: #27272a; }
+.clip.panel-clip img { width: 100%; height: 32px; object-fit: cover; pointer-events: none; }
+.clip.panel-clip .clip-meta { padding: 2px 6px; font-size: 0.7rem; color: #d4d4d8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.clip.audio-clip { background: #14532d; border-color: #166534; }
+.clip.caption-clip { background: #1e3a5f; border-color: #2563eb; height: 28px; top: 2px; }
+.clip .clip-handle { position: absolute; top: 0; bottom: 0; width: 6px; cursor: ew-resize; background: rgba(255,255,255,0.1); }
+.clip .clip-handle.left { left: 0; border-radius: 6px 0 0 6px; }
+.clip .clip-handle.right { right: 0; border-radius: 0 6px 6px 0; }
+.empty-state { color: #71717a; font-style: italic; padding: 16px; }
+.status-bar { padding: 4px 12px; background: #0f0f12; border-top: 1px solid #27272a; font-size: 0.75rem; color: #71717a; display: flex; justify-content: space-between; }
+.toast { position: fixed; bottom: 16px; right: 16px; background: #27272a; color: #e6e6e6; padding: 10px 16px; border-radius: 8px; border: 1px solid #3f3f46; font-size: 0.85rem; opacity: 0; transition: opacity 0.3s; pointer-events: none; z-index: 100; }
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Video Editor</h1>
+  <div class="toolbar">
+    <button id="undo-btn" title="Ctrl+Z">↶ Undo</button>
+    <button id="redo-btn" title="Ctrl+Shift+Z">↷ Redo</button>
+    <button id="save-btn">Save</button>
+    <button id="reset-btn" class="danger">Reset to Automated</button>
+    <button id="render-btn" class="primary">Render Video</button>
+  </div>
+</header>
+<main>
+  <div class="preview">
+    <video id="preview" controls></video>
+    <div class="transport">
+      <button id="play-pause">Play</button>
+      <input type="range" id="seek" min="0" max="1000" value="0" step="1">
+      <span class="time-display" id="time-display">00:00 / 00:00</span>
+      <input type="range" id="volume" min="0" max="100" value="100" style="width:80px">
+      <select id="speed">
+        <option value="0.5">0.5x</option>
+        <option value="0.75">0.75x</option>
+        <option value="1" selected>1x</option>
+        <option value="1.25">1.25x</option>
+        <option value="1.5">1.5x</option>
+      </select>
+    </div>
+  </div>
+  <div class="properties" id="properties">
+    <div class="empty-state">Select a panel, caption, or transition to edit properties.</div>
+  </div>
+</main>
+<div class="timeline-area">
+  <div class="timeline-header">
+    <h2>Timeline</h2>
+    <span id="timeline-status" style="font-size:0.8rem;color:#a1a1aa;"></span>
+  </div>
+  <div class="timeline-scroll" id="timeline-scroll">
+    <div class="timeline-inner" id="timeline-inner">
+      <div class="ruler" id="ruler"></div>
+      <div class="track" id="panel-track">
+        <div class="track-label">Video</div>
+        <div class="track-content" id="panel-track-content"></div>
+      </div>
+      <div class="track" id="audio-track">
+        <div class="track-label">Audio</div>
+        <div class="track-content" id="audio-track-content"></div>
+      </div>
+      <div class="track" id="caption-track">
+        <div class="track-label">Captions</div>
+        <div class="track-content" id="caption-track-content"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="status-bar">
+  <span id="status-left">Ready</span>
+  <span id="status-right"></span>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+const PX_PER_SEC = 60;
+const state = { project: null, selected: null, session: null, running: false };
+const els = {};
+["preview", "seek", "time-display", "volume", "speed", "play-pause",
+ "ruler", "panel-track-content", "audio-track-content", "caption-track-content",
+ "timeline-inner", "timeline-scroll", "properties", "status-left", "status-right",
+ "timeline-status", "toast", "undo-btn", "redo-btn", "save-btn", "reset-btn", "render-btn"
+].forEach(id => els[id] = document.getElementById(id));
+
+function $(id) { return document.getElementById(id); }
+function showToast(msg) { els.toast.textContent = msg; els.toast.classList.add("show"); setTimeout(() => els.toast.classList.remove("show"), 3000); }
+function fmtTime(s) { s = Math.max(0, s); const m = Math.floor(s/60); const sec = Math.floor(s%60); return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
+
+async function api(path, opts={}) {
+  const res = await fetch(path, { ...opts, headers: { "Content-Type": "application/json", ...(opts.headers||{}) }});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`);
+  return data;
+}
+
+function loadSession(session) {
+  state.session = session;
+  state.running = true;
+  els["status-left"].textContent = "Loading...";
+  api(`/api/editor/${session}`).then(data => {
+    state.project = data;
+    state.running = false;
+    renderAll();
+    els["status-left"].textContent = `Loaded ${state.project.edited_timeline.length} panels`;
+    els.preview.src = `/api/jobs/${session}/files/recap.mp4`;
+  }).catch(err => {
+    state.running = false;
+    showToast(err.message);
+    els["status-left"].textContent = "Load failed";
+  });
+}
+
+function renderAll() {
+  if (!state.project) return;
+  renderRuler();
+  renderPanelTrack();
+  renderAudioTrack();
+  renderCaptionTrack();
+  updateHistoryButtons();
+}
+
+function totalDuration() {
+  if (!state.project || !state.project.edited_timeline.length) return 0;
+  const last = state.project.edited_timeline[state.project.edited_timeline.length - 1];
+  return last.start_seconds + last.duration_seconds;
+}
+
+function renderRuler() {
+  const dur = totalDuration() || 60;
+  const width = Math.max(dur * PX_PER_SEC + 200, els["timeline-scroll"].clientWidth);
+  els.ruler.innerHTML = "";
+  els.ruler.style.width = width + "px";
+  const step = dur > 120 ? 30 : dur > 60 ? 15 : 5;
+  for (let s = 0; s <= dur + step; s += step) {
+    const tick = document.createElement("div");
+    tick.className = "ruler-tick";
+    tick.style.left = (s * PX_PER_SEC) + "px";
+    tick.textContent = fmtTime(s);
+    els.ruler.appendChild(tick);
+  }
+  els["timeline-inner"].style.width = width + "px";
+}
+
+function renderPanelTrack() {
+  const container = els["panel-track-content"];
+  container.innerHTML = "";
+  if (!state.project) return;
+  const entries = state.project.edited_timeline;
+  entries.forEach((e, idx) => {
+    const clip = document.createElement("div");
+    clip.className = "clip panel-clip" + (state.selected && state.selected.type === "panel" && state.selected.id === e.panel_id ? " selected" : "");
+    clip.style.left = (e.start_seconds * PX_PER_SEC) + "px";
+    clip.style.width = (e.duration_seconds * PX_PER_SEC) + "px";
+    clip.dataset.panelId = e.panel_id;
+    clip.dataset.index = idx;
+    const imgFile = e.source_image ? e.source_image.split(/[\\/]/).pop() : "";
+    clip.innerHTML = `<img src="/api/jobs/${state.session}/files/${imgFile}" alt="" loading="lazy"><div class="clip-meta">${e.panel_id} ${fmtTime(e.start_seconds)}-${fmtTime(e.start_seconds + e.duration_seconds)}</div>`;
+    clip.addEventListener("click", () => selectPanel(e.panel_id, e.start_seconds));
+    makeDraggable(clip, idx);
+    container.appendChild(clip);
+  });
+}
+
+function renderAudioTrack() {
+  const container = els["audio-track-content"];
+  container.innerHTML = "";
+  if (!state.project) return;
+  const entries = state.project.edited_timeline;
+  entries.forEach(e => {
+    if (!e.audio_path) return;
+    const clip = document.createElement("div");
+    clip.className = "clip audio-clip";
+    clip.style.left = (e.start_seconds * PX_PER_SEC) + "px";
+    clip.style.width = (e.duration_seconds * PX_PER_SEC) + "px";
+    clip.textContent = e.panel_id;
+    clip.addEventListener("click", () => selectPanel(e.panel_id, e.start_seconds));
+    container.appendChild(clip);
+  });
+}
+
+function renderCaptionTrack() {
+  const container = els["caption-track-content"];
+  container.innerHTML = "";
+  if (!state.project) return;
+  state.project.captions.forEach(c => {
+    const clip = document.createElement("div");
+    clip.className = "clip caption-clip" + (state.selected && state.selected.type === "caption" && state.selected.id === c.id ? " selected" : "");
+    clip.style.left = (c.start_seconds * PX_PER_SEC) + "px";
+    clip.style.width = ((c.end_seconds - c.start_seconds) * PX_PER_SEC) + "px";
+    clip.textContent = c.text.slice(0, 30) || (c.id);
+    clip.addEventListener("click", () => selectCaption(c.id));
+    container.appendChild(clip);
+  });
+}
+
+function makeDraggable(el, idx) {
+  let startX = 0, origLeft = 0, dragging = false;
+  el.addEventListener("mousedown", (e) => {
+    if (e.target.classList.contains("clip-handle")) return;
+    dragging = true;
+    startX = e.clientX;
+    origLeft = parseFloat(el.style.left);
+    el.style.zIndex = 10;
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!dragging) return;
+    const dx = e.clientX - startX;
+    el.style.left = Math.max(0, origLeft + dx) + "px";
+  });
+  document.addEventListener("mouseup", async (e) => {
+    if (!dragging) return;
+    dragging = false;
+    el.style.zIndex = "";
+    const dx = e.clientX - startX;
+    const newStartSec = Math.max(0, origLeft + dx) / PX_PER_SEC;
+    const entry = state.project.edited_timeline[idx];
+    if (!entry) return;
+    const dur = entry.duration_seconds;
+    const newOrder = [];
+    const positions = state.project.edited_timeline.map((en, i) => ({ start: en.start_seconds, dur: en.duration_seconds, idx: i }));
+    positions[idx].start = newStartSec;
+    positions.sort((a, b) => a.start - b.start);
+    positions.forEach(p => newOrder.push(state.project.edited_timeline[p.idx].panel_id));
+    try {
+      const updated = await api(`/api/editor/${state.session}/reorder`, { method: "POST", body: JSON.stringify({ order: newOrder }) });
+      state.project = updated;
+      renderAll();
+      showToast("Timeline reordered");
+    } catch (err) { showToast(err.message); }
+  });
+}
+
+function makeResizable(el, cap) {
+  let startX = 0, origW = 0, resizing = null;
+  const rightHandle = document.createElement("div");
+  rightHandle.className = "clip-handle right";
+  el.appendChild(rightHandle);
+  rightHandle.addEventListener("mousedown", (e) => {
+    resizing = "right";
+    startX = e.clientX;
+    origW = parseFloat(el.style.width);
+    e.stopPropagation();
+    e.preventDefault();
+  });
+  el.addEventListener("mousedown", (e) => {
+    if (e.target === rightHandle) return;
+    resizing = "move";
+    startX = e.clientX;
+    origW = parseFloat(el.style.left);
+    e.preventDefault();
+  });
+  document.addEventListener("mousemove", (e) => {
+    if (!resizing) return;
+    const dx = e.clientX - startX;
+    if (resizing === "right") {
+      el.style.width = Math.max(20, origW + dx) + "px";
+    } else {
+      el.style.left = Math.max(0, origW + dx) + "px";
+    }
+  });
+  document.addEventListener("mouseup", async (e) => {
+    if (!resizing) return;
+    resizing = null;
+    const dx = e.clientX - startX;
+    if (resizing === "right") {
+      const newDur = Math.max(0.1, (origW + dx) / PX_PER_SEC);
+      try {
+        const updated = await api(`/api/editor/${state.session}/duration`, { method: "POST", body: JSON.stringify({ panel_id: cap.panel_id, duration: newDur }) });
+        state.project = updated;
+        renderAll();
+        showToast("Duration updated");
+      } catch (err) { showToast(err.message); }
+    }
+  });
+}
+
+function selectPanel(panelId, startSec) {
+  state.selected = { type: "panel", id: panelId, start: startSec };
+  renderProperties();
+  renderPanelTrack();
+  seekPreview(startSec);
+}
+
+function selectCaption(captionId) {
+  state.selected = { type: "caption", id: captionId };
+  renderProperties();
+  renderCaptionTrack();
+}
+
+function renderProperties() {
+  const container = els.properties;
+  container.innerHTML = "";
+  if (!state.selected) {
+    container.innerHTML = `<div class="empty-state">Select a panel, caption, or transition to edit properties.</div>`;
+    return;
+  }
+  const sel = state.selected;
+  if (sel.type === "panel") {
+    const entry = state.project.edited_timeline.find(e => e.panel_id === sel.id);
+    if (!entry) return;
+    const effect = (state.project.effects || []).find(e => e.panel_id === sel.id);
+    const transition = state.project.transitions.find(t => t.from_panel_id === sel.id);
+    container.innerHTML = `
+      <h3>Panel ${entry.panel_id}</h3>
+      <div class="prop-group">
+        <label>Duration (seconds)</label>
+        <input type="number" id="prop-duration" value="${entry.duration_seconds.toFixed(2)}" step="0.1" min="0.1">
+      </div>
+      <div class="prop-group">
+        <label>Start</label>
+        <input type="text" value="${entry.start_seconds.toFixed(2)}s" disabled>
+      </div>
+      <div class="prop-group">
+        <label>Effect</label>
+        <select id="prop-effect">
+          <option value="static" ${!effect||effect.kind==='static'?'selected':''}>Static</option>
+          <option value="pan_down" ${effect&&effect.kind==='pan_down'?'selected':''}>Pan Down</option>
+          <option value="pan_right" ${effect&&effect.kind==='pan_right'?'selected':''}>Pan Right</option>
+          <option value="pan_left" ${effect&&effect.kind==='pan_left'?'selected':''}>Pan Left</option>
+          <option value="pan_up" ${effect&&effect.kind==='pan_up'?'selected':''}>Pan Up</option>
+          <option value="zoom_in" ${effect&&effect.kind==='zoom_in'?'selected':''}>Zoom In</option>
+          <option value="zoom_out" ${effect&&effect.kind==='zoom_out'?'selected':''}>Zoom Out</option>
+        </select>
+      </div>
+      <div class="prop-group">
+        <label>Transition to next</label>
+        <select id="prop-transition">
+          <option value="cut" ${!transition||transition.type==='cut'?'selected':''}>Cut</option>
+          <option value="fade" ${transition&&transition.type==='fade'?'selected':''}>Fade</option>
+          <option value="crossfade" ${transition&&transition.type==='crossfade'?'selected':''}>Crossfade</option>
+        </select>
+        <input type="number" id="prop-transition-dur" value="${transition?transition.duration:0.5}" step="0.1" min="0.1" max="2" style="margin-top:4px">
+      </div>
+      <div class="prop-group">
+        <button class="danger" id="prop-remove" style="width:100%">Remove Panel</button>
+      </div>
+      <button id="prop-apply" class="primary" style="width:100%;padding:8px">Apply Changes</button>
+    `;
+    $("prop-apply").onclick = async () => {
+      try {
+        const dur = parseFloat($("prop-duration").value);
+        const eff = $("prop-effect").value;
+        const tr = $("prop-transition").value;
+        const trd = parseFloat($("prop-transition-dur").value);
+        const next = state.project.edited_timeline.find(e => e.panel_id === sel.id && e.order < entry.order);
+        await api(`/api/editor/${state.session}/duration`, { method: "POST", body: JSON.stringify({ panel_id: sel.id, duration: dur }) });
+        await api(`/api/editor/${state.session}/effect`, { method: "POST", body: JSON.stringify({ panel_id: sel.id, kind: eff, duration: dur }) });
+        if (next) {
+          await api(`/api/editor/${state.session}/transition`, { method: "POST", body: JSON.stringify({ from_panel_id: sel.id, to_panel_id: next.panel_id, type: tr, duration: trd }) });
+        }
+        state.project = await api(`/api/editor/${state.session}`);
+        renderAll();
+        showToast("Changes applied");
+      } catch (err) { showToast(err.message); }
+    };
+    $("prop-remove").onclick = async () => {
+      if (!confirm("Remove this panel from the timeline?")) return;
+      try {
+        const updated = await api(`/api/editor/${state.session}/panel/remove`, { method: "POST", body: JSON.stringify({ panel_id: sel.id }) });
+        state.project = updated;
+        state.selected = null;
+        renderAll();
+        renderProperties();
+        showToast("Panel removed");
+      } catch (err) { showToast(err.message); }
+    };
+  } else if (sel.type === "caption") {
+    const cap = state.project.captions.find(c => c.id === sel.id);
+    if (!cap) return;
+    container.innerHTML = `
+      <h3>Caption ${cap.id}</h3>
+      <div class="prop-group">
+        <label>Text</label>
+        <textarea id="cap-text">${escapeHtml(cap.text)}</textarea>
+      </div>
+      <div class="prop-group">
+        <label>Start (seconds)</label>
+        <input type="number" id="cap-start" value="${cap.start_seconds.toFixed(3)}" step="0.1">
+      </div>
+      <div class="prop-group">
+        <label>End (seconds)</label>
+        <input type="number" id="cap-end" value="${cap.end_seconds.toFixed(3)}" step="0.1">
+      </div>
+      <button id="cap-apply" class="primary" style="width:100%;padding:8px">Apply Changes</button>
+    `;
+    $("cap-apply").onclick = async () => {
+      try {
+        const text = $("cap-text").value;
+        const start = parseFloat($("cap-start").value);
+        const end = parseFloat($("cap-end").value);
+        const updated = await api(`/api/editor/${state.session}/caption`, { method: "POST", body: JSON.stringify({ id: sel.id, text, start_seconds: start, end_seconds: end }) });
+        state.project = updated;
+        renderAll();
+        renderProperties();
+        showToast("Caption updated");
+      } catch (err) { showToast(err.message); }
+    };
+  }
+}
+
+function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c] || c); }
+
+function updateHistoryButtons() {
+  els["undo-btn"].disabled = !state.project || state.project.history_index < 0;
+  els["redo-btn"].disabled = !state.project || state.project.history_index >= state.project.history.length - 1;
+}
+
+async function seekPreview(sec) {
+  const v = els.preview;
+  if (v.src) { v.currentTime = sec; }
+}
+
+els["play-pause"].onclick = () => {
+  const v = els.preview;
+  if (v.paused) { v.play(); els["play-pause"].textContent = "Pause"; }
+  else { v.pause(); els["play-pause"].textContent = "Play"; }
+};
+els.seek.oninput = () => {
+  const v = els.preview;
+  if (v.duration) v.currentTime = v.duration * (els.seek.value / 1000);
+};
+els.volume.oninput = () => { els.preview.volume = els.volume.value / 100; };
+els.speed.onchange = () => { els.preview.playbackRate = parseFloat(els.speed.value); };
+els.preview.addEventListener("timeupdate", () => {
+  const v = els.preview;
+  els["time-display"].textContent = `${fmtTime(v.currentTime)} / ${fmtTime(v.duration || 0)}`;
+  els.seek.value = v.duration ? (v.currentTime / v.duration * 1000) : 0;
+});
+els.preview.addEventListener("loadedmetadata", () => {
+  els["time-display"].textContent = `${fmtTime(0)} / ${fmtTime(els.preview.duration)}`;
+});
+
+els["undo-btn"].onclick = async () => {
+  try { state.project = await api(`/api/editor/${state.session}/undo`, { method: "POST" }); renderAll(); showToast("Undo"); } catch (e) { showToast(e.message); }
+};
+els["redo-btn"].onclick = async () => {
+  try { state.project = await api(`/api/editor/${state.session}/redo`, { method: "POST" }); renderAll(); showToast("Redo"); } catch (e) { showToast(e.message); }
+};
+els["save-btn"].onclick = async () => {
+  try { await api(`/api/editor/${state.session}`, { method: "POST", body: JSON.stringify(state.project) }); showToast("Saved"); } catch (e) { showToast(e.message); }
+};
+els["reset-btn"].onclick = async () => {
+  if (!confirm("Reset all changes to the automated version?")) return;
+  try { state.project = await api(`/api/editor/${state.session}/reset`, { method: "POST" }); renderAll(); showToast("Reset complete"); } catch (e) { showToast(e.message); }
+};
+els["render-btn"].onclick = async () => {
+  if (state.running) return;
+  state.running = true;
+  els["render-btn"].disabled = true;
+  els["render-btn"].textContent = "Rendering...";
+  els["status-right"].textContent = "Queued";
+  try {
+    const data = await api(`/api/editor/${state.session}/render`, { method: "POST", body: JSON.stringify({}) });
+    const jobId = data.job_id;
+    await monitorRenderJob(jobId);
+  } catch (e) {
+    showToast(e.message);
+    els["status-right"].textContent = "Failed";
+  } finally {
+    state.running = false;
+    els["render-btn"].disabled = false;
+    els["render-btn"].textContent = "Render Video";
+  }
+};
+
+async function monitorRenderJob(jobId) {
+  while (true) {
+    const s = await api(`/api/jobs/${jobId}?logs=1`);
+    els["status-right"].textContent = `${s.status} — ${s.stage || ""}`;
+    if (s.progress) els["status-right"].textContent += ` ${s.progress}%`;
+    if (["completed", "failed", "cancelled"].includes(s.status)) {
+      if (s.status === "completed") {
+        els.preview.src = `/api/jobs/${state.session}/files/recap_edited.mp4`;
+        showToast("Render complete");
+      } else {
+        showToast(s.error || "Render failed");
+      }
+      return;
+    }
+    await new Promise(r => setTimeout(r, 1000));
+  }
+}
+
+function init() {
+  const params = new URLSearchParams(window.location.search);
+  const session = params.get("session");
+  if (!session) {
+    els["status-left"].textContent = "No session specified";
+    return;
+  }
+  loadSession(session);
+}
+
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) { e.preventDefault(); els["undo-btn"].click(); }
+  if ((e.ctrlKey || e.metaKey) && (e.key === "Z" || (e.key === "z" && e.shiftKey))) { e.preventDefault(); els["redo-btn"].click(); }
+});
+
+init();
+</script>
+</body>
+</html>
