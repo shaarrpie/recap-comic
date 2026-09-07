@@ -47,6 +47,14 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 _last_config_state: dict | None = None
 
 
+def _default_backend() -> str:
+    """Return the backend to use for uploads: 'gemini' if configured, else 'none'."""
+    if (os.environ.get("GEMINI_API_KEYS", "").strip()
+            or os.environ.get("GEMINI_API_KEY", "").strip()):
+        return "gemini"
+    return "none"
+
+
 @app.get("/")
 async def index():
     return FileResponse(BASE_DIR / "webapp" / "static" / "index.html")
@@ -138,7 +146,7 @@ async def upload(file: UploadFile = File(...)):  # noqa: B008
     cfg = {
         "session": session.id,
         "strip_file": strip_file,
-        "backend": "none",
+        "backend": _default_backend(),
     }
     session.config.update(cfg)
     log.info("job=%s upload received filename=%s bytes=%d backend=%s",
