@@ -121,14 +121,15 @@ def low_confidence_ratio(plan: sa.PanelPlan) -> float:
 
 def fallback_plan_from_gutter_detector(
     strip_path: Path, *, variance_threshold: float = 6.0,
-    max_panel_height: int = 1600
+    edge_threshold: float = 30.0, max_panel_height: int = 1600
 ) -> sa.PanelPlan:
     """A PanelPlan from plain pixel analysis (no AI, no narration).
 
-    Uses the SAME row-variance metric as Phase 2's boundary refinement: rows
-    with variance <= variance_threshold are gutter rows; contiguous runs that
-    are at least 3 rows wide become gutters; panel cuts are placed at gutter
-    midpoints. The topmost/bottommost runs are treated as page margins.
+    Uses the SAME dual-metric (variance + edge density) as Phase 2's gutter
+    detection: rows with variance <= variance_threshold AND edge_density <=
+    edge_threshold are gutter rows; contiguous runs that are at least 3 rows
+    wide become gutters; panel cuts are placed at gutter midpoints. The
+    topmost/bottommost runs are treated as page margins.
     Every per-panel confidence is 0.0 on purpose (fallback provenance).
     Panels taller than max_panel_height are split at internal gutters.
     """
@@ -137,19 +138,25 @@ def fallback_plan_from_gutter_detector(
         width, height = img.size
         gray = np.asarray(img.convert("L"))
 
-    variance, _ = compute_strip_metrics(gray, use_edge_density=False,
-                                         blur_sigma=0.5)
+    variance, edge_density = compute_strip_metrics(gray, use_edge_density=True,
+                                                   blur_sigma=0.5)
+    run_is_gutter = np.zeros(height, dtype=bool)
+    for y in range(height):
+        if variance[y] <= variance_threshold and edge_density[y] <= edge_threshold:
+            run_is_gutter[y] = True
+    min_gutter_width = 3
     runs: list[tuple[int, int]] = []
     start: int | None = None
     for y in range(height):
-        if variance[y] <= variance_threshold:
-            start = y if start is None else start
-        elif start is not None:
-            runs.append((start, y - 1))
-            start = None
+        if run_is_gutter[y]:
+            if start is None:
+                start = y
+        else:
+            if start is not None:
+                runs.append((start, y - 1))
+                start = None
     if start is not None:
         runs.append((start, height - 1))
-    min_gutter_width = 3
     gutters = [r for r in runs
                if r[0] > 0 and r[1] < height - 1
                and r[1] - r[0] + 1 >= min_gutter_width]

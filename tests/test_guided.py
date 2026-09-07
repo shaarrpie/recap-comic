@@ -217,6 +217,38 @@ def test_merge_continuous_art_with_concatenated_narration() -> None:
     assert cuts[0].dialogue == "hi"
     assert cuts[0].merged_with == [1, 2]
 
+
+def test_outer_edges_clamped_to_strip_bounds() -> None:
+    """F1: first panel y_start and last panel y_end must be clamped to 0 and
+    strip height, not left as raw AI coordinates."""
+    img = make_strip(1000, panels=[(50, 470), (520, 980)],
+                     gutters=[(470, 520)])
+    gray = np.asarray(img.convert("L"))
+    plan = plan_from([(60, 460), (530, 970)], height=1000)
+    cuts = gc.build_cuts(gray, plan, config=gc.CutterConfig(tolerance=80))
+    assert len(cuts) == 2
+    assert cuts[0].y_start == 0        # clamped from AI's 60
+    assert cuts[-1].y_end == 1000      # clamped from AI's 970
+
+
+def test_overlapping_ai_panels_are_repaired() -> None:
+    """F2: overlapping AI boundaries (a.y_end > b.y_start) are repaired to
+    their midpoint before the gutter search."""
+    img = make_strip(1000, panels=[(40, 470), (470, 980)],
+                     gutters=[(470, 490)])
+    gray = np.asarray(img.convert("L"))
+    plan = sa.PanelPlan(
+        source="s.png", width=800, height=1000, model="test",
+        config_hash="t", input_hash="t",
+        entries=[
+            sa.PanelPlanEntry(panel_index=1, y_start=40, y_end=500,
+                              narration="A", confidence=0.9),
+            sa.PanelPlanEntry(panel_index=2, y_start=480, y_end=980,
+                              narration="B", confidence=0.9)])
+    cuts = gc.build_cuts(gray, plan, config=gc.CutterConfig(tolerance=80))
+    assert len(cuts) == 2
+    assert cuts[0].y_end <= cuts[1].y_start  # no overlap after repair
+
 def test_phase1_cache_avoids_recall(tmp_path: Path) -> None:
     strip = tmp_path / "strip.png"
     make_strip(2200).save(strip)

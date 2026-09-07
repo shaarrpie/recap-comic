@@ -548,6 +548,12 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
     stitched = stitch_chunk_results(results, bases, height)
     if not stitched:
         raise VisionAnalysisError("the model returned no panels for this strip")
+    last_panel_bottom = max(e.y_end for e in stitched)
+    if last_panel_bottom < height * 0.95:
+        log.warning("phase-1 coverage check: last panel ends at y=%d, "
+                    "only %.0f%% of strip height %d covered — strip tail "
+                    "may be missing panels (truncated model output)",
+                    last_panel_bottom, last_panel_bottom / height * 100, height)
     plan = PanelPlan(
         source=path.name, width=width, height=height,
         model=getattr(backend, "name", type(backend).__name__),

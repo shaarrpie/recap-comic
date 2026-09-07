@@ -77,7 +77,17 @@ def _resolve_strip_path(strip: Path) -> Path:
     stitched = Image.new("RGB", (max_w, total_h))
     y = 0
     for img in images:
-        stitched.paste(img, (0, y))
+        if img.width < max_w:
+            border = int(np.median(np.array(np.concatenate([
+                np.array(img)[:8].ravel(), np.array(img)[-8:].ravel(),
+                np.array(img)[:, :8].ravel(), np.array(img)[:, -8:].ravel()
+            ]))))
+            pad_img = Image.new("RGB", (max_w - img.width, img.height),
+                                (border, border, border))
+            stitched.paste(img, (0, y))
+            stitched.paste(pad_img, (img.width, y))
+        else:
+            stitched.paste(img, (0, y))
         y += img.height
     tmp = Path(tempfile.gettempdir()) / f"recap-comic-{strip.stem}-{uuid.uuid4().hex[:8]}-stitched.png"
     stitched.save(tmp, "PNG")

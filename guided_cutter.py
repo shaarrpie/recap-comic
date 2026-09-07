@@ -335,6 +335,13 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
     cut_rows: list[int] = []
     snap_distances: list[int] = []
     for a, b in pairwise(entries):
+        if a.y_end > b.y_start:
+            merge_pt = (a.y_end + b.y_start) // 2
+            log.warning("build_cuts: overlapping panels %d(y_end=%d) and %d(y_start=%d) "
+                        "-> repairing to midpoint y=%d", a.panel_index, a.y_end,
+                        b.panel_index, b.y_start, merge_pt)
+            a.y_end = merge_pt
+            b.y_start = merge_pt
         center = (a.y_end + b.y_start) // 2
         row = find_gutter_row(
             gray, center, tolerance=config.tolerance,
@@ -346,8 +353,22 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
             blur_sigma=config.blur_sigma,
             variances=variances, edge_density=edge_density)
         if row is None:
-            groups[-1].append(b)
-            log.debug("panel %d..%d merged (no gutter at %d)", a.panel_index, b.panel_index, center)
+            row = find_gutter_row(
+                gray, center, tolerance=config.tolerance * 2,
+                threshold=config.variance_threshold,
+                edge_threshold=config.edge_threshold,
+                use_edge_density=config.use_edge_density,
+                forbidden=forbidden, require_threshold=True,
+                min_gutter_run=config.min_gutter_run,
+                blur_sigma=config.blur_sigma,
+                variances=variances, edge_density=edge_density)
+            if row is None:
+                groups[-1].append(b)
+                log.debug("panel %d..%d merged (no gutter at %d)", a.panel_index, b.panel_index, center)
+            else:
+                groups.append([b])
+                cut_rows.append(row)
+                snap_distances.append(abs(row - center))
         else:
             groups.append([b])
             cut_rows.append(row)
@@ -355,6 +376,18 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
 
     tops = [entries[0].y_start] + cut_rows
     bottoms = cut_rows + [entries[-1].y_end]
+    strip_h = gray.shape[0]
+    first_top = tops[0]
+    last_bottom = bottoms[-1]
+    if first_top > 0:
+        log.warning("build_cuts: first panel starts at y=%d, clamping top to 0 "
+                    "(chop %dpx from strip top)", first_top, first_top)
+    if last_bottom < strip_h:
+        log.warning("build_cuts: last panel ends at y=%d, clamping bottom to %d "
+                    "(dropped %dpx from strip bottom)", last_bottom, strip_h,
+                    strip_h - last_bottom)
+    tops[0] = 0
+    bottoms[-1] = strip_h
     panel_snaps: list[list[int]] = []
     for i in range(len(groups)):
         top_snap = snap_distances[i - 1] if 0 <= i - 1 < len(snap_distances) else 0
