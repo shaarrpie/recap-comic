@@ -2,6 +2,7 @@
 """Test rendering an edited project without regenerating narration/audio."""
 import io
 import json
+import shutil
 
 import pytest
 from PIL import Image
@@ -9,6 +10,18 @@ from PIL import Image
 from adapters.editor import Editor, EditorProject
 from adapters.schemas import AudioArtifact, AudioEntry, BBox, Meta, NarrationArtifact, NarrationEntry, TimelineArtifact
 from recap_video import VideoConfig, render_edited_project, total_seconds
+
+
+def _has_ffmpeg() -> bool:
+    try:
+        from recap_video import _resolve_ffmpeg
+        _resolve_ffmpeg()
+        return True
+    except Exception:
+        return False
+
+
+pytestmark = pytest.mark.skipif(not _has_ffmpeg(), reason="ffmpeg not available")
 
 
 def _make_panel(path, color=(100, 150, 200), size=(800, 1200)):

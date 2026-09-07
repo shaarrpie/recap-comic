@@ -38,14 +38,16 @@ class StageTimeoutError(RuntimeError):
 
 def _with_timeout(fn: Callable[[], Any], seconds: float,
                   job: Job, stage: str) -> Any:
-    with ThreadPoolExecutor(max_workers=1,
-                            thread_name_prefix=stage) as ex:
+    ex = ThreadPoolExecutor(max_workers=1,
+                            thread_name_prefix=stage)
+    try:
         fut = ex.submit(fn)
-        try:
-            return fut.result(timeout=seconds)
-        except TimeoutError as exc:
-            raise StageTimeoutError(
-                f"stage {stage} timed out after {int(seconds)}s") from exc
+        return fut.result(timeout=seconds)
+    except TimeoutError as exc:
+        raise StageTimeoutError(
+            f"stage {stage} timed out after {int(seconds)}s") from exc
+    finally:
+        ex.shutdown(wait=False, cancel_futures=True)
 
 
 def _stage(job: Job, name: str, fn: Callable[..., Any]) -> Any:
@@ -247,7 +249,6 @@ PIPELINES: dict[str, list[tuple[str, Callable[[Job], Any]]]] = {
         ("apply_order", _apply_order),
         ("gemini_narration", _gemini_narration),
         ("build_script", _build_script),
-        ("tts_audio", _tts_audio),
         ("render_video", _render_video),
         ("save_outputs", _save_outputs),
         ("create_editor_project", _create_editor_project),

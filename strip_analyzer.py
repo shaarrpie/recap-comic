@@ -761,6 +761,13 @@ class GeminiVisionBackend:
         self._rotator = from_env()
         self.usage_log: list[dict] = []
         self.last_usage: dict | None = None
+        try:
+            from google import genai  # noqa: F401
+        except ImportError as exc:
+            raise ImportError(
+                "Gemini backend requires google-genai; "
+                "install with: pip install -e .[gemini]"
+            ) from exc
 
     def analyze_chunk(self, image: Image.Image,
                       previous_context: str = ""

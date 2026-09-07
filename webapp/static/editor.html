@@ -279,24 +279,70 @@ button.icon-btn:hover { background: #27272a; color: #e6e6e6; border-color: #3f3f
 <div class="toast" id="toast"></div>
 
 <script>
-const PX_PER_SEC = 60;
-const state = { project: null, selected: null, session: null, running: false };
+const PX_PER_SEC_BASE = 60;
+const state = {
+  project: null,
+  selected: null,
+  session: null,
+  running: false,
+  zoom: 1,
+  sidebarSection: "panels",
+  autosaveTimer: null,
+  lastSaved: null,
+  clipboard: null,
+};
 const els = {};
 ["preview", "seek", "time-display", "volume", "speed", "play-pause",
+ "prev-panel", "next-panel",
  "ruler", "panel-track-content", "audio-track-content", "caption-track-content",
- "timeline-inner", "timeline-scroll", "properties", "status-left", "status-right",
- "timeline-status", "toast", "undo-btn", "redo-btn", "save-btn", "reset-btn", "render-btn"
-].forEach(id => els[id] = document.getElementById(id));
+ "timeline-inner", "timeline-scroll", "timeline-area", "properties", "inspector",
+ "status-left", "status-right", "timeline-status", "toast",
+ "undo-btn", "redo-btn", "render-btn", "preview-btn",
+ "splitter", "preview-area", "timeline-area",
+ "zoom-display", "zoom-in", "zoom-out", "zoom-fit", "playhead",
+ "project-name", "panel-count", "duration-display", "autosave",
+ "panel-list", "storyboard", "narration-editor", "review-list"
+].forEach(id => { els[id] = document.getElementById(id); });
 
 function $(id) { return document.getElementById(id); }
 function showToast(msg) { els.toast.textContent = msg; els.toast.classList.add("show"); setTimeout(() => els.toast.classList.remove("show"), 3000); }
-function fmtTime(s) { s = Math.max(0, s); const m = Math.floor(s/60); const sec = Math.floor(s%60); return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`; }
+function fmtTime(s) {
+  s = Math.max(0, s);
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  const ms = Math.floor((s % 1) * 1000);
+  return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}.${String(ms).padStart(3,'0')}`;
+}
+function fmtDuration(s) {
+  s = Math.max(0, s);
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+function escapeHtml(s) { return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c] || c); }
+function pxPerSec() { return PX_PER_SEC_BASE * state.zoom; }
 
-async function api(path, opts={}) {
-  const res = await fetch(path, { ...opts, headers: { "Content-Type": "application/json", ...(opts.headers||{}) }});
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`);
-  return data;
+// ---- Autosave ----
+function markDirty() {
+  els.autosave.textContent = "Unsaved changes";
+  els.autosave.className = "autosave saving";
+  clearTimeout(state.autosaveTimer);
+  state.autosaveTimer = setTimeout(autosave, 1500);
+}
+async function autosave() {
+  if (!state.project || !state.session) return;
+  els.autosave.textContent = "Saving...";
+  els.autosave.className = "autosave saving";
+  try {
+    await api(`/api/editor/${state.session}`, { method: "POST", body: JSON.stringify(state.project) });
+    els.autosave.textContent = "Autosaved ✓";
+    els.autosave.className = "autosave saved";
+    state.lastSaved = Date.now();
+  } catch (e) {
+    els.autosave.textContent = "Save failed";
+    els.autosave.className = "autosave";
+    showToast(e.message);
+  }
 }
 
 function loadSession(session) {

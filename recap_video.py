@@ -167,7 +167,7 @@ def _resolve_ffprobe(exe: str = "ffprobe") -> str | None:
 def _probe_with_ffmpeg(path: Path, ffmpeg_exe: str) -> float:
     cmd = [ffmpeg_exe, "-i", str(path)]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False,
-                          shell=False)
+                          shell=False, timeout=30)
     stderr = proc.stderr or ""
     m = re.search(r"Duration: (\d+):(\d+):(\d+\.\d+)", stderr)
     if not m:
@@ -202,7 +202,7 @@ def probe_duration(path: Path, ffprobe_exe: str = "ffprobe") -> float:
         cmd = [exe, "-v", "error", "-show_entries", "format=duration",
                "-of", "default=noprint_wrappers=1:nokey=1", str(path)]
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False,
-                              shell=False)
+                              shell=False, timeout=30)
         if proc.returncode == 0 and proc.stdout.strip():
             try:
                 dur = float(proc.stdout.strip())

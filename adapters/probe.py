@@ -35,7 +35,7 @@ def to_wav(source: Path, out: Path, ffmpeg_exe: str = "ffmpeg") -> Path:
         "-ar", "48000", "-ac", "2", "-c:a", "pcm_s16le",
         str(out),
     ]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    proc = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=120)
     if proc.returncode != 0:
         raise RuntimeError(
             f"ffmpeg transcoding failed: {proc.stderr.strip()[-300:]}")

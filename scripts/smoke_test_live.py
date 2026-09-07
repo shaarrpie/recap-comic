@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
     tokens = token_summary(getattr(backend, "usage_log", None) or [])
 
     Path(args.plan_out).write_text(plan.model_dump_json(indent=2), "utf-8")
-    overlay_path = draw_overlay(strip, plan, cuts, Path(args.overlay))
+    overlay_path = draw_overlay(strip, plan, Path(args.overlay), cuts)
 
     report = {
         "backend": getattr(backend, "name", type(backend).__name__),

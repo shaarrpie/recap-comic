@@ -12,6 +12,8 @@ from webapp.jobs import store
 
 @pytest.fixture(autouse=True)
 def _stub_engine():
+    saved_pipeline = list(pipeline.PIPELINES["generate"])
+
     def fake_validate(job, **kwargs): job.log("INFO", "ok")
     def fake_load(job, **kwargs): return None
     def fake_segment(job, **kwargs):
@@ -24,8 +26,8 @@ def _stub_engine():
     def fake_gemini(job, **kwargs): pass
     def fake_rest(job, **kwargs): pass
 
-    original = list(pipeline.PIPELINES["generate"])
-    original[0] = ("validate_config", fake_validate)
+    stubbed = list(saved_pipeline)
+    stubbed[0] = ("validate_config", fake_validate)
     for i, name in enumerate(["load_images", "segment_panels",
                               "apply_order", "gemini_narration",
                               "build_script", "tts_audio",
@@ -36,9 +38,10 @@ def _stub_engine():
             fn = pipeline._apply_order
         else:
             fn = fake_rest
-        original[i] = (name, fn)
-    pipeline.PIPELINES["generate"] = original
+        stubbed[i] = (name, fn)
+    pipeline.PIPELINES["generate"] = stubbed
     yield
+    pipeline.PIPELINES["generate"] = saved_pipeline
 
 
 def _wait_done(job_id, timeout=5.0):
