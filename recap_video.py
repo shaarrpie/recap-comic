@@ -387,7 +387,7 @@ def compute_pan(width: int, height: int) -> PanSpec:
     if over_w > 2:
         return PanSpec(kind="pan_right", scaled_w=scaled_w, scaled_h=scaled_h,
                        travel_px=over_w)
-    return PanSpec(kind="static", scaled_w=WIDTH, scaled_h=HEIGHT, travel_px=0)
+    return PanSpec(kind="static", scaled_w=scaled_w, scaled_h=scaled_h, travel_px=0)
 
 
 def display_seconds(*, audio_seconds: float | None, words: int,

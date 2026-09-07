@@ -288,7 +288,7 @@ async def editor_caption(session: str, body: dict):
         allowed = {"text", "start_seconds", "end_seconds"}
         filtered = {k: v for k, v in body.items() if k in allowed}
         return update_caption(session, cid, **filtered)
-    except (FileNotFoundError, KeyError):
+    except (FileNotFoundError, KeyError, TypeError):
         raise HTTPException(400, "bad request")
 
 
@@ -296,8 +296,8 @@ async def editor_caption(session: str, body: dict):
 async def editor_transition(session: str, body: dict):
     try:
         return set_transition(session, body["from_panel_id"], body["to_panel_id"],
-                               body["type"], float(body["duration"]))
-    except (FileNotFoundError, KeyError):
+                              body["type"], float(body["duration"]))
+    except (FileNotFoundError, KeyError, ValueError, TypeError):
         raise HTTPException(400, "bad request")
 
 

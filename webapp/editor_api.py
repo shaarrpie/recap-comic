@@ -69,8 +69,23 @@ def load_project(session: str) -> dict[str, Any]:
 def save_project(session: str, data: dict[str, Any]) -> dict[str, Any]:
     d = _session_dir(session)
     proj = EditorProject.model_validate(data)
+    for e in proj.edited_timeline:
+        _validate_session_path(d, e["source_image"])
+        if e.get("audio_path"):
+            _validate_session_path(d, e["audio_path"])
     Editor(proj).save(d / "editor.json")
     return {"ok": True, "needs_render": proj.needs_render}
+
+
+def _validate_session_path(session_dir: Path, path_str: str) -> None:
+    p = Path(path_str)
+    if p.is_absolute():
+        resolved = p.resolve()
+    else:
+        resolved = (session_dir / p).resolve()
+    base = session_dir.resolve()
+    if base not in resolved.parents and resolved != base:
+        raise HTTPException(400, "path outside session directory")
 
 
 def create_project_from_generation(session: str) -> dict[str, Any]:

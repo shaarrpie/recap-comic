@@ -81,6 +81,17 @@ def test_compute_pan_exact_fit_is_static():
         rv.compute_pan(0, 10)
 
 
+def test_compute_pan_small_panel_keeps_uniform_scale():
+    """A tiny panel (e.g. 100x100) with the 4x cap must NOT be stretched
+    to 1080x1920 — it should retain uniform scale and be padded, not distorted."""
+    pan = rv.compute_pan(100, 100)
+    assert pan.kind == "static"
+    assert pan.travel_px == 0
+    assert pan.scaled_w == pan.scaled_h  # uniform
+    assert pan.scaled_w == 400  # 100 * 4.0 cap
+    assert pan.scaled_w < rv.WIDTH or pan.scaled_h < rv.HEIGHT  # will be padded
+
+
 # ---------------------------------------------------------------- duration --
 def test_display_seconds_rules():
     cfg = rv.VideoConfig(gap_seconds=0.35, min_display_seconds=2.0,

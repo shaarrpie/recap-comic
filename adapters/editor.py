@@ -109,9 +109,15 @@ def captions_from_timeline(tl_entries, narration, audio) -> list[dict[str, Any]]
     by_audio = {a.entry_id: a for a in audio.entries}
     captions = []
     cid = 0
+    _prev_text = ""
     for e in tl_entries:
         pid = e["panel_id"]
         text = by_text.get(pid, "")
+        # Skip panels whose narration was already captioned on a prior
+        # (split) panel — TTS dedup synthesized audio only for the first.
+        if text.strip() and text.strip() == _prev_text:
+            continue
+        _prev_text = text.strip()
         audio_entry = by_audio.get(pid)
         cues = _cues_for_entry(
             TimelineEntry(**e), text, audio_entry
