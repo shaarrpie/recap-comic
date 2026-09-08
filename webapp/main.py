@@ -384,9 +384,10 @@ async def cancel(job_id: str):
 @app.get("/api/jobs/{job_id}/files/{name:path}")
 async def job_file(job_id: str, name: str):
     job = store.get(job_id)
-    if job is None:
-        raise HTTPException(404, "job not found")
-    session = job.config.get("session", job_id)
+    if job is not None:
+        session = job.config.get("session", job_id)
+    else:
+        session = job_id
     base = (OUTPUT_DIR / session).resolve()
     target = (base / name).resolve()
     if target.parent != base and base not in target.parents:
