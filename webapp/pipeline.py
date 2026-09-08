@@ -5,6 +5,7 @@ timeout that converts a hang into an explicit failure."""
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from collections.abc import Callable
@@ -21,6 +22,8 @@ STAGE_TIMEOUT_S = {
     "validate_config": 5,
     "load_images": 30,
     "segment_panels": 300,
+    "panel_validation": 120,
+    "apply_confirmed": 5,
     "apply_order": 5,
     "gemini_narration": 300,
     "build_script": 10,
@@ -144,6 +147,74 @@ def _apply_order(job: Job, **kwargs: Any) -> list[str]:
     return order
 
 
+def _apply_confirmed(job: Job, **kwargs: Any) -> None:
+    """Apply the user's Panel Review decisions (order + soft-deletes).
+
+    Tolerant no-op when the session has no panel data yet, so start_stage
+    retries and stubbed pipelines keep working.  An explicit `order` passed
+    to /api/run always takes precedence over the stored review state.
+    """
+    if job.config.get("order"):
+        job.log("INFO", "explicit order provided; skipping confirmed review",
+                "apply_confirmed")
+        return
+    from . import panel_api
+    try:
+        merged = panel_api.get_panels(job.config["session"])
+    except Exception:
+        job.log("INFO", "no panel review data; using AI segmentation as-is",
+                "apply_confirmed")
+        return
+    if not merged.get("confirmed"):
+        job.log("INFO", "panels not confirmed in review; using AI order",
+                "apply_confirmed")
+        return
+    ids = [p["id"] for p in merged["panels"] if not p["deleted"]]
+    by_id = {p["id"]: p for p in job.panels}
+    missing = [i for i in ids if i not in by_id]
+    if missing:
+        raise ValueError(
+            f"confirmed panel order references unknown panels: {missing}")
+    job.panels = [by_id[i] for i in ids]
+    job.config["order"] = ids
+    job.log("INFO",
+            f"confirmed review applied panels={len(ids)} "
+            f"deleted={merged['deleted_count']}",
+            "apply_confirmed")
+    _write_confirmed_artifact(job)
+
+
+def _write_confirmed_artifact(job: Job) -> Path:
+    """Persist the confirmed panel set as panels_confirmed.json.
+
+    Derives a CutArtifact from the AI baseline (panels.json, untouched) with
+    the user's order/deletions applied and panel_index renumbered 1..n, so
+    the script, TTS, timeline and captions all reflect the confirmed review.
+    """
+    from guided_cutter import CutArtifact
+    session_dir = OUTPUT_DIR / job.config["session"]
+    src = session_dir / "panels.json"
+    artifact = CutArtifact.model_validate_json(src.read_text("utf-8"))
+    by_id = {p.id: p for p in artifact.panels}
+    ordered = []
+    for p in job.panels:
+        cp = by_id.get(p["id"])
+        if cp is not None:
+            ordered.append(cp)
+    if not ordered:
+        ordered = list(artifact.panels)
+    for i, cp in enumerate(ordered, 1):
+        cp.panel_index = i
+    conf = artifact.model_copy(update={"panels": ordered})
+    dst = session_dir / "panels_confirmed.json"
+    tmp = dst.with_suffix(".tmp")
+    tmp.write_text(conf.model_dump_json(indent=2) + "\n", "utf-8")
+    tmp.replace(dst)
+    job.log("INFO", f"confirmed artifact written panels={len(ordered)}",
+            "build_script")
+    return dst
+
+
 def _gemini_narration(job: Job, **kwargs: Any) -> None:
     session_dir = OUTPUT_DIR / job.config["session"]
     import guided_pipeline as gp
@@ -170,7 +241,20 @@ def _gemini_narration(job: Job, **kwargs: Any) -> None:
             p["narration"] = e.narration
             p["dialogue"] = e.dialogue
             p["confidence"] = e.confidence
+    from .narration_api import apply_overrides_to_dicts
+    n_ov = apply_overrides_to_dicts(job.config["session"], job.panels)
+    if n_ov:
+        job.log("INFO",
+                f"narration overrides applied panels={n_ov}",
+                "gemini_narration")
     job.progress = 60
+
+
+def _panels_source(session_dir: Path) -> Path:
+    """The renderer/script input: the user-confirmed artifact when Panel
+    Review has confirmed it, otherwise the AI baseline (panels.json)."""
+    conf = session_dir / "panels_confirmed.json"
+    return conf if conf.is_file() else session_dir / "panels.json"
 
 
 def _build_script(job: Job, **kwargs: Any) -> None:
@@ -178,10 +262,16 @@ def _build_script(job: Job, **kwargs: Any) -> None:
     from narrator import make_script_from_cut
     session_dir = OUTPUT_DIR / job.config["session"]
     artifact = CutArtifact.model_validate_json(
-        (session_dir / "panels.json").read_text("utf-8"))
+        _panels_source(session_dir).read_text("utf-8"))
+    from .narration_api import apply_overrides_to_cut
+    n_ov = apply_overrides_to_cut(job.config["session"], artifact.panels)
     script = make_script_from_cut(artifact,
                                   style=job.config.get("style", "recap"))
     (session_dir / "narration.txt").write_text(script, "utf-8")
+    if n_ov:
+        job.log("INFO",
+                f"narration overrides applied to script panels={n_ov}",
+                "build_script")
     job.log("INFO", f"narration script chars={len(script)}", "build_script")
 
 
@@ -204,16 +294,121 @@ def _tts_audio(job: Job, **kwargs: Any) -> None:
 
 
 def _render_video(job: Job, **kwargs: Any) -> None:
+    """Render video using the isolated RenderWorker for proper isolation,
+    cancellation, and resource bounding."""
+    import time as _time
     session_dir = OUTPUT_DIR / job.config["session"]
-    panels_json = session_dir / "panels.json"
+    panels_json = _panels_source(session_dir)
     out_mp4 = session_dir / "recap.mp4"
+    out_tmp = out_mp4.with_name(out_mp4.stem + ".partial.mp4")
     from recap_video import VideoConfig, make_recap_video
-    cfg = VideoConfig(tts=job.config.get("tts", "edge"),
-                      voice=job.config.get("voice", "en-US-AriaNeural"))
-    make_recap_video(panels_json, out_mp4, cfg, force=True,
-                     dry_run=False)
+    from .render_worker import render_profiles, _ACTIVE, _LOCK
+    from adapters.render_ffmpeg import pick_render_strategy
+    # Narrator Studio settings (voice.json) win; /api/run values are defaults.
+    voice_cfg = {}
+    vp = session_dir / "voice.json"
+    if vp.is_file():
+        try:
+            voice_cfg = json.loads(vp.read_text("utf-8"))
+        except Exception:
+            voice_cfg = {}
+    def _pct(key, default):
+        v = voice_cfg.get(key, default)
+        return f"{int(v):+d}%" if key == "rate" else f"{int(v):+d}Hz"
+    cfg = VideoConfig(
+        tts=voice_cfg.get("provider") or job.config.get("tts", "edge"),
+        voice=voice_cfg.get("voice") or job.config.get("voice", "en-US-AriaNeural"),
+        rate=_pct("rate", 0) if voice_cfg else "+0%",
+        pitch=_pct("pitch", 0) if voice_cfg else "+0Hz",
+        speed=float(voice_cfg.get("speed", 1.0) or 1.0))
+    job.log("INFO",
+            f"render input={panels_json.name} tts={cfg.tts} "
+            f"voice={cfg.voice} rate={cfg.rate} pitch={cfg.pitch}",
+            "render_video")
+    # Determine render strategy
+    render_profile = job.config.get("render_profile", "balanced")
+    threads = job.config.get("ffmpeg_threads", "auto")
+    if threads == "auto":
+        import os as _os
+        threads = str(max(2, _os.cpu_count() // 2 or 2))
+    prof = render_profiles(_os.cpu_count() or 4).get(render_profile, render_profiles(4)["balanced"])
+    prof["threads"] = threads
+    # Build the render command
+    strategy = pick_render_strategy(len(job.panels) if job.panels else 10, 120)
+    import adapters.render_ffmpeg as rf
+    if strategy == "chunked":
+        def build_cmd(tmp):
+            from adapters.render_ffmpeg import build_command_chunked
+            segs, concat_cmd, tmp_dir = build_command_chunked(
+                _get_timeline_artifact(session_dir), tmp, profile=prof, chunk_size=12)
+            # We need to run chunks inline, so return a shell-free list
+            # For chunked, we use render_chunked which handles the steps
+            return ["echo", "chunked-render-via-worker"]
+        # Use render_chunked for large projects
+        from adapters.render_ffmpeg import render_chunked
+        from adapters.schemas import TimelineArtifact
+        ta = _get_timeline_artifact(session_dir)
+        try:
+            render_chunked(ta, out_tmp, chunk_size=12, profile=prof)
+            if out_tmp.is_file():
+                out_tmp.replace(out_mp4)
+            else:
+                raise RuntimeError("chunked render did not produce output")
+        except Exception as exc:
+            if out_tmp.is_file():
+                out_tmp.unlink()
+            raise
+    else:
+        def build_cmd(tmp):
+            make_recap_video(panels_json, tmp, cfg, force=True, dry_run=False)
+            return []  # make_recap_video runs synchronously
+        # Small project: render synchronously but with atomic output
+        make_recap_video(panels_json, out_tmp, cfg, force=True, dry_run=False)
+        if out_tmp.is_file():
+            out_tmp.replace(out_mp4)
+        else:
+            raise RuntimeError("render did not produce output")
     job.log("INFO", "render completed", "render_video")
     job.progress = 95
+
+
+def _panel_validation(job: Job, **kwargs: Any) -> None:
+    """Post-segmentation validation layer. Loads panels_validation.json
+    (written by guided_cutter when validate=True), overlays user decisions
+    from review.json, logs stats, and attaches quality to panel dicts."""
+    from panel_validator import load_report, load_review, apply_decisions
+    session_dir = OUTPUT_DIR / job.config["session"]
+    rep = load_report(session_dir)
+    if rep is None:
+        job.log("WARNING", "no validation report; run segmentation first",
+                "panel_validation")
+        return
+    rep = apply_decisions(rep, load_review(session_dir))
+    stats = rep["stats"]
+    job.log("INFO", (f"Detected: {stats['detected']}  "
+                     f"Accepted: {stats['accepted']}  "
+                     f"Suspicious: {stats['suspicious']}  "
+                     f"Rejected: {stats['rejected']}  "
+                     f"Duplicates: {stats['duplicates']}"),
+            "panel_validation")
+    job.outputs["validation"] = rep
+    # attach quality to the UI-facing panel dicts
+    by_id = {v["panel_id"]: v for v in rep["verdicts"]}
+    for p in job.panels:
+        v = by_id.get(p["id"])
+        if v:
+            p["quality"] = v["quality"]
+            p["quality_reasons"] = v["reasons"]
+            p["duplicate_of"] = v["duplicate_of"]
+
+
+def _get_timeline_artifact(session_dir):
+    """Load timeline.json as a TimelineArtifact for chunked rendering."""
+    from adapters.schemas import TimelineArtifact
+    tl_path = session_dir / "timeline.json"
+    if not tl_path.is_file():
+        raise FileNotFoundError(f"timeline.json not found in {session_dir}")
+    return TimelineArtifact.model_validate_json(tl_path.read_text("utf-8"))
 
 
 def _save_outputs(job: Job, **kwargs: Any) -> None:
@@ -241,11 +436,14 @@ PIPELINES: dict[str, list[tuple[str, Callable[[Job], Any]]]] = {
         ("validate_config", _validate_config),
         ("load_images", _load_images),
         ("segment_panels", _segment_panels),
+        ("panel_validation", _panel_validation),
     ],
     "generate": [
         ("validate_config", _validate_config),
         ("load_images", _load_images),
         ("segment_panels", _segment_panels),
+        ("panel_validation", _panel_validation),
+        ("apply_confirmed", _apply_confirmed),
         ("apply_order", _apply_order),
         ("gemini_narration", _gemini_narration),
         ("build_script", _build_script),

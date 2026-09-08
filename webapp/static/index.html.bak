@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>recap-comic</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 1200px; margin: 0 auto; padding: 24px;
+      background: #f7f7f9; color: #1a1a1a;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 0.5rem; }
+    .subtitle { color: #666; margin-bottom: 1.5rem; }
+    .card {
+      background: #fff; border: 1px solid #e0e0e0; border-radius: 12px;
+      padding: 24px; margin-bottom: 24px;
+    }
+    .dropzone {
+      border: 2px dashed #ccc; border-radius: 12px; padding: 40px;
+      text-align: center; color: #888; cursor: pointer; transition: 0.2s;
+    }
+    .dropzone.over { border-color: #4f46e5; background: #eef2ff; color: #4f46e5; }
+    .dropzone input { display: none; }
+    .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-top: 12px; }
+    select, button, input[type="text"], input[type="password"] {
+      padding: 10px 16px; border-radius: 8px; border: 1px solid #d0d0d0;
+      font-size: 1rem; cursor: pointer;
+    }
+    button { background: #4f46e5; color: #fff; border-color: #4f46e5; }
+    button:disabled { background: #a5a5a5; border-color: #a5a5a5; cursor: not-allowed; }
+    .status {
+      margin-top: 16px; padding: 12px 16px; border-radius: 8px;
+      background: #f0f0f0; font-family: ui-monospace, monospace;
+    }
+    .status.running { background: #eef2ff; color: #1e3a8a; }
+    .status.done { background: #ecfdf5; color: #064e3b; }
+    .status.error { background: #fef2f2; color: #7f1d1d; }
+    .gallery {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 16px; margin-top: 16px;
+    }
+    .panel {
+      background: #fff; border: 1px solid #e0e0e0; border-radius: 10px;
+      overflow: hidden; cursor: grab; transition: transform 0.15s, box-shadow 0.15s;
+    }
+    .panel.dragging { opacity: 0.4; transform: scale(0.95); }
+    .panel.drag-over { border-color: #4f46e5; box-shadow: 0 0 0 3px #eef2ff; }
+    .panel img {
+      width: 100%; height: 260px; object-fit: contain; display: block;
+      background: #e5e5e5;
+    }
+    .panel .meta { padding: 10px 12px; font-size: 0.85rem; }
+    .panel .meta b { display: block; margin-bottom: 4px; }
+    .panel .meta .tag {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      background: #f0f0f0; font-size: 0.75rem; margin: 2px 4px 2px 0;
+    }
+    .panel .meta .conf { color: #666; font-size: 0.75rem; }
+    .panel .meta .conf.low { color: #b45309; background: #fef3c7; padding: 2px 6px; border-radius: 4px; }
+    .panel .meta .order-badge {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      background: #4f46e5; color: #fff; font-size: 0.75rem; margin: 2px 4px 2px 0;
+    }
+    .actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .actions a, .actions button.secondary {
+      display: inline-block; padding: 8px 12px; border-radius: 6px;
+      background: #f0f0f0; color: #1a1a1a; text-decoration: none;
+      font-size: 0.85rem; margin-right: 8px; border: 1px solid #d0d0d0;
+    }
+    .actions a:hover, .actions button.secondary:hover { background: #e0e0e0; }
+    .empty { color: #888; font-style: italic; }
+    .settings-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px; margin-top: 12px;
+    }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label { font-size: 0.85rem; color: #555; }
+    .field input, .field select { padding: 8px 10px; font-size: 0.95rem; }
+    .api-keys {
+      margin-top: 12px; padding: 12px; border-radius: 8px; background: #f8f8f8;
+      border: 1px solid #e0e0e0;
+    }
+    .api-keys summary { cursor: pointer; font-weight: 600; }
+    .api-keys .row { margin-top: 8px; }
+    .gemini-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 6px; font-size: 0.8rem;
+      background: #ecfdf5; color: #064e3b; border: 1px solid #10b981;
+    }
+    .gemini-badge.missing {
+      background: #fef3c7; color: #92400e; border-color: #f59e0b;
+    }
+    .strip-preview {
+      margin-top: 16px; max-width: 300px; border-radius: 8px;
+      border: 1px solid #e0e0e0; overflow: hidden;
+    }
+    .strip-preview img { width: 100%; display: block; }
+    .strip-preview .meta { padding: 8px 12px; font-size: 0.8rem; background: #f8f8f8; }
+    .reorder-tools {
+      margin-top: 12px; padding: 12px; border-radius: 8px;
+      background: #eef2ff; border: 1px solid #c7d2fe;
+    }
+    .hidden { display: none; }
+    .stage-label { margin-top: 8px; font-size: 0.9rem; color: #555; }
+    .stage-stepper {
+      display: flex; gap: 6px; margin: 10px 0; flex-wrap: wrap;
+    }
+    .stage-step {
+      flex: 1; min-width: 110px; padding: 6px 8px; border-radius: 6px;
+      font-size: 0.75rem; text-align: center;
+      background: #f0f0f0; color: #888; border: 1px solid #d0d0d0;
+    }
+    .stage-step.active { background: #eef2ff; color: #3730a3; border-color: #4f46e5; }
+    .stage-step.done { background: #dcfce8; color: #166534; border-color: #22c55e; }
+    .stage-step.failed { background: #fee2e2; color: #991b1b; border-color: #ef4444; }
+    .stage-step .num { font-weight: 700; }
+    .error-box {
+      margin-top: 8px; padding: 10px 12px; border-radius: 8px;
+      background: #fef2f2; color: #7f1d1d; font-size: 0.9rem;
+    }
+    .log-tail {
+      background: #f0f0f0; padding: 12px; border-radius: 8px;
+      font-family: ui-monospace, monospace; max-height: 300px;
+      overflow-y: auto; margin: 12px 0; font-size: 0.85rem;
+    }
+    .log-tail .log-line { margin: 2px 0; }
+    .log-tail .log-line.error { color: #7f1d1d; }
+  </style>
+</head>
+<body>
+  <h1>recap-comic</h1>
+  <p class="subtitle">AI-guided panel segmentation and narration for manhwa/webtoon strips.</p>
+
+  <div class="card">
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="file" accept="image/png,image/jpeg,image/webp" multiple>
+      <div id="drop-label">Drop tall strip images here, or click to choose<br><small>(multiple files supported)</small></div>
+    </div>
+    <div id="strip-preview-container"></div>
+    <div class="settings-grid">
+      <div class="field">
+        <label>Backend <span id="gemini-badge"></span></label>
+        <select id="backend">
+          <option value="gemini">gemini</option>
+          <option value="openai">openai</option>
+          <option value="anthropic">anthropic</option>
+          <option value="ollama">ollama</option>
+          <option value="cloudflare">cloudflare (free)</option>
+          <option value="none">none (offline)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Model</label>
+        <input type="text" id="model" placeholder="model id (optional)">
+      </div>
+      <div class="field">
+        <label>TTS</label>
+        <select id="tts">
+          <option value="edge">edge-tts (cloud)</option>
+          <option value="kokoro">kokoro (offline)</option>
+          <option value="none">none (silent)</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Voice</label>
+        <input type="text" id="voice" value="en-US-AriaNeural" placeholder="edge-tts voice id">
+      </div>
+      <div class="field">
+        <label>Style</label>
+        <select id="style">
+          <option value="recap">recap</option>
+          <option value="dramatic">dramatic</option>
+          <option value="comedy">comedy</option>
+        </select>
+      </div>
+    </div>
+    <div class="row">
+      <button id="run-btn" disabled>Run</button>
+      <span id="file-count" class="empty"></span>
+    </div>
+    <div id="session-list" style="margin-top:10px"></div>
+    <details class="api-keys">
+      <summary>Connection settings (stored locally in your browser only)</summary>
+      <div class="settings-grid">
+        <div class="field">
+          <label>API Key</label>
+          <input type="password" id="api-key" placeholder="optional for some backends">
+        </div>
+        <div class="field">
+          <label>Endpoint / Base URL</label>
+          <input type="text" id="endpoint" placeholder="optional — override default API URL">
+        </div>
+        <div class="field">
+          <label>Cloudflare Account ID</label>
+          <input type="text" id="cf-account-id" placeholder="required for cloudflare backend">
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <button id="save-keys" type="button">Save locally</button>
+        <button id="clear-keys" type="button" style="background:#666">Clear</button>
+        <span id="key-status" class="empty"></span>
+      </div>
+    </details>
+    <div id="stage-label" class="stage-label empty"></div>
+    <div id="error-box" class="error-box hidden"></div>
+    <div class="status empty" id="status">Idle</div>
+  </div>
+
+  <div class="card" id="segment-card" style="display:none">
+    <h2>Panels</h2>
+    <p style="margin:4px 0 8px; font-size:0.9rem; color:#555;">
+      Drag panels to reorder them. The narration and final video will follow this sequence.
+    </p>
+    <div class="reorder-tools">
+      <div class="row">
+        <button id="apply-order" type="button" class="secondary">Reset to detected order</button>
+      </div>
+      <p id="reorder-status" class="empty" style="margin-top:8px; font-size:0.85rem;"></p>
+    </div>
+    <div class="gallery" id="gallery"></div>
+  </div>
+
+  <div class="card" id="generation-card" style="display:none">
+    <h2>Result</h2>
+    <div class="stage-stepper" id="stage-stepper"></div>
+    <div id="log-tail" class="log-tail"></div>
+    <div class="actions" id="actions"></div>
+  </div>
+
+  <script>
+    const state = { session: null, panels: [], order: [], running: false, sessions: [],
+                    tts: "edge", voice: "en-US-AriaNeural", style: "recap", backend: "" };
+    const runBtn = document.getElementById("run-btn");
+    const stageLabel = document.getElementById("stage-label");
+    const stageStepper = document.getElementById("stage-stepper");
+    const errorBox = document.getElementById("error-box");
+    const logTail = document.getElementById("log-tail");
+    const dropzone = document.getElementById("dropzone");
+    const fileInput = document.getElementById("file");
+    const statusEl = document.getElementById("status");
+    const segmentCard = document.getElementById("segment-card");
+    const generationCard = document.getElementById("generation-card");
+    const galleryEl = document.getElementById("gallery");
+    const reorderStatus = document.getElementById("reorder-status");
+    const applyOrderBtn = document.getElementById("apply-order");
+    const fileCountEl = document.getElementById("file-count");
+    const sessionListEl = document.getElementById("session-list");
+
+    const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+    function $(id) { return document.getElementById(id); }
+
+    function showError(msg) {
+      errorBox.textContent = msg;
+      errorBox.classList.remove("hidden");
+    }
+
+    function hideError() {
+      errorBox.classList.add("hidden");
+      errorBox.textContent = "";
+    }
+
+    function setStatus(text, cls) {
+      statusEl.textContent = text;
+      statusEl.className = "status " + (cls || "");
+    }
+
+    function renderSessionList() {
+      if (!sessionListEl) return;
+      sessionListEl.innerHTML = "";
+      if (!state.sessions.length) {
+        sessionListEl.innerHTML = '<span class="empty">No strips uploaded yet</span>';
+        return;
+      }
+      const ul = document.createElement("div");
+      ul.style.cssText = "display:flex;flex-direction:column;gap:6px;margin-top:8px";
+      for (const s of state.sessions) {
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex;align-items:center;gap:8px;padding:8px;border:1px solid #e0e0e0;border-radius:8px;background:#fff";
+        const name = document.createElement("span");
+        name.textContent = s.filename;
+        name.style.cssText = "flex:1;font-size:0.9rem";
+        const badge = document.createElement("span");
+        badge.className = "tag conf " + (s.status === "completed" ? "" : s.status === "error" ? "low" : "");
+        badge.textContent = s.status || "uploading";
+        row.appendChild(name);
+        row.appendChild(badge);
+        row.style.cursor = "pointer";
+        row.addEventListener("click", () => selectSession(s.session_id));
+        ul.appendChild(row);
+      }
+      sessionListEl.appendChild(ul);
+    }
+
+    async function selectSession(sessionId) {
+      if (state.running) return;
+      state.session = sessionId;
+      const s = state.sessions.find(x => x.session_id === sessionId);
+      if (s && s.filename) fileCountEl.textContent = s.filename;
+      segmentCard.style.display = "none";
+      generationCard.style.display = "none";
+      setStatus("Loading panels...", "running");
+      try {
+        const data = await api(`/api/jobs/${sessionId}?logs=0`, {}, 15000);
+        if (data.status === "completed" || data.status === "done") {
+          state.panels = data.panels || [];
+          renderGallery();
+          segmentCard.style.display = "block";
+          runBtn.disabled = false;
+          setStatus("Panels ready. Drag to reorder, then click Run.", "");
+        } else if (data.status === "failed" || data.status === "error") {
+          showError(data.error || data.message || "segmentation failed");
+          setStatus("Segmentation failed", "error");
+        } else {
+          setStatus("Session is still processing", "running");
+        }
+      } catch (err) {
+        showError(err.message || String(err));
+        setStatus("Failed to load session", "error");
+      }
+    }
+
+    async function api(path, opts = {}, timeoutMs = 300000) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+      try {
+        const res = await fetch(path, { ...opts, signal: ctrl.signal });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || data.message || `HTTP ${res.status}`);
+        return data;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+
+    function renderGallery() {
+      galleryEl.innerHTML = "";
+      for (let i = 0; i < state.panels.length; i++) {
+        const p = state.panels[i];
+        const el = document.createElement("div");
+        el.className = "panel";
+        el.draggable = true;
+        el.dataset.index = i;
+        el.dataset.id = p.id;
+        const confPct = ((p.confidence || 0) * 100).toFixed(0);
+        const confClass = (p.confidence || 0) < 0.5 ? "low" : "";
+        el.innerHTML = `<img src="/api/jobs/${state.session}/files/${p.image_file}" alt="panel ${p.id}" loading="lazy">` +
+          `<div class="meta"><b>#${p.id} <span style="font-weight:normal;color:#666">#</span>${i + 1}</b>` +
+          `<span class="order-badge">Order ${i + 1}</span>` +
+          `<span class="tag">${p.panel_type || ""}</span>` +
+          `<span class="tag conf ${confClass}">${confPct}%</span>` +
+          `<div style="margin-top:6px; color:#444">${escapeHtml(p.narration || p.dialogue || "(no text)")}</div>` +
+          `</div>`;
+
+        el.addEventListener("dragstart", function(e) {
+          dragSrcIndex = i;
+          el.classList.add("dragging");
+          e.dataTransfer.effectAllowed = "move";
+        });
+        el.addEventListener("dragend", function() {
+          el.classList.remove("dragging");
+          galleryEl.querySelectorAll(".panel").forEach(function(p){ p.classList.remove("drag-over"); });
+        });
+        el.addEventListener("dragover", function(e) {
+          e.preventDefault();
+          el.classList.add("drag-over");
+        });
+        el.addEventListener("dragleave", function() {
+          el.classList.remove("drag-over");
+        });
+        el.addEventListener("drop", function(e) {
+          e.preventDefault();
+          el.classList.remove("drag-over");
+          if (dragSrcIndex === null || dragSrcIndex === i) return;
+          const item = state.panels.splice(dragSrcIndex, 1)[0];
+          state.panels.splice(i, 0, item);
+          dragSrcIndex = null;
+          renderGallery();
+        });
+
+        galleryEl.appendChild(el);
+      }
+    }
+
+    function escapeHtml(s) {
+      return s.replace(/[&<>"']/g, function(c) {
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'})[c] || c;
+      });
+    }
+
+    let dragSrcIndex = null;
+
+    applyOrderBtn.addEventListener("click", function() {
+      if (!state.session || !state.panels.length) return;
+      state.order = state.panels.map(function(p) { return p.id; });
+      reorderStatus.textContent = "Order reset to detected order.";
+      reorderStatus.className = "status done";
+      setTimeout(function() { reorderStatus.textContent = ""; reorderStatus.className = "empty"; }, 2000);
+    });
+
+    async function uploadAndSegment(files) {
+      if (!files || !files.length) return;
+      state.running = true;
+      runBtn.disabled = true;
+      runBtn.textContent = "Uploading...";
+      hideError();
+      setStatus("Uploading...", "running");
+      state.sessions = [];
+
+      try {
+        for (let i = 0; i < files.length; i++) {
+          setStatus(`Uploading ${i + 1}/${files.length}...`, "running");
+          const fd = new FormData();
+          fd.append("file", files[i]);
+          fd.append("backend", document.getElementById("backend").value);
+          fd.append("api_key", document.getElementById("api-key").value);
+          fd.append("model", (document.getElementById("model")?.value || "").trim());
+          fd.append("endpoint", (document.getElementById("endpoint")?.value || "").trim());
+          fd.append("cf_account_id", (document.getElementById("cf-account-id")?.value || "").trim());
+          const j = await api("/api/upload", {
+            method: "POST",
+            body: fd,
+          });
+          state.sessions.push({ session_id: j.job_id, filename: files[i].name, status: "uploaded" });
+        }
+        renderSessionList();
+        if (state.sessions.length) {
+          state.session = state.sessions[0].session_id;
+          fileCountEl.textContent = state.sessions.length + " strip" + (state.sessions.length > 1 ? "s" : "") + " uploaded";
+          setStatus("Segmenting panels...", "running");
+          await monitorJob(state.session, false);
+        }
+        runBtn.textContent = "Run";
+        runBtn.disabled = false;
+        setStatus("Ready to generate", "");
+      } catch (err) {
+        showError(err.message || String(err));
+        runBtn.textContent = "Run";
+        runBtn.disabled = false;
+        setStatus("Upload failed", "error");
+      } finally {
+        state.running = false;
+      }
+    }
+
+    async function monitorJob(jobId, isGeneration) {
+      let netFails = 0;
+      while (true) {
+        let s;
+        try {
+          s = await api(`/api/jobs/${jobId}?logs=1`);
+          netFails = 0;
+        } catch (netErr) {
+          if (++netFails >= 5) {
+            throw new Error("lost contact with server while job " + jobId + " was running");
+          }
+          await sleep(2000);
+          continue;
+        }
+
+        const sessionEntry = state.sessions.find(x => x.session_id === jobId);
+        if (sessionEntry) sessionEntry.status = s.status;
+        renderSessionList();
+
+        if (isGeneration) {
+          renderStage(s);
+          if (s.status === "running") {
+            const existing = document.getElementById("cancel-gen-btn");
+            if (!existing) {
+              const btn = document.createElement("button");
+              btn.id = "cancel-gen-btn";
+              btn.textContent = "Cancel";
+              btn.style.cssText = "margin-left:8px;background:#ef4444;color:#fff;border:none;padding:4px 10px;border-radius:6px;font-size:0.8rem;cursor:pointer";
+              btn.onclick = async () => {
+                await api(`/api/jobs/${jobId}/cancel`, {method:"POST"});
+                btn.disabled = true;
+                btn.textContent = "Canceling...";
+              };
+              stageLabel.parentNode.insertBefore(btn, stageLabel.nextSibling);
+            }
+          } else {
+            const cb = document.getElementById("cancel-gen-btn");
+            if (cb) cb.remove();
+          }
+          renderLogs(s.logs || []);
+          const age = Date.now() / 1000 - (s.updated_at || 0);
+          if (s.status === "running" && age > 90) {
+            stageLabel.textContent = `${s.stage || "working"} (still working, ${Math.round(age)}s)`;
+          }
+        } else {
+          setStatus(s.message || s.status, s.status === "completed" ? "done" : (s.status === "error" ? "error" : "running"));
+        }
+
+        if (s.status === "completed" || s.status === "done") {
+          if (isGeneration) {
+            state.panels = s.panels || [];
+            renderOutputs(s.outputs || {}, jobId, s);
+          } else {
+            state.panels = s.panels || [];
+            renderGallery();
+            segmentCard.style.display = "block";
+            runBtn.disabled = false;
+            setStatus("Panels ready. Drag to reorder, then click Run.", "");
+          }
+          return;
+        }
+        if (s.status === "failed" || s.status === "error") {
+          if (isGeneration) {
+            throw new Error(s.error || s.message || "job failed");
+          } else {
+            showError(s.error || s.message || "segmentation failed");
+            setStatus("Segmentation failed", "error");
+            return;
+          }
+        }
+        if (s.status === "cancelled") {
+          if (isGeneration) {
+            throw new Error("job cancelled");
+          } else {
+            setStatus("Cancelled", "error");
+            return;
+          }
+        }
+        await sleep(1000);
+      }
+    }
+
+    const STAGES = ["validate_config","load_images","segment_panels","apply_order",
+                    "gemini_narration","build_script","tts_audio","render_video",
+                    "save_outputs","create_editor_project"];
+    const STAGE_LABELS = {
+      validate_config:"Config",load_images:"Load",segment_panels:"Panels",
+      apply_order:"Order",gemini_narration:"AI",build_script:"Script",
+      tts_audio:"Audio",render_video:"Video",save_outputs:"Save",
+      create_editor_project:"Editor proj"
+    };
+
+    function renderStage(s) {
+      const stage = s.stage || s.status;
+      stageLabel.textContent = stage;
+      stageLabel.className = "stage-label";
+      if (s.status === "running") stageLabel.classList.add("running");
+      else if (s.status === "completed") stageLabel.classList.add("done");
+      else if (s.status === "failed") stageLabel.classList.add("error");
+
+      stageStepper.innerHTML = "";
+      STAGES.forEach((st, i) => {
+        const div = document.createElement("div");
+        div.className = "stage-step";
+        div.innerHTML = `<span class="num">${i+1}</span> ${STAGE_LABELS[st] || st}`;
+        const idx = STAGES.indexOf(s.stage);
+        if (i < idx) div.classList.add("done");
+        else if (i === idx) div.classList.add("active");
+        if (s.status === "failed" && st === s.stage) div.classList.add("failed");
+        stageStepper.appendChild(div);
+      });
+    }
+
+    function renderLogs(logs) {
+      logTail.innerHTML = "";
+      for (const line of logs) {
+        const div = document.createElement("div");
+        div.className = "log-line" + (line.level === "ERROR" ? " error" : "");
+        div.textContent = `[${line.level}] ${line.stage || ""}: ${line.msg}`;
+        logTail.appendChild(div);
+      }
+      logTail.scrollTop = logTail.scrollHeight;
+    }
+
+    function renderOutputs(outputs, jobId, jobState) {
+      const actionsEl = document.getElementById("actions");
+      actionsEl.innerHTML = "";
+      generationCard.style.display = "block";
+      const links = [];
+      for (const [name, path] of Object.entries(outputs)) {
+        links.push(`<a href="/api/jobs/${jobId}/files/${name}" download>${name}</a>`);
+      }
+      links.push(`<a href="/editor/${state.session}?session=${state.session}" target="_blank" style="background:#2563eb;color:#fff;border-color:#2563eb;padding:8px 12px;border-radius:6px;text-decoration:none;font-size:0.85rem;margin-left:8px">Open in Editor</a>`);
+      if (jobState && jobState.status === "failed" && jobState.stage) {
+        links.push(`<button id="retry-btn" style="background:#059669;color:#fff;border:none;padding:8px 12px;border-radius:6px;font-size:0.85rem;cursor:pointer">Retry from ${STAGE_LABELS[jobState.stage] || jobState.stage}</button>`);
+      }
+      actionsEl.innerHTML = links.join("");
+      const retryBtn = document.getElementById("retry-btn");
+      if (retryBtn) {
+        retryBtn.onclick = () => {
+          const body = {session: state.session, tts: state.tts, voice: state.voice, style: state.style, backend: state.backend, start_stage: jobState.stage};
+          api("/api/run", {method:"POST", body:JSON.stringify(body)}).then(r => monitorJob(r.job_id, true));
+          retryBtn.disabled = true;
+          retryBtn.textContent = "Queued...";
+        };
+      }
+    }
+
+    async function runGeneration() {
+      if (state.running || !state.session) return;
+      state.running = true;
+      runBtn.disabled = true;
+      runBtn.textContent = "Running...";
+      runBtn.classList.add("is-running");
+      hideError();
+      setStatus("Queued", "running");
+      generationCard.style.display = "none";
+
+      try {
+         const body = {
+          session: state.session,
+          order: state.order.length ? state.order : undefined,
+          tts: document.getElementById("tts").value,
+          voice: document.getElementById("voice").value,
+          style: document.getElementById("style").value,
+          backend: document.getElementById("backend").value,
+          api_key: document.getElementById("api-key").value,
+          model: document.getElementById("model")?.value || "",
+          endpoint: document.getElementById("endpoint")?.value || "",
+          cf_account_id: document.getElementById("cf-account-id")?.value || "",
+        };
+        state.tts = body.tts; state.voice = body.voice;
+        state.style = body.style; state.backend = body.backend;
+        const { job_id } = await api("/api/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        stageLabel.textContent = "queued";
+        stageLabel.className = "stage-label";
+        await monitorJob(job_id, true);
+        runBtn.textContent = "Run again";
+        runBtn.classList.add("is-done");
+        setStatus("Complete", "done");
+      } catch (err) {
+        showError(err.message || String(err));
+        runBtn.textContent = "Run";
+        setStatus("Generation failed", "error");
+      } finally {
+        state.running = false;
+        runBtn.disabled = false;
+        runBtn.classList.remove("is-running");
+      }
+    }
+
+    runBtn.addEventListener("click", runGeneration);
+
+    dropzone.addEventListener("click", function() { fileInput.click(); });
+    dropzone.addEventListener("dragover", function(e) { e.preventDefault(); dropzone.classList.add("over"); });
+    dropzone.addEventListener("dragleave", function() { dropzone.classList.remove("over"); });
+    dropzone.addEventListener("drop", function(e) {
+      e.preventDefault(); dropzone.classList.remove("over");
+      if (e.dataTransfer.files.length) uploadAndSegment(e.dataTransfer.files);
+    });
+    fileInput.addEventListener("change", function() {
+      if (fileInput.files.length) uploadAndSegment(fileInput.files);
+    });
+
+    $('save-keys').addEventListener('click', function() {
+      var keys = {};
+      ['api-key','endpoint','model','cf-account-id'].forEach(function(k) {
+        var input = $('key-' + k);
+        if (input && input.value.trim()) keys[k] = input.value.trim();
+      });
+      localStorage.setItem('recap-comic-keys', JSON.stringify(keys));
+      $('key-status').textContent = 'saved';
+      setTimeout(function() { $('key-status').textContent = ''; }, 2000);
+    });
+    $('clear-keys').addEventListener('click', function() {
+      localStorage.removeItem('recap-comic-keys');
+      ['api-key','endpoint','model','cf-account-id'].forEach(function(k) {
+        var input = $('key-' + k);
+        if (input) input.value = '';
+      });
+      $('key-status').textContent = 'cleared';
+    });
+    (function() {
+      try {
+        var keys = JSON.parse(localStorage.getItem('recap-comic-keys') || '{}');
+        if (keys['api-key']) $('key-api-key').value = keys['api-key'];
+        if (keys['endpoint']) $('key-endpoint').value = keys['endpoint'];
+        if (keys['model']) $('key-model').value = keys['model'];
+        if (keys['cf-account-id']) $('key-cf-account-id').value = keys['cf-account-id'];
+      } catch(e) {}
+    })();
+
+    async function loadConfig() {
+      try {
+        const cfg = await api("/api/config");
+        const badge = $("gemini-badge");
+        if (cfg.gemini_configured) {
+          badge.className = "gemini-badge";
+          badge.textContent = "Gemini configured";
+        } else {
+          badge.className = "gemini-badge missing";
+          badge.textContent = "Gemini not configured";
+        }
+      } catch(e) {}
+    }
+    loadConfig();
+  </script>
+</body>
+</html>

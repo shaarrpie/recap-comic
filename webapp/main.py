@@ -24,7 +24,6 @@ from .editor_api import (
     redo,
     reorder_panels,
     remove_panel,
-    render_edited_project,
     reset_to_automated,
     save_project,
     set_duration,
@@ -35,6 +34,7 @@ from .editor_api import (
     update_caption,
     update_narration,
 )
+from . import editor_api
 from .jobs import store
 from adapters.editor import Editor
 
@@ -61,7 +61,7 @@ def _default_backend() -> str:
 
 @app.get("/")
 async def index():
-    return FileResponse(BASE_DIR / "webapp" / "static" / "app.html")
+    return FileResponse(BASE_DIR / "webapp" / "static" / "index.html")
 
 
 @app.get("/api/config")
@@ -126,7 +126,7 @@ async def projects():
 
 
 @app.post("/api/upload")
-async def upload(file: UploadFile = File(...)):  # noqa: B008
+async def upload(file: UploadFile = File(...), run: int = 1):  # noqa: B008
     allowed = {"png", "jpg", "jpeg", "webp"}
     suffix = Path(file.filename or "x.png").suffix.lower().lstrip(".")
     if suffix not in allowed:
@@ -155,9 +155,12 @@ async def upload(file: UploadFile = File(...)):  # noqa: B008
     session.config.update(cfg)
     log.info("job=%s upload received filename=%s bytes=%d backend=%s",
              session.id, file.filename, written, cfg["backend"])
-    threading.Thread(target=pipeline.run_job, args=(session.id,),
-                     daemon=True).start()
-    log.info("job=%s worker started kind=segment", session.id)
+    if run:
+        threading.Thread(target=pipeline.run_job, args=(session.id,),
+                         daemon=True).start()
+        log.info("job=%s worker started kind=segment", session.id)
+    else:
+        log.info("job=%s uploaded; queued (run=0, auto-run disabled)", session.id)
     return {"job_id": session.id, "status": session.status.value}
 
 
@@ -166,6 +169,8 @@ class RunRequest(BaseModel):
     order: list[str] | None = None
     tts: str = "edge"
     voice: str = "en-US-AriaNeural"
+    rate: int = 0    # edge-tts rate offset in %
+    pitch: int = 0   # edge-tts pitch offset in Hz
     style: str = "recap"
     backend: str = "none"
     api_key: str = ""
@@ -186,6 +191,7 @@ async def run(body: RunRequest):
         "strip_file": src.config["strip_file"],
         "order": body.order,
         "tts": body.tts, "voice": body.voice, "style": body.style,
+        "rate": body.rate, "pitch": body.pitch,
         "backend": body.backend,
         "start_stage": body.start_stage,
     })
@@ -202,6 +208,159 @@ async def run(body: RunRequest):
                      kwargs=kwargs, daemon=True).start()
     log.info("job=%s worker started kind=generate", job.id)
     return {"job_id": job.id, "status": job.status.value}
+
+
+# ---------------------------------------------------------------------------
+# Panel Review — user verification/correction layer over the AI segmentation.
+# panels.json (AI baseline) is never mutated; edits persist in panels_edit.json.
+# ---------------------------------------------------------------------------
+from . import panel_api as _panel_api  # noqa: E402
+from . import voice_api as _voice_api  # noqa: E402
+
+
+@app.get("/api/panels/{session}")
+async def panels_get(session: str):
+    return _panel_api.get_panels(session)
+
+
+class PanelIdsBody(BaseModel):
+    ids: list[str]
+
+
+@app.post("/api/panels/{session}/order")
+async def panels_order(session: str, body: PanelIdsBody):
+    return _panel_api.set_order(session, body.ids)
+
+
+@app.post("/api/panels/{session}/delete")
+async def panels_delete(session: str, body: PanelIdsBody):
+    return _panel_api.delete_panels(session, body.ids)
+
+
+@app.post("/api/panels/{session}/restore")
+async def panels_restore(session: str, body: PanelIdsBody):
+    return _panel_api.restore_panels(session, body.ids)
+
+
+class ReviewBody(BaseModel):
+    panel_id: str
+    status: str
+
+
+@app.post("/api/panels/{session}/review")
+async def panels_review(session: str, body: ReviewBody):
+    return _panel_api.set_review(session, body.panel_id, body.status)
+
+
+class ConfirmBody(BaseModel):
+    review_all: bool = False
+
+
+@app.post("/api/panels/{session}/confirm")
+async def panels_confirm(session: str, body: ConfirmBody):
+    return _panel_api.confirm(session, review_all=body.review_all)
+
+
+class PanelIdBody(BaseModel):
+    panel_id: str
+
+
+class MergeBody(BaseModel):
+    ids: list[str]
+
+
+class SplitBody(BaseModel):
+    panel_id: str
+    fraction: float = 0.5
+
+
+@app.post("/api/panels/{session}/duplicate")
+async def panels_duplicate(session: str, body: PanelIdBody):
+    return _panel_api.duplicate_panel(session, body.panel_id)
+
+
+@app.post("/api/panels/{session}/merge")
+async def panels_merge(session: str, body: MergeBody):
+    return _panel_api.merge_panels(session, body.ids)
+
+
+@app.post("/api/panels/{session}/split")
+async def panels_split(session: str, body: SplitBody):
+    return _panel_api.split_panel(session, body.panel_id, fraction=body.fraction)
+
+
+# ---------------------------------------------------------------------------
+# Narrator / Voice Studio — per-project voice config + previews
+# ---------------------------------------------------------------------------
+@app.get("/api/voice/{session}")
+async def voice_get(session: str):
+    return _voice_api.get_voice(session)
+
+
+@app.post("/api/voice/{session}")
+async def voice_put(session: str, body: dict):
+    return _voice_api.put_voice(session, body)
+
+
+@app.get("/api/voices")
+async def voices_list(provider: str = "edge"):
+    return _voice_api.list_voices(provider)
+
+
+class PreviewBody(BaseModel):
+    cfg: dict
+    text: str = ""
+
+
+@app.post("/api/voice/{session}/preview")
+async def voice_preview(session: str, body: PreviewBody):
+    return await _voice_api.make_preview(session, body.cfg, body.text)
+
+
+# Narration Studio — per-panel narration review/edit/regeneration.
+# Overrides persist in narration_edit.json; the AI baseline is never mutated.
+from . import narration_api as _narration_api  # noqa: E402
+
+
+@app.get("/api/narration/{session}")
+async def narration_get(session: str):
+    return _narration_api.get_narration(session)
+
+
+class NarrTextBody(BaseModel):
+    panel_id: str
+    text: str = ""
+
+
+@app.post("/api/narration/{session}/text")
+async def narration_text(session: str, body: NarrTextBody):
+    return _narration_api.set_text(session, body.panel_id, body.text)
+
+
+@app.post("/api/narration/{session}/reset")
+async def narration_reset(session: str, body: NarrTextBody):
+    return _narration_api.reset_text(session, body.panel_id)
+
+
+class NarrStyleBody(BaseModel):
+    style: str
+
+
+@app.post("/api/narration/{session}/style")
+async def narration_style(session: str, body: NarrStyleBody):
+    return _narration_api.set_style(session, body.style)
+
+
+class NarrRegenBody(BaseModel):
+    panel_id: str
+    api_key: str = ""
+    model: str = ""
+
+
+@app.post("/api/narration/{session}/regenerate")
+async def narration_regen(session: str, body: NarrRegenBody):
+    return _narration_api.regenerate(session, body.panel_id,
+                                     api_key=body.api_key, model=body.model)
 
 
 @app.get("/api/jobs/{job_id}")
@@ -235,6 +394,103 @@ async def job_file(job_id: str, name: str):
     if not target.is_file():
         raise HTTPException(404, "file not found")
     return FileResponse(target)
+
+
+# --------------------------------------------------------------------------- #
+# Panel validation + review routes (Part 2.4)
+# --------------------------------------------------------------------------- #
+import panel_validator as pv  # noqa: E402
+import asyncio  # noqa: E402
+import json as _json  # noqa: E402
+from fastapi.responses import StreamingResponse  # noqa: E402
+
+
+@app.get("/api/sessions/{session}/validation")
+async def get_validation(session: str):
+    d = OUTPUT_DIR / session
+    rep = pv.load_report(d)
+    if rep is None:
+        raise HTTPException(404, "no validation report; segment first")
+    return pv.apply_decisions(rep, pv.load_review(d))
+
+
+@app.post("/api/sessions/{session}/panels/{panel_id}/decision")
+async def panel_decision(session: str, panel_id: str, body: dict):
+    decision = body.get("decision")
+    if decision not in ("keep", "delete"):
+        raise HTTPException(400, "decision must be keep|delete")
+    d = OUTPUT_DIR / session
+    review = pv.load_review(d)
+    review["decisions"][panel_id] = decision
+    pv.save_review(d, review)
+    return {"ok": True}
+
+
+@app.post("/api/sessions/{session}/confirm")
+async def confirm_panels(session: str, body: dict):
+    d = OUTPUT_DIR / session
+    review = pv.load_review(d)
+    order = body.get("order")
+    if order:
+        review["order"] = order
+    review["confirmed"] = True
+    pv.save_review(d, review)
+    return {"ok": True, "order": review.get("order")}
+
+
+@app.post("/api/sessions/{session}/unconfirm")
+async def unconfirm(session: str):
+    d = OUTPUT_DIR / session
+    review = pv.load_review(d)
+    review["confirmed"] = False
+    pv.save_review(d, review)
+    return {"ok": True}
+
+
+@app.get("/api/jobs/{job_id}/events")
+async def job_events(job_id: str):
+    async def gen():
+        last = None
+        while True:
+            job = store.get(job_id)
+            if job is None:
+                yield "event: error\ndata: job gone\n\n"
+                return
+            snap = (job.status.value, job.stage or "",
+                    int(job.progress or 0), job.error or "")
+            if snap != last:
+                last = snap
+                yield ("data: " + _json.dumps({
+                    "status": snap[0], "stage": snap[1],
+                    "progress": snap[2], "error": snap[3]}) + "\n\n")
+            if snap[0] in ("completed", "failed", "cancelled"):
+                return
+            await asyncio.sleep(0.8)
+    return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.get("/api/voice/preview")
+async def voice_preview(voice: str, rate: str = "+0%", pitch: str = "+0Hz",
+                        text: str = "This is how your recap will sound."):
+    import hashlib
+    from . import tts_helpers
+    key = hashlib.sha1(f"{voice}|{rate}|{pitch}|{text[:80]}".encode()).hexdigest()[:12]
+    cache = BASE_DIR / ".cache" / "voice_preview"
+    cache.mkdir(parents=True, exist_ok=True)
+    out = cache / f"{key}.mp3"
+    if not out.is_file():
+        try:
+            await tts_helpers.synth_one(text[:160], voice, out, timeout_s=20)
+        except Exception as exc:
+            raise HTTPException(502, f"preview failed: {exc}")
+    return FileResponse(out, media_type="audio/mpeg")
+
+
+@app.post("/api/jobs/{job_id}/render-cancel")
+async def render_cancel(job_id: str):
+    from .render_worker import cancel_render
+    ok = cancel_render(job_id)
+    return {"ok": ok}
 
 
 # --------------------------------------------------------------------------- #
@@ -414,12 +670,10 @@ async def editor_narration_regenerate(session: str, body: dict):
     cut_art = CutArtifact(
         source=artifact.source, width=artifact.width, height=artifact.height,
         plan_hash=artifact.plan_hash, config=artifact.config, panels=[panel])
-    n_art = NarrationArtifact(
-        meta=narration.meta, mode=narration.mode, entries=[entry])
     try:
         import narrator
-        new_entry = narrator.make_script_from_cut(cut_art, style="recap").entries[0]
-        entry.text = new_entry.text
+        new_text = narrator.make_script_from_cut(cut_art, style="recap")
+        entry.text = new_text
         narration_json.write_text(narration.model_dump_json(indent=2) + "\n", "utf-8")
         editor_path = d / "editor.json"
         if editor_path.is_file():
@@ -427,9 +681,9 @@ async def editor_narration_regenerate(session: str, body: dict):
             if proj:
                 for e in proj.edited_timeline:
                     if e.get("panel_id") == panel_id:
-                        e["narration"] = new_entry.text
+                        e["narration"] = new_text
                         e["needs_render"] = True
                 Editor(proj).save(editor_path)
-        return {"ok": True, "panel_id": panel_id, "text": new_entry.text}
+        return {"ok": True, "panel_id": panel_id, "text": new_text}
     except Exception as exc:
         raise HTTPException(500, f"narration regeneration failed: {exc}")

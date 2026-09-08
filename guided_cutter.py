@@ -43,10 +43,10 @@ log = logging.getLogger(__name__)
 def _check_image_size(path: Path) -> None:
     with Image.open(path) as img:
         pixels = img.width * img.height
-    if pixels > 80_000_000:
-        raise ValueError(
-            f"image too large for safe processing: {img.width}x{img.height} "
-            f"({pixels / 1_000_000:.1f} MP); refusing to load")
+        if pixels > 80_000_000:
+            raise ValueError(
+                f"image too large for safe processing: {img.width}x{img.height} "
+                f"({pixels / 1_000_000:.1f} MP); refusing to load")
 
 
 def _blur(gray: np.ndarray, sigma: float = 0.5) -> np.ndarray:
@@ -421,7 +421,8 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
 
 def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
                *, config: CutterConfig | None = None,
-               force: bool = False) -> CutArtifact:
+               force: bool = False,
+               validate: bool = False) -> CutArtifact:
     """Cut the strip into per-panel images + a panels.json sidecar."""
     strip = Path(strip_path)
     if not strip.is_file():
@@ -486,6 +487,18 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
         plan.width, plan.height = width, height
 
     cuts = build_cuts(gray_arr, plan, config=config)
+
+    # Post-segmentation validation layer (advisory; never deletes).
+    if validate:
+        try:
+            from panel_validator import validate_panels, save_report
+            vreport = validate_panels(
+                gray_arr, cuts,
+                ai_confidences={c.id: c.confidence for c in cuts})
+            save_report(out, vreport)
+        except Exception as exc:  # validation must never kill a cut
+            log.warning("panel validation skipped: %s", exc)
+
     saved: list[CutPanel] = []
     min_panel_height = 30
     for c in cuts:

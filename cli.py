@@ -25,6 +25,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
+import numpy as np
 import typer
 from dotenv import load_dotenv
 from PIL import Image

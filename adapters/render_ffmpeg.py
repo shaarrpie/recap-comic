@@ -250,3 +250,107 @@ def render(timeline: TimelineArtifact, out_path: Path,
     if proc.returncode != 0:
         tail = "\n".join(proc.stderr.splitlines()[-20:])
         raise RenderError(cmd, tail)
+
+
+# ---------------------------------------------------------------- chunked rendering
+def build_command_chunked(timeline: TimelineArtifact, out_path: Path,
+                          ffmpeg_exe: str = "ffmpeg",
+                          chunk_size: int = 12,
+                          profile: dict | None = None) -> tuple[list[tuple[list[str], Path]], list[str], Path]:
+    """Split entries into <=chunk_size groups; encode each to a small
+    .ts segment (bounded filter graph, bounded memory), then concat with
+    the concat DEMUXER (no re-encode). Returns (segments, concat_cmd, temp_dir)."""
+    prof = profile or {"preset": "veryfast", "crf": "23", "threads": "4"}
+    tmp = Path(out_path).with_name(out_path.stem + "_parts")
+    tmp.mkdir(exist_ok=True)
+    list_file = tmp / "concat.txt"
+    segs: list[tuple[list[str], Path]] = []
+    entries = timeline.entries
+    for i in range(0, len(entries), chunk_size):
+        part = TimelineArtifact(
+            meta=timeline.meta, width=timeline.width, height=timeline.height,
+            fps=timeline.fps, gap_seconds=timeline.gap_seconds,
+            min_display_seconds=timeline.min_display_seconds,
+            entries=entries[i:i + chunk_size])
+        seg = tmp / f"seg_{i:03d}.ts"
+        cmd = build_command(part, seg, ffmpeg_exe)
+        # swap mp4 container flags for mpegts + profile limits
+        cmd = [a for a in cmd if a not in ("-movflags", "+faststart")]
+        if "-threads" not in cmd:
+            cmd += ["-threads", prof.get("threads", "4")]
+        segs.append((cmd, seg))
+    list_file.write_text("".join(f"file '{s.resolve()}'\n" for _, s in segs))
+    concat_cmd = [ffmpeg_exe, "-y", "-nostdin", "-f", "concat", "-safe", "0",
+                  "-i", str(list_file), "-c", "copy", str(out_path)]
+    return segs, concat_cmd, tmp
+
+
+def render_chunked(timeline: TimelineArtifact, out_path: Path,
+                   ffmpeg_exe: str = "ffmpeg",
+                   chunk_size: int = 12,
+                   profile: dict | None = None,
+                   timeout: int = 3600) -> None:
+    """Render large timelines in chunks to bound memory usage."""
+    segs, concat_cmd, tmp = build_command_chunked(timeline, out_path, ffmpeg_exe, chunk_size, profile)
+    try:
+        for cmd, seg in segs:
+            proc = subprocess.run(cmd, capture_output=True, text=True,
+                                  timeout=timeout, shell=False, check=False)
+            if proc.returncode != 0:
+                tail = "\n".join(proc.stderr.splitlines()[-20:])
+                raise RenderError(cmd, tail)
+            if not seg.is_file():
+                raise RenderError(cmd, f"segment {seg} not produced")
+        proc = subprocess.run(concat_cmd, capture_output=True, text=True,
+                              timeout=timeout, shell=False, check=False)
+        if proc.returncode != 0:
+            tail = "\n".join(proc.stderr.splitlines()[-20:])
+            raise RenderError(concat_cmd, tail)
+    finally:
+        # clean up temp segment files
+        for f in tmp.iterdir():
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        try:
+            tmp.rmdir()
+        except OSError:
+            pass
+
+
+def pick_render_strategy(n_panels: int, total_seconds: float) -> str:
+    """Adaptive strategy: direct for small, chunked for large."""
+    return "chunked" if (n_panels > 25 or total_seconds > 150) else "direct"
+
+
+# ---------------------------------------------------------------- draft render
+def render_draft(timeline: TimelineArtifact, out_path: Path,
+                 ffmpeg_exe: str = "ffmpeg", timeout: int = 1800) -> None:
+    """Draft render: lower resolution, faster encoding, for preview."""
+    draft_timeline = TimelineArtifact(
+        meta=timeline.meta,
+        width=540,  # half width
+        height=960,  # half height (9:16)
+        fps=24,  # lower fps
+        gap_seconds=timeline.gap_seconds,
+        min_display_seconds=timeline.min_display_seconds,
+        entries=timeline.entries)
+    cmd = build_command(draft_timeline, out_path, ffmpeg_exe)
+    # override with draft-friendly settings
+    cmd = [a for a in cmd if a not in ("-preset", "-crf", "-r")]
+    # insert draft settings after -c:v libx264
+    new_cmd = []
+    for a in cmd:
+        new_cmd.append(a)
+        if a == "libx264":
+            new_cmd += ["-preset", "ultrafast", "-crf", "28"]
+        if a == "-pix_fmt":
+            pass  # keep
+    # replace fps
+    new_cmd = ["24" if a == str(timeline.fps) else a for a in new_cmd]
+    proc = subprocess.run(new_cmd, capture_output=True, text=True,
+                          timeout=timeout, shell=False, check=False)
+    if proc.returncode != 0:
+        tail = "\n".join(proc.stderr.splitlines()[-20:])
+        raise RenderError(new_cmd, tail)

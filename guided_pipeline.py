@@ -231,6 +231,7 @@ def run_guided(
     force: bool = False,
     dry_run: bool = False,
     out_plan: str | Path | None = None,
+    validate: bool = False,
 ) -> tuple[sa.PanelPlan, CutArtifact | None, bool]:
     """Phase 1 + Phase 2. Returns (plan, artifact, used_fallback).
 
@@ -307,6 +308,6 @@ def run_guided(
                           variance_threshold=variance_threshold,
                           edge_threshold=edge_threshold)
     log.info("Phase-2 starting guided_cut")
-    artifact = guided_cut(strip, plan, out_dir, config=config, force=force)
+    artifact = guided_cut(strip, plan, out_dir, config=config, force=force, validate=validate)
     log.info("Phase-2 complete panels=%d", len(artifact.panels))
     return plan, artifact, used_fallback
