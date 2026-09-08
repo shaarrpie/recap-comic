@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -118,7 +119,8 @@ def _segment_panels(job: Job, **kwargs: Any) -> None:
         strip, session_dir, backend_name=backend_name,
         cache_dir=cache, force=False, fallback=True,
         api_key=api_key or None, model=model,
-        base_url=base_url, cf_account_id=cf_account_id)
+        base_url=base_url, cf_account_id=cf_account_id,
+        validate=True)
     assert artifact is not None
     job.panels = [{
         "id": p.id, "panel_index": p.panel_index,
@@ -217,30 +219,16 @@ def _write_confirmed_artifact(job: Job) -> Path:
 
 def _gemini_narration(job: Job, **kwargs: Any) -> None:
     session_dir = OUTPUT_DIR / job.config["session"]
-    import guided_pipeline as gp
-    strip = session_dir / job.config["strip_file"]
-    cache = BASE_DIR / ".cache" / "recap-comic"
-    backend_name = job.config.get("backend", "gemini")
-    api_key = kwargs.get("api_key") or job.config.get("api_key", "") or os.environ.get("GEMINI_API_KEY", "")
-    model = kwargs.get("model") or job.config.get("model", "") or None
-    endpoint = kwargs.get("base_url") or job.config.get("endpoint", "") or None
-    cf_account_id = kwargs.get("cf_account_id") or job.config.get("cf_account_id", "") or None
-    job.log("INFO", f"{backend_name} narration started", "gemini_narration")
-    plan, _artifact, _used = gp.run_guided(
-        strip, session_dir, backend_name=backend_name,
-        cache_dir=cache, force=False, fallback=True,
-        api_key=api_key or None, model=model,
-        base_url=endpoint, cf_account_id=cf_account_id)
-    job.log("INFO",
-            f"narration completed panels={len(plan.entries)} "
-            f"model={plan.model}", "gemini_narration")
-    by_index = {e.panel_index: e for e in plan.entries}
+    from guided_cutter import CutArtifact
+    artifact = CutArtifact.model_validate_json(
+        _panels_source(session_dir).read_text("utf-8"))
+    by_id = {p.id: p for p in artifact.panels}
     for p in job.panels:
-        e = by_index.get(p["panel_index"])
-        if e is not None:
-            p["narration"] = e.narration
-            p["dialogue"] = e.dialogue
-            p["confidence"] = e.confidence
+        src = by_id.get(p["id"])
+        if src is not None:
+            p["narration"] = src.narration
+            p["dialogue"] = src.dialogue
+            p["confidence"] = src.confidence
     from .narration_api import apply_overrides_to_dicts
     n_ov = apply_overrides_to_dicts(job.config["session"], job.panels)
     if n_ov:
@@ -296,14 +284,14 @@ def _tts_audio(job: Job, **kwargs: Any) -> None:
 def _render_video(job: Job, **kwargs: Any) -> None:
     """Render video using the isolated RenderWorker for proper isolation,
     cancellation, and resource bounding."""
-    import time as _time
     session_dir = OUTPUT_DIR / job.config["session"]
     panels_json = _panels_source(session_dir)
     out_mp4 = session_dir / "recap.mp4"
     out_tmp = out_mp4.with_name(out_mp4.stem + ".partial.mp4")
-    from recap_video import VideoConfig, make_recap_video
-    from .render_worker import render_profiles, _ACTIVE, _LOCK
     from adapters.render_ffmpeg import pick_render_strategy
+    from recap_video import VideoConfig, make_recap_video
+
+    from .render_worker import RenderWorker, render_profiles
     # Narrator Studio settings (voice.json) win; /api/run values are defaults.
     voice_cfg = {}
     vp = session_dir / "voice.json"
@@ -328,25 +316,17 @@ def _render_video(job: Job, **kwargs: Any) -> None:
     # Determine render strategy
     render_profile = job.config.get("render_profile", "balanced")
     threads = job.config.get("ffmpeg_threads", "auto")
+    cpu_count = os.cpu_count() or 4
     if threads == "auto":
-        import os as _os
-        threads = str(max(2, _os.cpu_count() // 2 or 2))
-    prof = render_profiles(_os.cpu_count() or 4).get(render_profile, render_profiles(4)["balanced"])
+        threads = str(max(2, cpu_count - 2))
+    prof = render_profiles(cpu_count).get(render_profile, render_profiles(4)["balanced"])
     prof["threads"] = threads
+    # TTS + timeline + captions (synchronous, cache-friendly)
+    make_recap_video(panels_json, out_tmp, cfg, force=True, dry_run=True)
     # Build the render command
     strategy = pick_render_strategy(len(job.panels) if job.panels else 10, 120)
-    import adapters.render_ffmpeg as rf
     if strategy == "chunked":
-        def build_cmd(tmp):
-            from adapters.render_ffmpeg import build_command_chunked
-            segs, concat_cmd, tmp_dir = build_command_chunked(
-                _get_timeline_artifact(session_dir), tmp, profile=prof, chunk_size=12)
-            # We need to run chunks inline, so return a shell-free list
-            # For chunked, we use render_chunked which handles the steps
-            return ["echo", "chunked-render-via-worker"]
-        # Use render_chunked for large projects
         from adapters.render_ffmpeg import render_chunked
-        from adapters.schemas import TimelineArtifact
         ta = _get_timeline_artifact(session_dir)
         try:
             render_chunked(ta, out_tmp, chunk_size=12, profile=prof)
@@ -354,16 +334,30 @@ def _render_video(job: Job, **kwargs: Any) -> None:
                 out_tmp.replace(out_mp4)
             else:
                 raise RuntimeError("chunked render did not produce output")
-        except Exception as exc:
+        except Exception:
             if out_tmp.is_file():
                 out_tmp.unlink()
             raise
     else:
+        from adapters.render_ffmpeg import build_command
+        ta = _get_timeline_artifact(session_dir)
+        ffmpeg_exe = getattr(cfg, "ffmpeg_exe", "ffmpeg") or "ffmpeg"
         def build_cmd(tmp):
-            make_recap_video(panels_json, tmp, cfg, force=True, dry_run=False)
-            return []  # make_recap_video runs synchronously
-        # Small project: render synchronously but with atomic output
-        make_recap_video(panels_json, out_tmp, cfg, force=True, dry_run=False)
+            return build_command(ta, tmp, ffmpeg_exe=ffmpeg_exe)
+        done = threading.Event()
+        res = {}
+        def on_done(ok, err):
+            res["ok"] = ok
+            res["err"] = err
+            done.set()
+        worker = RenderWorker(job.id, build_cmd, out_tmp, on_done=on_done)
+        worker.start()
+        try:
+            done.wait()
+        finally:
+            pass
+        if not res.get("ok"):
+            raise RuntimeError(res.get("err", "render failed"))
         if out_tmp.is_file():
             out_tmp.replace(out_mp4)
         else:
@@ -375,8 +369,9 @@ def _render_video(job: Job, **kwargs: Any) -> None:
 def _panel_validation(job: Job, **kwargs: Any) -> None:
     """Post-segmentation validation layer. Loads panels_validation.json
     (written by guided_cutter when validate=True), overlays user decisions
-    from review.json, logs stats, and attaches quality to panel dicts."""
-    from panel_validator import load_report, load_review, apply_decisions
+    from review.json, logs stats, and quarantines INVALID panels before
+    downstream stages."""
+    from panel_validator import apply_decisions, effective_ids, load_report, load_review
     session_dir = OUTPUT_DIR / job.config["session"]
     rep = load_report(session_dir)
     if rep is None:
@@ -392,14 +387,17 @@ def _panel_validation(job: Job, **kwargs: Any) -> None:
                      f"Duplicates: {stats['duplicates']}"),
             "panel_validation")
     job.outputs["validation"] = rep
-    # attach quality to the UI-facing panel dicts
-    by_id = {v["panel_id"]: v for v in rep["verdicts"]}
-    for p in job.panels:
-        v = by_id.get(p["id"])
-        if v:
-            p["quality"] = v["quality"]
-            p["quality_reasons"] = v["reasons"]
-            p["duplicate_of"] = v["duplicate_of"]
+    ordered_ids = [p["id"] for p in job.panels]
+    valid_ids = set(effective_ids(rep, ordered_ids))
+    before = len(job.panels)
+    job.panels = [p for p in job.panels if p["id"] in valid_ids]
+    job.config["order"] = [p["id"] for p in job.panels]
+    quarantined = before - len(job.panels)
+    if quarantined:
+        job.log("WARNING",
+                f"quarantined {quarantined} invalid/suspicious panels; "
+                f"remaining={len(job.panels)}",
+                "panel_validation")
 
 
 def _get_timeline_artifact(session_dir):

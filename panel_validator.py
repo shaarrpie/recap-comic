@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -77,15 +77,36 @@ class PanelReport:
         for pid in ordered_ids:
             v = by.get(pid)
             if v is None:
-                out.append(pid); continue
+                out.append(pid)
+                continue
             if v.user_decision == "delete":
                 continue
             if v.user_decision == "keep":
-                out.append(pid); continue
+                out.append(pid)
+                continue
             if v.quality == INVALID:
                 continue
             out.append(pid)
         return out
+
+
+def effective_ids(report_dict: dict, ordered_ids: list[str]) -> list[str]:
+    by = {v["panel_id"]: v for v in report_dict.get("verdicts", [])}
+    out = []
+    for pid in ordered_ids:
+        v = by.get(pid)
+        if v is None:
+            out.append(pid)
+            continue
+        if v.get("user_decision") == "delete":
+            continue
+        if v.get("user_decision") == "keep":
+            out.append(pid)
+            continue
+        if v.get("quality") == INVALID:
+            continue
+        out.append(pid)
+    return out
 
 
 def _region_metrics(gray: np.ndarray, y0: int, y1: int) -> dict[str, float]:
@@ -201,9 +222,12 @@ def validate_panels(gray: np.ndarray, panels: list, *,
         prev, prev_y = v, (y0, y1)
         report.verdicts.append(v)
     for v in report.verdicts:
-        if v.quality == NORMAL: report.accepted += 1
-        elif v.quality == SUSPICIOUS: report.suspicious += 1
-        else: report.rejected += 1
+        if v.quality == NORMAL:
+            report.accepted += 1
+        elif v.quality == SUSPICIOUS:
+            report.suspicious += 1
+        else:
+            report.rejected += 1
     log.info("[PANEL_VALIDATION] %s", report.stats_line())
     return report
 

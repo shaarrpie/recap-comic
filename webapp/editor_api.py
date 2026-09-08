@@ -17,10 +17,9 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from webapp.jobs import Job, JobStatus, store
-
 from adapters.editor import Editor, EditorProject
 from recap_video import VideoConfig, render_edited_project
+from webapp.jobs import JobStatus, store
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = BASE_DIR / "webapp_output"
@@ -79,10 +78,7 @@ def save_project(session: str, data: dict[str, Any]) -> dict[str, Any]:
 
 def _validate_session_path(session_dir: Path, path_str: str) -> None:
     p = Path(path_str)
-    if p.is_absolute():
-        resolved = p.resolve()
-    else:
-        resolved = (session_dir / p).resolve()
+    resolved = p.resolve() if p.is_absolute() else (session_dir / p).resolve()
     base = session_dir.resolve()
     if base not in resolved.parents and resolved != base:
         raise HTTPException(400, "path outside session directory")
@@ -157,7 +153,7 @@ def create_project_from_generation(session: str) -> dict[str, Any]:
     elif srt_path.is_file():
         captions = _parse_srt_captions(srt_path)
 
-    from adapters.editor import transitions_from_timeline, effects_from_timeline
+    from adapters.editor import effects_from_timeline, transitions_from_timeline
     transitions = transitions_from_timeline(original_timeline)
     effects = effects_from_timeline(original_timeline)
 
@@ -180,7 +176,7 @@ def _parse_srt_captions(path: Path) -> list[dict[str, Any]]:
     captions = []
     cid = 0
     for block in blocks:
-        lines = [l.strip() for l in block.splitlines() if l.strip()]
+        lines = [line.strip() for line in block.splitlines() if line.strip()]
         if len(lines) < 3:
             continue
         m = re.match(r"(\d+):(\d+):(\d+),(\d+)\s*-->\s*(\d+):(\d+):(\d+),(\d+)", lines[1])
@@ -329,21 +325,30 @@ def start_render(session: str, cfg: dict[str, Any]) -> dict[str, Any]:
 
 
 def update_narration(session: str, panel_id: str, text: str) -> dict[str, Any]:
-    """Update narration text for a single panel across panels.json, editor.json, and job store."""
+    """Update narration text for a single panel via the Narration Studio overlay.
+    Writes to narration_edit.json (never mutates panels.json)."""
     d = _session_dir(session)
-    panels_json = d / "panels.json"
-    if panels_json.is_file():
+    from .narration_api import _panels_source, _read_narr_edit, _write_narr_edit
+    edit = _read_narr_edit(session)
+    src = _panels_source(session)
+    original = None
+    if src.is_file():
         try:
-            from guided_cutter import CutArtifact
-            artifact = CutArtifact.model_validate_json(panels_json.read_text("utf-8"))
-            for p in artifact.panels:
-                if p.id == panel_id:
-                    p.narration = text
-                    break
-            panels_json.write_text(artifact.model_dump_json(indent=2) + "\n", "utf-8")
-        except Exception as exc:
-            log.warning("narration update panels.json failed session=%s panel=%s err=%s",
-                        session, panel_id, exc)
+            data = json.loads(src.read_text("utf-8"))
+            original = next((p.get("narration", "")
+                             for p in data.get("panels", [])
+                             if p.get("id") == panel_id), None)
+        except Exception:
+            pass
+    if not (text or "").strip():
+        edit.get("overrides", {}).pop(panel_id, None)
+    else:
+        edit.setdefault("overrides", {})[panel_id] = {
+            "text": text,
+            "original": original,
+            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+    _write_narr_edit(session, edit)
 
     editor_path = d / "editor.json"
     if editor_path.is_file():
@@ -378,7 +383,7 @@ def get_ai_review_data(session: str) -> dict[str, Any]:
         from guided_cutter import CutArtifact
         artifact = CutArtifact.model_validate_json(panels_json.read_text("utf-8"))
     except Exception:
-        raise HTTPException(500, "cannot read panels.json")
+        raise HTTPException(500, "cannot read panels.json") from None
     flagged = []
     for p in artifact.panels:
         conf = getattr(p, "confidence", 1.0) or 1.0
@@ -405,7 +410,7 @@ def get_panel_confidence(session: str) -> dict[str, Any]:
         from guided_cutter import CutArtifact
         artifact = CutArtifact.model_validate_json(panels_json.read_text("utf-8"))
     except Exception:
-        raise HTTPException(500, "cannot read panels.json")
+        raise HTTPException(500, "cannot read panels.json") from None
     panels = []
     for p in artifact.panels:
         conf = getattr(p, "confidence", 1.0) or 1.0
