@@ -291,7 +291,8 @@ def run_guided(
         used_fallback = True
         log.warning("using gutter-detector fallback (no AI narration)")
 
-    assert plan is not None
+    if plan is None:
+        raise RuntimeError("internal: plan is None after fallback resolution")
     if dry_run:
         log.info("dry_run returning plan panels=%d", len(plan.entries))
         return plan, None, used_fallback

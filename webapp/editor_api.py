@@ -93,15 +93,54 @@ def create_project_from_generation(session: str) -> dict[str, Any]:
     narration_json = d / "narration.json"
     audio_json = d / "audio.json"
 
-    if not panels_json.is_file():
-        raise FileNotFoundError("missing panels.json; run generation first")
-
     from adapters.schemas import TimelineArtifact
     from guided_cutter import CutArtifact
     from recap_video import VideoConfig
 
     cfg = VideoConfig()
-    artifact = CutArtifact.model_validate_json(panels_json.read_text("utf-8"))
+
+    # Stale-session auto-repair: an interrupted re-run can leave the session
+    # without panels.json (guided_cut's force cleanup deletes it up front)
+    # or with a panels.json whose PNGs were wiped. Both states are fully
+    # recoverable OFFLINE from plan.json + the stored strip (no AI, no
+    # quota); re-cut and continue. Only when the strip/plan are gone too do
+    # we give up with an actionable error.
+    strip = next((d / n for n in ("strip.png", "strip.webp", "strip.jpg")
+                  if (d / n).is_file()), None)
+    plan_file = d / "plan.json"
+
+    def _try_recut(reason: str) -> CutArtifact | None:
+        if strip is None or not plan_file.is_file():
+            return None
+        log.warning("session %s: %s; re-cutting offline from plan.json "
+                    "(no AI call)", session, reason)
+        from guided_cutter import CutterConfig, guided_cut
+        from strip_analyzer import PanelPlan
+        plan = PanelPlan.model_validate_json(plan_file.read_text("utf-8"))
+        return guided_cut(strip, plan, d, config=CutterConfig(), force=True)
+
+    if not panels_json.is_file():
+        artifact = _try_recut("panels.json is missing but PNGs exist")
+        if artifact is None:
+            raise FileNotFoundError(
+                "missing panels.json and no strip/plan.json to re-cut from; "
+                "run generation first")
+    else:
+        artifact = CutArtifact.model_validate_json(panels_json.read_text("utf-8"))
+        on_disk = sum(1 for p in artifact.panels
+                      if (d / p.image_file).is_file())
+        if on_disk == 0:
+            artifact = _try_recut(
+                f"panels.json lists {len(artifact.panels)} panels but none "
+                "of their images are on disk") or artifact
+            on_disk = sum(1 for p in artifact.panels
+                          if (d / p.image_file).is_file())
+            if on_disk == 0:
+                raise FileNotFoundError(
+                    f"panels.json lists {len(artifact.panels)} panels but "
+                    "none of their images exist and the session could not "
+                    "be auto-repaired (missing strip/plan.json); re-run "
+                    "generation for this session")
 
     # Prefer existing timeline.json; rebuild only if missing/invalid.
     original_timeline = None

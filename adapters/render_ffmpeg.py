@@ -38,47 +38,6 @@ class RenderError(RuntimeError):
         super().__init__(f"ffmpeg failed (last stderr lines):\n{stderr_tail}")
 
 
-def build_command(timeline: TimelineArtifact, out_path: Path,
-                  ffmpeg_exe: str = "ffmpeg") -> list[str]:
-    """Build the FULL command. All chains go into ONE -filter_complex:
-    repeating -filter_complex would create separate graphs whose labels are
-    not visible to the concat graph (observed as a hang/garbage output)."""
-    cmd: list[str] = [ffmpeg_exe, "-y", "-nostdin"]
-    chains: list[str] = []
-    vlabels: list[str] = []
-    alabels: list[str] = []
-    for i, e in enumerate(timeline.entries):
-        dur = f"{e.duration_seconds:.3f}"
-        cmd += ["-loop", "1", "-t", dur, "-i", e.source_image]
-        if e.audio_path:
-            cmd += ["-i", e.audio_path]
-        else:  # silent panel: explicit silence, same length
-            cmd += ["-f", "lavfi", "-t", dur,
-                    "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
-        sw, sh = e.pan.scaled_w, e.pan.scaled_h
-        crop = {  # verified: 't' is a valid crop x/y expression variable
-            "pan_down": f"crop={WIDTH}:{HEIGHT}:x=0:y='(ih-{HEIGHT})*t/{e.duration_seconds:.3f}'",
-            "pan_right": f"crop={WIDTH}:{HEIGHT}:x='(iw-{WIDTH})*t/{e.duration_seconds:.3f}':y=0",
-            "static": f"crop={WIDTH}:{HEIGHT}:x=0:y=0",
-        }[e.pan.kind]
-        chains.append(
-            f"[{2*i}:v]scale={sw}:{sh},{crop},setsar=1,fps={timeline.fps}[v{i}];"
-            f"[{2*i+1}:a]aresample=48000,aformat=channel_layouts=stereo,"
-            f"apad=whole_dur={dur}[a{i}]")
-        vlabels.append(f"[v{i}]")
-        alabels.append(f"[a{i}]")
-    n = len(timeline.entries)
-    chains.append(f"{''.join(vlabels)}concat=n={n}:v=1:a=0[vcat];"
-                  f"{''.join(alabels)}concat=n={n}:v=0:a=1[acat]")
-    if any(e.audio_path for e in timeline.entries):
-        # loudnorm cannot normalize pure silence (EBU integrated loudness of
-        # silence is -inf); only apply when at least one entry has audio.
-        chains.append("[acat]loudnorm=I=-16:TP=-1.5:LRA=11,"
-                      "aresample=48000[aout]")
-        alabel_out = "[aout]"
-    else:
-        chains.append("[acat]aresample=48000[aout]")
-        alabel_out = "[aout]"
 def _scale_crop(kind: str, sw: int, sh: int, dur: float, t: str = "t") -> str:
     """Build the scale+crop filter segment for one panel.
 
@@ -199,6 +158,10 @@ def _build_xfade_command(cmd: list[str], timeline: TimelineArtifact,
                          out_path: Path) -> list[str]:
     chains: list[str] = []
     n = len(timeline.entries)
+    # xfade needs exactly n-1 transitions (one per panel boundary).
+    if len(transitions) != max(0, n - 1):
+        raise RenderError(
+            cmd, f"xfade needs {max(0, n - 1)} transitions, got {len(transitions)}")
     fade_dur = max((tr.get("duration", 0.5) for tr in transitions), default=0.5)
 
     # build video xfade chain
@@ -274,8 +237,21 @@ def build_command_chunked(timeline: TimelineArtifact, out_path: Path,
             entries=entries[i:i + chunk_size])
         seg = tmp / f"seg_{i:03d}.ts"
         cmd = build_command(part, seg, ffmpeg_exe)
-        # swap mp4 container flags for mpegts + profile limits
-        cmd = [a for a in cmd if a not in ("-movflags", "+faststart")]
+        # swap mp4 container flags for mpegts + profile limits: drop BOTH the
+        # -movflags flag and its +faststart value so neither is left orphan.
+        cleaned: list[str] = []
+        skip_next = False
+        for a in cmd:
+            if skip_next:
+                skip_next = False
+                continue
+            if a == "-movflags":
+                skip_next = True
+                continue
+            if a == "+faststart":
+                continue
+            cleaned.append(a)
+        cmd = cleaned
         if "-threads" not in cmd:
             cmd += ["-threads", prof.get("threads", "4")]
         segs.append((cmd, seg))
@@ -337,18 +313,27 @@ def render_draft(timeline: TimelineArtifact, out_path: Path,
         min_display_seconds=timeline.min_display_seconds,
         entries=timeline.entries)
     cmd = build_command(draft_timeline, out_path, ffmpeg_exe)
-    # override with draft-friendly settings
-    cmd = [a for a in cmd if a not in ("-preset", "-crf", "-r")]
+    # Drop -preset/-crf/-r TOGETHER with their values; -r is replaced below
+    # with 24, and -preset/-crf are re-inserted with draft settings.
+    cleaned: list[str] = []
+    skip_next = False
+    for a in cmd:
+        if skip_next:
+            skip_next = False
+            continue
+        if a in ("-preset", "-crf", "-r"):
+            skip_next = True
+            continue
+        cleaned.append(a)
+    cmd = cleaned
     # insert draft settings after -c:v libx264
-    new_cmd = []
+    new_cmd: list[str] = []
     for a in cmd:
         new_cmd.append(a)
         if a == "libx264":
             new_cmd += ["-preset", "ultrafast", "-crf", "28"]
-        if a == "-pix_fmt":
-            pass  # keep
-    # replace fps
-    new_cmd = ["24" if a == str(timeline.fps) else a for a in new_cmd]
+    # Append explicit -r 24 for the draft (the original -r was stripped above)
+    new_cmd += ["-r", "24"]
     proc = subprocess.run(new_cmd, capture_output=True, text=True,
                           timeout=timeout, shell=False, check=False)
     if proc.returncode != 0:

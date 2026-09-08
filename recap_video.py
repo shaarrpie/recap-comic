@@ -413,6 +413,7 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
     by_text = {n.id: n for n in narration.entries}
     entries: list[TimelineEntry] = []
     t = 0.0
+    skipped_missing = 0
     for order, p in enumerate(sorted(artifact.panels,
                                      key=lambda p: p.y_start), start=1):
         h = p.y_end - p.y_start
@@ -421,8 +422,17 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
             continue
         img = (panels_dir / p.image_file).resolve()
         if not img.is_file():
-            raise VideoError(f"panel image missing: {img} "
-                             "(re-run 'guided cut' or 'guided run')")
+            # panels.json can reference panels whose PNG was skipped during
+            # the cut (too thin / zero-range / etc.) or that belong to a
+            # previous run that was cleaned up. Skipping keeps the rest of
+            # the timeline usable instead of failing the whole render.
+            log.warning(
+                "skipping panel %s: image file missing at %s "
+                "(panels.json references it but the PNG was not produced; "
+                "re-run 'guided cut' / 'guided run' to regenerate)",
+                p.id, img)
+            skipped_missing += 1
+            continue
         pan = compute_pan(artifact.width, h)
         a = by_audio.get(p.id)
         text = by_text[p.id].text if p.id in by_text else ""
@@ -586,9 +596,32 @@ def make_recap_video(panels_json: Path, out_path: Path,
                   narration.model_dump_json(indent=2) + "\n")
     spoken = sum(1 for e in narration.entries if e.text.strip())
     if spoken == 0:
-        log.warning("no narration in panels.json (fallback plan?) — the "
-                    "video will be silent; consider re-running 'guided run' "
-                    "with an AI backend")
+        # Distinguish "AI was never asked" from "AI was rate-limited" so the
+        # user knows whether re-running with --backend <other> would help.
+        # We detect a fallback plan by looking for provenance == 'fallback'
+        # in the most recent plan.json next to panels.json.
+        prov = "unknown"
+        plan_json = work / "plan.json"
+        if plan_json.is_file():
+            try:
+                import json as _json
+                prov = _json.loads(plan_json.read_text("utf-8")).get(
+                    "provenance", "unknown")
+            except Exception:  # noqa: BLE001 - best-effort provenance probe
+                pass
+        if prov == "fallback":
+            log.warning(
+                "no narration in panels.json (provenance=fallback — the AI "
+                "pre-read was skipped, returned no plan, or hit a quota / "
+                "rate-limit). The video will be silent. To fix: re-run "
+                "'guided run' once your API quota resets, OR pass "
+                "--tts none to skip TTS entirely, OR populate "
+                "narration.json by hand.")
+        else:
+            log.warning(
+                "no narration in panels.json (provenance=%s). The video will "
+                "be silent; consider re-running 'guided run' with an AI "
+                "backend (gemini/openai/anthropic/ollama).", prov)
 
     # 2. audio
     audio = synthesize_audio(narration, audio_dir, cfg, force=force)

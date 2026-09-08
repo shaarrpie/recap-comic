@@ -152,14 +152,22 @@ def test_timeline_uses_measured_audio(cut_dir):
     assert tl.entries[1].duration_seconds == pytest.approx(2940 / 450, abs=1e-3)
 
 
-def test_missing_panel_image_is_an_error(cut_dir):
+def test_missing_panel_image_is_skipped_not_an_error(cut_dir):
+    """A panel whose PNG is missing must be SKIPPED (with a warning) instead
+    of raising, so that one missing file (e.g. a stale panels.json from a
+    previous run, or a panel cut that was dropped as too thin) does not kill
+    the whole timeline build."""
     d, art = cut_dir
+    assert len(art.panels) >= 2, "fixture must have at least 2 panels"
     (d / "panel_002.png").unlink()
     cfg = rv.VideoConfig(tts="none")
     nar = rv.build_narration(art, cfg, panels_hash="h")
     aud = rv.synthesize_audio(nar, d / "audio", cfg)
-    with pytest.raises(rv.VideoError, match="panel image missing"):
-        rv.build_timeline(art, d, nar, aud, d / "audio", cfg, panels_hash="h")
+    tl = rv.build_timeline(art, d, nar, aud, d / "audio", cfg, panels_hash="h")
+    # Only the present panel (001) is in the timeline; 002 was skipped.
+    panel_ids = [e.panel_id for e in tl.entries]
+    assert "002" not in panel_ids
+    assert any(pid.endswith("001") for pid in panel_ids)
 
 
 # --------------------------------------------------------------------- srt --

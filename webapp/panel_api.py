@@ -83,6 +83,19 @@ def _all_panels(session: str, edit: dict) -> dict:
     return by_id
 
 
+def _panel_image_exists(panel: dict, session_root: Path) -> bool:
+    """True iff `panel['image_file']` resolves to a real file on disk.
+
+    Used to filter out panels whose PNG was dropped by the cutter (e.g. a
+    piece that was too thin and skipped during guided_cut). Returning True
+    for panels with no image_file (custom panels) keeps them visible.
+    """
+    name = panel.get("image_file")
+    if not name:
+        return True
+    return (session_root / name).is_file()
+
+
 def get_panels(session: str) -> dict:
     """AI panels merged with the edit layer -> user-facing review list."""
     panels = _read_panels_json(session)
@@ -93,10 +106,17 @@ def get_panels(session: str) -> dict:
     order = edit.get("order", [])
     review = edit.get("review", {})
     by_id = _all_panels(session, edit)
+    session_root = _session_dir(session)
 
-    base_ids = [p["id"] for p in sorted(panels, key=lambda p: (p.get("y_start", 0), p.get("panel_index", 0)))]
+    # Filter out AI panels whose PNG was never produced (too thin, zero-range,
+    # or otherwise dropped by the cutter). The front-end would otherwise issue
+    # a /files/.../panel_XXX.png request for every entry in panels.json and
+    # flood the log with 404s. Custom panels are kept unconditionally — they
+    # are user-owned and have no on-disk prerequisite.
+    base_ids = [p["id"] for p in sorted(panels, key=lambda p: (p.get("y_start", 0), p.get("panel_index", 0)))
+                if _panel_image_exists(p, session_root) or not p.get("image_file")]
     custom_ids = [c["id"] for c in edit.get("custom", [])]
-    ordered = ([i for i in order if i in by_id]
+    ordered = ([i for i in order if i in by_id and i in (set(base_ids) | set(custom_ids))]
                + [i for i in base_ids + custom_ids if i not in order])
 
     active = [i for i in ordered if i not in deleted]

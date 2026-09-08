@@ -292,15 +292,26 @@ def _split_panel(gray: np.ndarray, panel: CutPanel,
             min_gutter_run=config.min_gutter_run,
             blur_sigma=config.blur_sigma,
             variances=variances, edge_density=edge_density)
+        # BALANCED-split guard: both pieces must be a reasonable fraction of
+        # the parent, otherwise a gutter found near an edge produces a tiny
+        # sliver + an almost-unchanged oversized remainder, and the recursion
+        # degenerates into dozens of lopsided slivers (panel_027babababbaa
+        # style). Require each side to be at least min_piece tall AND at
+        # least 25% of the parent so splits stay balanced; if no gutter
+        # satisfies this, fall back to the exact midpoint.
         min_piece = 50
-        if row is not None and (row <= y0 + min_piece or row >= y1 - min_piece):
-            log.debug("split row %d too close to edge for %s; falling back to midpoint",
-                      row, frag_id)
+        quarter = (y1 - y0) // 4
+        min_side = max(min_piece, quarter)
+        if row is not None and not (y0 + min_side <= row <= y1 - min_side):
+            log.debug("split row %d too close to edge for %s (need [%d,%d]); "
+                      "falling back to midpoint",
+                      row, frag_id, y0 + min_side, y1 - min_side)
             row = None
         if row is None or row <= y0 or row >= y1:
             for scan in range(1, (y1 - y0) // 4 + 1):
                 for candidate in [(mid - scan), (mid + scan)]:
-                    if y0 < candidate < y1 and candidate not in forbidden:
+                    if y0 + min_side <= candidate <= y1 - min_side \
+                            and candidate not in forbidden:
                         row = candidate
                         log.warning("no usable gutter inside panel %s; "
                                     "using nearby non-forbidden row %d",
@@ -491,7 +502,7 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
     # Post-segmentation validation layer (advisory; never deletes).
     if validate:
         try:
-            from panel_validator import validate_panels, save_report
+            from panel_validator import save_report, validate_panels
             vreport = validate_panels(
                 gray_arr, cuts,
                 ai_confidences={c.id: c.confidence for c in cuts})

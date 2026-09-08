@@ -269,6 +269,7 @@ def _normalize_bbox(raw: object) -> BBox:
 
 
 def parse_entries_from_json(text: str, chunk_height: int, *,
+                            chunk_width: int | None = None,
                             normalized: bool = True
                             ) -> tuple[list[PanelPlanEntry], list[str]]:
     """Strict parse + validation of one chunk's model output.
@@ -294,6 +295,7 @@ def parse_entries_from_json(text: str, chunk_height: int, *,
 
     max_unit = 1000 if normalized else chunk_height
     scale = chunk_height / 1000.0 if normalized else 1.0
+    cw = chunk_width if chunk_width is not None else chunk_height
     entries: list[PanelPlanEntry] = []
     for raw in panels:
         if not isinstance(raw, dict):
@@ -320,7 +322,7 @@ def parse_entries_from_json(text: str, chunk_height: int, *,
             "y_start": min(chunk_height, round(entry.y_start * scale)),
             "y_end": min(chunk_height, round(entry.y_end * scale)),
             "bubble_boxes": [
-                BBox(x=min(chunk_height, round(b.x * scale)),
+                BBox(x=min(cw, round(b.x * scale)),
                      y=min(chunk_height, round(b.y * scale)),
                      w=round(b.w * scale),
                      h=round(b.h * scale))
@@ -421,6 +423,17 @@ def _parse_retry_delay(exc: Exception) -> float | None:
     return None
 
 
+def _backend_accepts_feedback(backend: VisionBackend) -> bool:
+    """True when backend.analyze_chunk accepts a retry_feedback kwarg."""
+    import inspect
+    try:
+        sig = inspect.signature(backend.analyze_chunk)
+    except (TypeError, ValueError):
+        return False
+    return any(p.kind == inspect.Parameter.VAR_KEYWORD
+               or p.name == "retry_feedback" for p in sig.parameters.values())
+
+
 def _call_with_retry(
     backend: VisionBackend,
     image: Image.Image,
@@ -428,12 +441,38 @@ def _call_with_retry(
     previous_context: str = "",
 ) -> tuple[list[PanelPlanEntry], list[str]]:
     last: Exception | None = None
+    retry_feedback = ""  # parse/validation error fed back to the model
+    supports_feedback = _backend_accepts_feedback(backend)
     for attempt in range(1, attempts + 1):
         try:
-            return backend.analyze_chunk(
-                image, previous_context=previous_context)
+            kwargs: dict[str, object] = {"previous_context": previous_context}
+            if retry_feedback and attempt > 1 and supports_feedback:
+                kwargs["retry_feedback"] = retry_feedback
+            return backend.analyze_chunk(image, **kwargs)
         except Exception as exc:  # noqa: BLE001 - retried, then re-raised
             last = exc
+            msg = str(exc).lower()
+            is_quota = (
+                "429" in msg
+                or "resource_exhausted" in msg
+                or "rate_limit" in msg
+            )
+            # Quota exhaustion: don't waste 60s sleeping per attempt — surface
+            # the error immediately so the gutter-detector fallback can take
+            # over and the user sees a clear message instead of a 3-attempt
+            # stall that still fails.
+            if is_quota and attempt < attempts:
+                retry_delay = _parse_retry_delay(exc) or 0
+                log.warning(
+                    "chunk analysis attempt %d/%d hit a quota/rate-limit "
+                    "(%s); not retrying on the same key — failing fast so "
+                    "the fallback can take over (retry-after ~%.0fs)",
+                    attempt, attempts, exc, retry_delay)
+                raise
+            # Feed parse/validation errors back to the model on the next
+            # attempt (temperature=0 means an identical prompt will produce
+            # an identical bad answer; the feedback is what changes it).
+            retry_feedback = str(exc)
             retry_delay = _parse_retry_delay(exc)
             if retry_delay is not None and attempt < attempts:
                 log.warning("chunk analysis attempt %d/%d failed: %s; retrying in %.1fs",
@@ -443,8 +482,9 @@ def _call_with_retry(
             log.warning("chunk analysis attempt %d/%d failed: %s",
                         attempt, attempts, exc)
             time.sleep(attempt)
-    assert last is not None
-    raise last
+    if last is not None:
+        raise last
+    raise RuntimeError("chunk analysis failed with no recorded exception")
 
 
 def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
@@ -574,6 +614,9 @@ class VisionBackend(Protocol):
     previous_context="") -> (entries, characters)` in CHUNK-PIXEL
     coordinates. `characters` is the list of character names the model
     positively identified in this chunk (for cross-chunk continuity).
+    `retry_feedback` (optional) carries the parse/validation error from
+    the previous attempt so backends can append it to the prompt — with
+    temperature=0 an identical prompt would repeat the same bad output.
     Backends may also fill `usage_log` / `last_usage` (best-effort token
     counts) — the smoke test reads them if present.
     """
@@ -583,6 +626,7 @@ class VisionBackend(Protocol):
         self,
         image: Image.Image,
         previous_context: str = "",
+        retry_feedback: str = "",
     ) -> tuple[list[PanelPlanEntry], list[str]]:
         """Return (entries, characters), both for this image only."""
         ...
@@ -599,10 +643,13 @@ class FixtureVisionBackend:
         self.calls = 0
 
     def analyze_chunk(self, image: Image.Image,
-                      previous_context: str = ""
+                      previous_context: str = "",
+                      retry_feedback: str = ""
                       ) -> tuple[list[PanelPlanEntry], list[str]]:
         self.calls += 1
-        log.debug("fixture backend call=%d image=%dx%d", self.calls, image.width, image.height)
+        log.debug("fixture backend call=%d image=%dx%d feedback=%r",
+                  self.calls, image.width, image.height,
+                  bool(retry_feedback))
         if not self._plans:
             return [], []
         return self._plans.pop(0), []
@@ -654,13 +701,16 @@ def _capture_usage(resp: object) -> dict | None:
     return out or None
 
 
-def _chunk_prompt(height: int, previous_context: str = "") -> str:
+def _chunk_prompt(height: int, previous_context: str = "",
+                  retry_feedback: str = "") -> str:
     """Strict per-chunk dissection instructions (the prompt template).
 
     Coordinates are NORMALIZED: y_start/y_end and bubble-box corners are
     integers in 0..1000 proportional to THIS image's height (top = 0,
     bottom = 1000), never raw pixels. Optionally includes compact narrative
     context from earlier chunks so narration stays coherent across the strip.
+    `retry_feedback` carries the parse/validation error from the previous
+    attempt so the model can correct its output format.
     """
     context_block = ""
     if previous_context.strip():
@@ -669,6 +719,14 @@ def _chunk_prompt(height: int, previous_context: str = "") -> str:
             f"{previous_context.strip()}\n"
             "Use it ONLY for continuity of narration and character identity. "
             "Do NOT repeat, re-narrate, or borrow panels from it.\n"
+        )
+    feedback_block = ""
+    if retry_feedback.strip():
+        feedback_block = (
+            "\nYOUR PREVIOUS ATTEMPT FAILED with this error:\n"
+            f"{retry_feedback.strip()[:500]}\n"
+            "Return STRICT JSON matching the exact shape below. Fix the "
+            "reported problem and output nothing else.\n"
         )
     return (
         "OUTPUT CONTRACT: respond with ONE JSON object ONLY. "
@@ -684,7 +742,7 @@ def _chunk_prompt(height: int, previous_context: str = "") -> str:
         "For example, a panel occupying the top quarter of the image is "
         "y_start=0, y_end=250; a bubble around the vertical middle is "
         "bubble_boxes: [[420, 480, 580, 540]]."
-        f"{context_block}\n\n"
+        f"{context_block}{feedback_block}\n\n"
         "Return STRICT JSON only. Every entry is exactly one logical panel. "
         "The JSON must match this exact shape:\n\n"
         '{"panels": [{"panel_index": 1, "y_start": 120, "y_end": 520, '
@@ -770,14 +828,16 @@ class GeminiVisionBackend:
             ) from exc
 
     def analyze_chunk(self, image: Image.Image,
-                      previous_context: str = ""
+                      previous_context: str = "",
+                      retry_feedback: str = ""
                       ) -> tuple[list[PanelPlanEntry], list[str]]:
         from google import genai  # optional dependency, imported lazily
         from google.genai import types
 
         buf = io.BytesIO()
         image.save(buf, format="PNG")
-        prompt = _chunk_prompt(image.size[1], previous_context)
+        prompt = _chunk_prompt(image.size[1], previous_context,
+                               retry_feedback=retry_feedback)
         log.info("gemini request start model=%s image=%dx%d prompt_len=%d keys=%d",
                  self.model, image.width, image.height, len(prompt),
                  self._rotator.total)
@@ -811,7 +871,8 @@ class GeminiVisionBackend:
                 self.usage_log.append(self.last_usage or {})
                 log.info("gemini request complete duration=%.2fs response_len=%d usage=%s",
                          elapsed, len(raw), sanitize(self.last_usage))
-                return parse_entries_from_json(raw, image.size[1])
+                return parse_entries_from_json(raw, image.size[1],
+                                              chunk_width=image.size[0])
             except Exception as exc:  # noqa: BLE001 - retry on quota/transient
                 last_exc = exc
                 msg = str(exc).lower()
@@ -852,7 +913,8 @@ class OpenAIVisionBackend:
         self.last_usage: dict | None = None
 
     def analyze_chunk(self, image: Image.Image,
-                      previous_context: str = ""
+                      previous_context: str = "",
+                      retry_feedback: str = ""
                       ) -> tuple[list[PanelPlanEntry], list[str]]:
         import base64
 
@@ -862,7 +924,8 @@ class OpenAIVisionBackend:
         image.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         client = openai.OpenAI(api_key=self._api_key)
-        prompt = _chunk_prompt(image.size[1], previous_context)
+        prompt = _chunk_prompt(image.size[1], previous_context,
+                               retry_feedback=retry_feedback)
         resp = client.chat.completions.create(
             model=self.model,
             max_tokens=4096,
@@ -880,7 +943,8 @@ class OpenAIVisionBackend:
             raw_text = ""
         self.last_usage = _capture_usage(resp)
         self.usage_log.append(self.last_usage or {})
-        return parse_entries_from_json(raw_text, image.size[1])
+        return parse_entries_from_json(raw_text, image.size[1],
+                                      chunk_width=image.size[0])
 
 class AnthropicVisionBackend:
     """Anthropic backend. Verified in this session (anthropic==1.4.0):
@@ -903,7 +967,8 @@ class AnthropicVisionBackend:
         self.last_usage: dict | None = None
 
     def analyze_chunk(self, image: Image.Image,
-                      previous_context: str = ""
+                      previous_context: str = "",
+                      retry_feedback: str = ""
                       ) -> tuple[list[PanelPlanEntry], list[str]]:
         import base64
 
@@ -913,7 +978,8 @@ class AnthropicVisionBackend:
         image.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         client = anthropic.Anthropic(api_key=self._api_key)
-        prompt = _chunk_prompt(image.size[1], previous_context)
+        prompt = _chunk_prompt(image.size[1], previous_context,
+                               retry_feedback=retry_feedback)
         resp = client.messages.create(
             model=self.model,
             max_tokens=4096,
@@ -934,7 +1000,8 @@ class AnthropicVisionBackend:
             for block in resp.content)
         self.last_usage = _capture_usage(resp)
         self.usage_log.append(self.last_usage or {})
-        return parse_entries_from_json(text, image.size[1])
+        return parse_entries_from_json(text, image.size[1],
+                                      chunk_width=image.size[0])
 
 
 class OllamaVisionBackend:
@@ -972,11 +1039,13 @@ class OllamaVisionBackend:
                 "stream": False, "format": "json"}
 
     def analyze_chunk(self, image: Image.Image,
-                      previous_context: str = ""
+                      previous_context: str = "",
+                      retry_feedback: str = ""
                       ) -> tuple[list[PanelPlanEntry], list[str]]:
         import urllib.request
 
-        prompt = _chunk_prompt(image.size[1], previous_context)
+        prompt = _chunk_prompt(image.size[1], previous_context,
+                               retry_feedback=retry_feedback)
         payload = self._build_payload(image, prompt)
         req = urllib.request.Request(
             f"{self.base_url}/api/generate",
@@ -987,7 +1056,8 @@ class OllamaVisionBackend:
         text = data.get("response", "")
         self.last_usage = _capture_usage(data)
         self.usage_log.append(self.last_usage or {})
-        return parse_entries_from_json(text, image.size[1])
+        return parse_entries_from_json(text, image.size[1],
+                                      chunk_width=image.size[0])
 
 
 class CloudflareWorkersAIBackend:
@@ -1047,7 +1117,8 @@ class CloudflareWorkersAIBackend:
             raise
 
     def analyze_chunk(self, image: Image.Image,
-                      previous_context: str = ""
+                      previous_context: str = "",
+                      retry_feedback: str = ""
                       ) -> tuple[list[PanelPlanEntry], list[str]]:
         import base64
 
@@ -1065,7 +1136,7 @@ class CloudflareWorkersAIBackend:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
-        last_err = ""
+        last_err = retry_feedback  # seed with the outer retry loop's error
         for attempt in range(1, 4):
             prompt = _chunk_prompt(image.size[1], previous_context)
             if last_err:
@@ -1134,7 +1205,8 @@ class CloudflareWorkersAIBackend:
                     text = json.dumps(text) if isinstance(text, dict) else str(text)
                 usage_src = result
             try:
-                entries, new_chars = parse_entries_from_json(text, image.size[1])
+                entries, new_chars = parse_entries_from_json(
+                    text, image.size[1], chunk_width=image.size[0])
                 self.last_usage = _capture_usage(usage_src)
                 self.usage_log.append(self.last_usage or {})
                 return entries, new_chars

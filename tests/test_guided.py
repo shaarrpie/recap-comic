@@ -628,9 +628,43 @@ def test_parse_retry_delay_missing() -> None:
     assert sa._parse_retry_delay(exc) is None
 
 
+def test_call_with_retry_fails_fast_on_quota(monkeypatch: pytest.MonkeyPatch,
+                                             tmp_path: Path) -> None:
+    """On a 429 RESOURCE_EXHAUSTED, _call_with_retry must fail-fast (no
+    wasted retry sleeps) so the gutter-detector fallback can take over
+    immediately instead of stalling for minutes.
+    """
+    import strip_analyzer as sa
+
+    sleeps: list[float] = []
+
+    class QuotaBackend:
+        def analyze_chunk(self, image, previous_context=""):
+            raise ValueError(
+                '{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", '
+                '"details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", '
+                '"retryDelay": "2s"}]}}'
+            )
+
+    def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(sa.time, "sleep", fake_sleep)
+
+    strip = tmp_path / "strip.png"
+    make_strip(1200).save(strip)
+    with pytest.raises(sa.VisionAnalysisError):
+        sa.analyze_strip(strip, QuotaBackend(), chunk_height=2000, overlap=0,
+                         attempts=3)
+
+    # No retry sleeps allowed for 429: fail-fast on the first attempt.
+    assert sleeps == []
+
+
 def test_call_with_retry_sleeps_for_retry_delay(monkeypatch: pytest.MonkeyPatch,
                                                  tmp_path: Path) -> None:
-    """_call_with_retry should sleep for the server-suggested retry delay."""
+    """_call_with_retry should sleep for the server-suggested retry delay
+    on a transient (non-quota) error."""
     import strip_analyzer as sa
 
     sleeps: list[float] = []
@@ -638,7 +672,7 @@ def test_call_with_retry_sleeps_for_retry_delay(monkeypatch: pytest.MonkeyPatch,
     class FlakyBackend:
         def analyze_chunk(self, image, previous_context=""):
             raise ValueError(
-                '{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", '
+                '{"error": {"code": 503, "status": "UNAVAILABLE", '
                 '"details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", '
                 '"retryDelay": "2s"}]}}'
             )
