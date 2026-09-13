@@ -21,6 +21,14 @@ Cutting rules (in priority order):
 
 Output: one PNG per panel under out_dir plus a panels.json sidecar mapping
 every file to its narration, dialogue, original Y range, type, confidence.
+
+Output-size policy (backward compatible): panel PNGs are normalized to
+exactly 390px wide with height clamped to [760, 800]px via
+normalize_panel_image() (aspect-preserving resize, then deterministic
+center-crop / center-pad). Source geometry (y_start/y_end, artifact
+width/height) and the full-resolution source crop are never altered;
+only the PNG bytes written to disk are normalized. Set
+CutterConfig(normalize_output=False) to restore legacy full-res crops.
 """
 from __future__ import annotations
 
@@ -36,6 +44,18 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from strip_analyzer import PanelPlan, PanelPlanEntry
+
+try:
+    from blank_detector import (
+        BLANK,
+        BlankDetectorConfig,
+        BlankRegion,
+        detect_blank_regions,
+        score_crop,
+    )
+    _HAS_BLANK_DETECTOR = True
+except ImportError:  # pragma: no cover - blank_detector ships with the project
+    _HAS_BLANK_DETECTOR = False
 
 log = logging.getLogger(__name__)
 
@@ -66,6 +86,36 @@ class CutterConfig:
     use_edge_density: bool = True  # require gutters to be low on BOTH variance+edge
     min_gutter_run: int = 4       # minimum consecutive low-variance rows
     blur_sigma: float = 0.5       # pre-blur to tolerate JPEG noise
+    # Output PNG normalization. Source coordinates and source crops remain
+    # full resolution; this only controls the panel image written to disk.
+    # Policy: every panel PNG is exactly `output_width` px wide with its
+    # height clamped to [min_output_height, max_output_height]. The source
+    # crop is first resized to `output_width` (aspect-preserving, LANCZOS),
+    # then center-cropped (if taller than max) or center-padded with black
+    # (if shorter than min). Source geometry (y_start/y_end, artifact
+    # width/height) is never altered by this step.
+    output_width: int = 390
+    min_output_height: int = 760
+    max_output_height: int = 800
+    normalize_output: bool = True  # False restores legacy full-res crops
+    # Structure-first mode (fallback-provenance plans): a boundary is never
+    # dropped just because no strict gutter run exists between two entries.
+    # AI plans keep merge-on-continuous-art; valley/fallback plans keep every
+    # detected boundary (colored/gradient gutters fail the strict run test).
+    preserve_boundaries: bool = False
+    # --- deterministic blank-region removal (NO AI) --------------------
+    blank_detection: bool = True   # run the blank-region detector at all
+    blank_preset: str = "conservative"  # low | conservative | high
+
+    def __post_init__(self) -> None:
+        if self.output_width <= 0:
+            raise ValueError("output_width must be positive")
+        if self.min_output_height <= 0:
+            raise ValueError("min_output_height must be positive")
+        if self.max_output_height < self.min_output_height:
+            raise ValueError(
+                "max_output_height must be greater than or equal to "
+                "min_output_height")
 
 
 class CutPanel(BaseModel):
@@ -78,9 +128,21 @@ class CutPanel(BaseModel):
     panel_type: str
     confidence: float
     image_file: str
+    # Normalized PNG dimensions written by the cutter. Source coordinates and
+    # the source strip dimensions remain unchanged in panels.json.
+    output_width: int | None = None
+    output_height: int | None = None
+    # Width of THIS panel's source strip. None (default) for single-strip
+    # artifacts; set for panels merged in from another strip whose strip
+    # width differs from the artifact's own width (continuation sequences).
+    strip_width: int | None = None
     split_of: str | None = None  # parent panel id when this is an a/b piece
     merged_with: list[int] = Field(default_factory=list)
     snap_distances: list[int] = Field(default_factory=list)  # AI->final snap px
+    # --- deterministic blank analysis (NO AI; set by the blank detector) --
+    blank_score: float = Field(0.0, ge=0.0, le=1.0)
+    blank_flag: str = Field("normal")  # normal | suspicious | blank
+    blank_reasons: list[str] = Field(default_factory=list)
 
 
 class CutArtifact(BaseModel):
@@ -106,6 +168,40 @@ def row_edge_density(gray: np.ndarray, y0: int, y1: int) -> np.ndarray:
     return mag[y0:y1].mean(axis=1)
 
 
+def normalize_panel_image(piece: Image.Image, *,
+                          output_width: int = 390,
+                          min_output_height: int = 760,
+                          max_output_height: int = 800) -> Image.Image:
+    """Deterministically normalize one source crop to 390x[760,800].
+
+    Step 1: aspect-preserving resize so the width is exactly `output_width`
+    (LANCZOS; height rounded to the nearest int, minimum 1px). Step 2: if
+    the resized height exceeds `max_output_height`, center-crop to the max;
+    if it is below `min_output_height`, center-pad with black to the min.
+    Otherwise the resized image is returned unchanged.
+
+    Never touches source geometry or AI boundaries — it only reshapes the
+    already-cropped PNG that is written to disk.
+    """
+    if piece.width <= 0 or piece.height <= 0:
+        raise ValueError("cannot normalize an empty panel image")
+    if output_width <= 0 or min_output_height <= 0:
+        raise ValueError("output dimensions must be positive")
+    if max_output_height < min_output_height:
+        raise ValueError("max_output_height must be >= min_output_height")
+    scale = output_width / float(piece.width)
+    scaled_h = max(1, int(round(piece.height * scale)))
+    resized = piece.resize((output_width, scaled_h), Image.LANCZOS)
+    if scaled_h > max_output_height:
+        top = (scaled_h - max_output_height) // 2
+        return resized.crop((0, top, output_width, top + max_output_height))
+    if scaled_h < min_output_height:
+        canvas = Image.new("RGB", (output_width, min_output_height), (0, 0, 0))
+        canvas.paste(resized, (0, (min_output_height - scaled_h) // 2))
+        return canvas
+    return resized
+
+
 def compute_strip_metrics(gray: np.ndarray, use_edge_density: bool,
                            blur_sigma: float = 0.5) -> tuple[np.ndarray, np.ndarray | None]:
     """Pre-compute per-row variance and (optionally) edge density for the WHOLE
@@ -123,6 +219,145 @@ def compute_strip_metrics(gray: np.ndarray, use_edge_density: bool,
         edges = cv2.Sobel(blurred, cv2.CV_32F, 1, 0, ksize=3)
         edge_density = np.abs(edges).mean(axis=1)
     return variances, edge_density
+
+
+def row_mono_fraction(gray: np.ndarray, y: int, *,
+                      tol: int = 8) -> float:
+    """Fraction of the row's columns that are near-constant.
+
+    A real gutter is uniform across the FULL strip width; a character's
+    solid black hair is uniform only over its local extent. But many
+    webtoon gutters are broken by a character standing in them or a border
+    line, so requiring full-width uniformity rejects every real gutter on
+    those strips and the cutter falls back to the nearest locally-flat run
+    — which is how a cut ends up mid-character.
+
+    Majority-width fixes that: a row counts as a gutter row when >=
+    `mono_width_frac` of its columns are within `tol` of the row median.
+    """
+    row = gray[y].astype(np.int16)
+    med = float(np.median(row))
+    return float((np.abs(row - med) <= tol).mean())
+
+
+def find_valley_cuts(
+    gray: np.ndarray,
+    *,
+    min_panel_height: int = 120,
+    max_panel_height: int = 1600,
+    mono_width_frac: float = 0.70,
+    forbidden: frozenset[int] = frozenset(),
+) -> list[int]:
+    """Adaptive panel cuts by finding GUTTER RUNS in the strip.
+
+    A gutter is a horizontal band where most of the strip is ONE colour.
+    That is the property we actually want to cut on, and it is NOT the same
+    as low row variance: a character standing in a gutter makes the row half
+    white / half black, so its variance is HIGH and a variance-based valley
+    search walks straight past it. The majority-width test sees it
+    correctly (60% white still passes at the default 0.70).
+
+    So: find runs of rows that are uniform over >= mono_width_frac of the
+    strip width, whose median colour matches the page background, and whose
+    width is in the gutter range. Each run is a cut at its midpoint.
+
+    A character's solid hair is uniform only over its local extent, so it
+    still fails this test; speed-line art is streaky, not flat.
+
+    Fails safe: no validated gutters -> fewer cuts (panels stay whole,
+    user splits by hand) — NEVER a blind midpoint cut.
+    """
+    h = gray.shape[0]
+    if h < 3 * min_panel_height:
+        return []
+
+    # --- background colour estimate ---------------------------------------
+    # Real webtoon strips vary: clean strips have flat page margins
+    # (estimable from the edges), but full-bleed strips have NO flat
+    # margins while their gutters are still uniform runs somewhere in
+    # the middle. Strategy:
+    #   1. flat margin rows exist (>= 5) -> their median is the bg
+    #   2. else: the colour that dominates all NEAR-MONO ROWS across the
+    #      whole strip (weighted by row) — gutters are, by definition,
+    #      the most common flat-band colour; margins-only estimation
+    #      fails on full-bleed strips and rejects every real gutter.
+    margin_h = max(8, h // 10)
+    top_band = gray[:margin_h].astype(np.int16)
+    bot_band = gray[h - margin_h:].astype(np.int16)
+    def _flat_rows(band: np.ndarray) -> np.ndarray:
+        return (band.max(axis=1) - band.min(axis=1)) <= 8
+    top_flat = top_band[_flat_rows(top_band)]
+    bot_flat = bot_band[_flat_rows(bot_band)]
+    flats = np.concatenate([top_flat.reshape(-1),
+                            bot_flat.reshape(-1)]) \
+        if (len(top_flat) or len(bot_flat)) else np.array([])
+    if len(flats) >= 5:
+        bg = float(np.median(flats.astype(np.float64)))
+    else:
+        # dominant near-mono row colour across the whole strip
+        row_span = gray.astype(np.int16)
+        row_span = row_span.max(axis=1) - row_span.min(axis=1)
+        mono_rows = np.where(row_span <= 8)[0]
+        if len(mono_rows) >= 10:
+            vals, counts = np.unique(gray[mono_rows], return_counts=True)
+            bg = float(vals[np.argmax(counts)])
+        else:
+            # last resort: histogram mode
+            hist, bin_edges = np.histogram(gray, bins=64)
+            bg = float((bin_edges[np.argmax(hist)]
+                        + bin_edges[np.argmax(hist) + 1]) / 2)
+
+    # --- gutter-run scan --------------------------------------------------
+    # A gutter is a horizontal band where most of the strip is ONE colour.
+    # That is the property we actually want to cut on, and it is NOT the
+    # same as low row variance: a character standing in a gutter makes the
+    # row half white / half black, so its variance is HIGH and a
+    # variance-based valley search walks straight past it. The majority-
+    # width test sees it correctly (60% white still passes at 0.70).
+    #
+    # So: find runs of rows that are uniform over >= mono_width_frac of the
+    # strip width, whose median colour matches the page background, and
+    # whose width is in the gutter range. Each run is a cut at its midpoint.
+    span = gray.astype(np.int16)
+    row_med = np.median(span, axis=1, keepdims=True)
+    mono_frac = (np.abs(span - row_med) <= 8).mean(axis=1)
+    mono_rows = mono_frac >= mono_width_frac
+
+    # runs of gutter rows
+    runs: list[tuple[int, int]] = []
+    i = 0
+    while i < h:
+        if bool(mono_rows[i]):
+            j = i
+            while j < h and bool(mono_rows[j]):
+                j += 1
+            if 3 <= (j - i) <= 120:
+                runs.append((i, j - 1))
+            i = j
+        else:
+            i += 1
+
+    # (b) background colour: a gutter run's median must match the page bg.
+    validated: list[tuple[int, float]] = []
+    for lo, hi in runs:
+        band = gray[lo:hi + 1].astype(np.float64)
+        med = float(np.median(band))
+        if abs(med - bg) > 24:
+            continue
+        if any(lo <= r <= hi for r in forbidden):
+            continue
+        validated.append(((lo + hi) // 2, 0.0))
+
+    # --- spacing + max-height handling ------------------------------------
+    cuts: list[int] = [0]
+    for cut, _score in sorted(validated):
+        if cut - cuts[-1] >= min_panel_height:
+            cuts.append(cut)
+    if cuts[-1] < h - min_panel_height:
+        cuts.append(h)
+    elif cuts[-1] != h:
+        cuts[-1] = h
+    return cuts
 
 
 def bubble_rows(plan: PanelPlan, pad: int = 0,
@@ -245,7 +480,7 @@ def _emit(group: list[PanelPlanEntry], y0: int, y1: int,
     dialogue = " ".join(
         e.dialogue.strip() for e in group if e.dialogue.strip())
     merged = [e.panel_index for e in group]
-    return CutPanel(
+    return CutPanel(  # type: ignore[call-arg]
         id=base_id,
         panel_index=group[0].panel_index,
         y_start=y0,
@@ -267,7 +502,14 @@ def _split_panel(gray: np.ndarray, panel: CutPanel,
                  edge_density: np.ndarray | None = None) -> list[CutPanel]:
     """Split `panel` at internal gutters until every piece fits
     max_panel_height. Pieces are named <id>a / <id>b (recursively <id>aa...)
-    and keep the parent's narration."""
+    and keep the parent's narration.
+
+    NEVER cuts blindly: when no structurally-valid gutter exists inside
+    an oversized panel, the panel is kept WHOLE (returned unsplit) — a
+    too-tall panel is recoverable by the user in Manual Crop, but a cut
+    through mid-fight action is not. The old midpoint fallback is what
+    produced "characters cut mid-fight" on action strips.
+    """
     pieces: list[CutPanel] = []
     stack: list[tuple[int, int, str]] = [
         (panel.y_start, panel.y_end, panel.id)]
@@ -288,7 +530,7 @@ def _split_panel(gray: np.ndarray, panel: CutPanel,
             threshold=config.variance_threshold,
             edge_threshold=config.edge_threshold,
             use_edge_density=config.use_edge_density,
-            forbidden=forbidden, require_threshold=False,
+            forbidden=forbidden, require_threshold=True,
             min_gutter_run=config.min_gutter_run,
             blur_sigma=config.blur_sigma,
             variances=variances, edge_density=edge_density)
@@ -297,33 +539,29 @@ def _split_panel(gray: np.ndarray, panel: CutPanel,
         # sliver + an almost-unchanged oversized remainder, and the recursion
         # degenerates into dozens of lopsided slivers (panel_027babababbaa
         # style). Require each side to be at least min_piece tall AND at
-        # least 25% of the parent so splits stay balanced; if no gutter
-        # satisfies this, fall back to the exact midpoint.
+        # least 25% of the parent so splits stay balanced.
         min_piece = 50
         quarter = (y1 - y0) // 4
         min_side = max(min_piece, quarter)
         if row is not None and not (y0 + min_side <= row <= y1 - min_side):
-            log.debug("split row %d too close to edge for %s (need [%d,%d]); "
-                      "falling back to midpoint",
+            log.debug("split row %d too close to edge for %s (need [%d,%d])",
                       row, frag_id, y0 + min_side, y1 - min_side)
             row = None
         if row is None or row <= y0 or row >= y1:
-            for scan in range(1, (y1 - y0) // 4 + 1):
-                for candidate in [(mid - scan), (mid + scan)]:
-                    if y0 + min_side <= candidate <= y1 - min_side \
-                            and candidate not in forbidden:
-                        row = candidate
-                        log.warning("no usable gutter inside panel %s; "
-                                    "using nearby non-forbidden row %d",
-                                    frag_id, row)
-                        break
-                else:
-                    continue
-                break
-            if row is None or row <= y0 or row >= y1:
-                row = mid
-                log.warning("no usable gutter inside panel %s; splitting at "
-                            "midpoint %d", frag_id, row)
+            # No validated gutter inside: KEEP THE PANEL WHOLE. A taller-
+            # than-configured panel is a presentation choice; a blind cut
+            # through the action is a corruption. The user can split it
+            # deliberately in Manual Crop.
+            log.info("no validated gutter inside oversized panel %s "
+                     "(%dpx); keeping it whole", frag_id, y1 - y0)
+            pieces.append(panel.model_copy(update={
+                "id": frag_id,
+                "split_of": panel.id if frag_id != panel.id else None,
+                "y_start": y0,
+                "y_end": y1,
+                "image_file": f"panel_{frag_id}.png",
+            }))
+            continue
         stack.append((y0, row, frag_id + "a"))
         stack.append((row, y1, frag_id + "b"))
     pieces = sorted(pieces, key=lambda c: c.y_start)
@@ -379,8 +617,30 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
                 blur_sigma=config.blur_sigma,
                 variances=variances, edge_density=edge_density)
             if row is None:
-                groups[-1].append(b)
-                log.debug("panel %d..%d merged (no gutter at %d)", a.panel_index, b.panel_index, center)
+                # Relaxed snap: colored/gradient gutters fail the strict
+                # variance/edge thresholds but are still near-uniform runs.
+                row = find_gutter_row(
+                    gray, center, tolerance=config.tolerance * 2,
+                    threshold=config.variance_threshold * 4,
+                    edge_threshold=config.edge_threshold * 2,
+                    use_edge_density=config.use_edge_density,
+                    forbidden=forbidden, require_threshold=True,
+                    min_gutter_run=config.min_gutter_run,
+                    blur_sigma=config.blur_sigma,
+                    variances=variances, edge_density=edge_density)
+                if row is not None:
+                    log.debug("relaxed snap for panels %d..%d at %d (+%dpx)",
+                              a.panel_index, b.panel_index, row, abs(row - center))
+            if row is None:
+                if config.preserve_boundaries:
+                    groups.append([b])
+                    cut_rows.append(center)
+                    snap_distances.append(0)
+                    log.debug("no gutter at %d; boundary preserved "
+                              "(structure-first)", center)
+                else:
+                    groups[-1].append(b)
+                    log.debug("panel %d..%d merged (no gutter at %d)", a.panel_index, b.panel_index, center)
             else:
                 groups.append([b])
                 cut_rows.append(row)
@@ -428,6 +688,90 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
             final.extend(pieces)
     log.info("build_cuts result panels=%d", len(final))
     return sorted(final, key=lambda c: (c.y_start, c.id))
+
+
+def _apply_blank_regions(cuts: list[CutPanel],
+                         regions: list[BlankRegion],
+                         strip_height: int,
+                         blank_score_threshold: float | None = None,
+                         ) -> list[CutPanel]:
+    """Shrink/remove cut panels that overlap deterministic blank regions.
+
+    Rules (conservative; a panel is only dropped for verdict=blank):
+    * a panel fully inside a blank region -> dropped (logged);
+    * a panel partially blank -> trimmed to the content part; if both
+      ends are blank the panel is split around the blank (kept as pieces);
+    * verdict=suspicious regions never modify geometry — they only get a
+      flag in blank_flag/blank_score so the review UI can surface them.
+    """
+    blanks = [r for r in regions if r.verdict == BLANK]
+    if not blanks:
+        # still record suspicious flags on the touching panels
+        result: list[CutPanel] = []
+        for c in cuts:
+            for r in regions:
+                if r.y_start < c.y_end and r.y_end > c.y_start:
+                    c.blank_flag = "suspicious"
+                    c.blank_score = max(c.blank_score, r.score)
+                    break
+            result.append(c)
+        return result
+
+    out: list[CutPanel] = []
+    for c in cuts:
+        overlaps = [r for r in blanks
+                    if r.y_start < c.y_end and r.y_end > c.y_start]
+        if not overlaps:
+            out.append(c)
+            continue
+        # fraction of the panel covered by blank regions
+        cover = sum(min(c.y_end, r.y_end) - max(c.y_start, r.y_start)
+                    for r in overlaps)
+        frac = cover / max(1, c.y_end - c.y_start)
+        if frac >= 0.95:
+            log.info("dropping panel %s: %.0f%% covered by blank region(s) "
+                     "%s", c.id, frac * 100,
+                     [f"{r.y_start}-{r.y_end}" for r in overlaps])
+            continue
+        # Trim blank bands off the panel's TOP/BOTTOM edges (keeping the
+        # content). Blanks in the MIDDLE never change geometry - the panel
+        # is flagged suspicious instead, because cutting a panel in two
+        # (e.g. a deliberate white gap between two art halves) is riskier
+        # than leaving it to human review.
+        y0, y1 = c.y_start, c.y_end
+        panel_h = y1 - y0
+        slack = max(48, int(0.02 * panel_h))  # detector windowing slack
+        min_keep = max(30, int(0.1 * panel_h))
+        mid_blanks: list[BlankRegion] = []
+        for r in sorted(overlaps, key=lambda r: r.y_start):
+            top_blank = r.y_start <= y0 + slack
+            bot_blank = r.y_end >= y1 - slack
+            if top_blank and not bot_blank:
+                y0 = max(y0, min(r.y_end, y1 - min_keep))
+            elif bot_blank and not top_blank:
+                y1 = min(y1, max(r.y_start, y0 + min_keep))
+            elif top_blank and bot_blank:
+                # blank spans the whole panel within slack; keep the middle
+                y0 = max(y0, min(r.y_end, y1 - min_keep))
+                y1 = min(y1, max(r.y_start, y0 + min_keep))
+            else:
+                mid_blanks.append(r)
+        if mid_blanks:
+            c.blank_flag = "suspicious"
+            c.blank_score = max(c.blank_score, max(r.score for r in mid_blanks))
+            log.info("panel %s overlaps a mid-panel blank region %s; kept "
+                     "intact but flagged suspicious",
+                     c.id, [f"{r.y_start}-{r.y_end}" for r in mid_blanks])
+        if y1 - y0 < min(30, min_keep):
+            log.info("dropping panel %s: content remainder %dpx too small "
+                     "after blank trim", c.id, y1 - y0)
+            continue
+        if (y0, y1) != (c.y_start, c.y_end):
+            log.info("trimmed panel %s from [%d,%d] to [%d,%d] "
+                     "(blank regions removed)", c.id, c.y_start, c.y_end, y0, y1)
+            c = c.model_copy(update={"y_start": y0, "y_end": y1})
+        out.append(c)
+    return out
 
 
 def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
@@ -499,6 +843,24 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
 
     cuts = build_cuts(gray_arr, plan, config=config)
 
+    # ------------------------------------------------------------------ #
+    # DETERMINISTIC BLANK-REGION REMOVAL (NO AI)
+    # First layer: blank regions detected on the strip shrink/exclude cut
+    # ranges BEFORE cropping, so blank sections never become panels.
+    # ------------------------------------------------------------------ #
+    if config.blank_detection and _HAS_BLANK_DETECTOR:
+        try:
+            regions = detect_blank_regions(
+                gray_arr, rgb=np.asarray(rgb),
+                strip_height=height, strip_width=width,
+                config=BlankDetectorConfig(preset=config.blank_preset))
+            if regions:
+                cuts = _apply_blank_regions(cuts, regions, height,
+                                            blank_score_threshold=None)
+        except Exception as exc:  # noqa: BLE001 - never kill a cut
+            log.warning("blank-region detection failed (continuing without "
+                        "it): %s", exc)
+
     # Post-segmentation validation layer (advisory; never deletes).
     if validate:
         try:
@@ -524,13 +886,54 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
                         "debris, skipping", c.id, y1 - y0, min_panel_height)
             continue
         piece = rgb.crop((0, y0, width, y1))
+
+        # -------------------------------------------------------------- #
+        # Second safety layer: post-crop blank scoring of the actual PNG.
+        # A crop that is essentially uniform must not reach narration/
+        # TTS/render; it is flagged (blank) or sent to review (suspicious).
+        # -------------------------------------------------------------- #
+        if config.blank_detection and _HAS_BLANK_DETECTOR:
+            try:
+                score, metrics = score_crop(np.asarray(piece))
+                c.blank_score = score
+                c.blank_reasons = [
+                    f"{k}={v}" for k, v in metrics.items()]
+                if score >= 0.90:
+                    c.blank_flag = BLANK
+                    log.info("panel %s scored BLANK (%.2f); dropping from "
+                             "output (metrics: %s)", c.id, score, metrics)
+                    continue  # never saved, never narrated
+                if score >= 0.65:
+                    c.blank_flag = "suspicious"
+                    log.info("panel %s flagged suspicious blank score %.2f "
+                             "(kept for review)", c.id, score)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("post-crop blank scoring failed for %s: %s",
+                            c.id, exc)
+
         dest = out / c.image_file
         if dest.exists() and not force:
             log.info("panel file already exists, skipping: %s", dest)
             saved.append(c)
             continue
-        piece.save(dest, "PNG")
-        log.debug("saved panel %s y=[%d,%d] size=%dx%d", c.id, y0, y1, width, y1 - y0)
+        # Output-size policy: keep the full-resolution source crop for
+        # geometry/scoring, then normalize ONLY the PNG written to disk to
+        # exactly 390px wide with height in [760, 800]px. Source
+        # coordinates (y_start/y_end, artifact width/height) are untouched.
+        out_piece = piece
+        if config.normalize_output:
+            out_piece = normalize_panel_image(
+                piece,
+                output_width=config.output_width,
+                min_output_height=config.min_output_height,
+                max_output_height=config.max_output_height)
+            c = c.model_copy(update={
+                "output_width": out_piece.width,
+                "output_height": out_piece.height})
+        out_piece.save(dest, "PNG")
+        log.debug("saved panel %s y=[%d,%d] source=%dx%d output=%dx%d",
+                  c.id, y0, y1, piece.width, piece.height,
+                  out_piece.width, out_piece.height)
         saved.append(c)
 
     plan_hash = hashlib.sha256(

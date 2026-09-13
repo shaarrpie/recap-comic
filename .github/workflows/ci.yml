@@ -33,4 +33,4 @@ jobs:
         run: mypy cli.py guided_pipeline.py guided_cutter.py strip_analyzer.py narrator.py report.py debug_view.py bubble_detector.py --ignore-missing-imports
 
       - name: Test (pytest)
-        run: pytest tests -q
+        run: pytest tests webapp -q

@@ -19,13 +19,13 @@ import copy
 import json
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import field
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
-from adapters.schemas import BBox, PanSpec, TimelineEntry
+from adapters.schemas import TimelineEntry
 
 log = logging.getLogger(__name__)
 
@@ -91,8 +91,7 @@ def _panel_id_from_image(image_file: str) -> str:
 
 def timeline_from_cut(artifact, panels_dir: Path, cfg) -> list[dict[str, Any]]:
     """Build an initial edited_timeline from a CutArtifact."""
-    from recap_video import build_narration, synthesize_audio, build_timeline
-    from adapters.schemas import TimelineArtifact
+    from recap_video import build_narration, build_timeline, synthesize_audio
 
     panels_hash = _sha256_text(json.dumps(artifact.model_dump(), sort_keys=True))
     narration = build_narration(artifact, cfg, panels_hash=panels_hash)
@@ -104,7 +103,7 @@ def timeline_from_cut(artifact, panels_dir: Path, cfg) -> list[dict[str, Any]]:
 
 def captions_from_timeline(tl_entries, narration, audio) -> list[dict[str, Any]]:
     """Build initial captions from timeline + narration + audio."""
-    from recap_video import _cues_for_entry, srt_time
+    from recap_video import _cues_for_entry
     by_text = {n.id: n.text for n in narration.entries}
     by_audio = {a.entry_id: a for a in audio.entries}
     captions = []
@@ -222,6 +221,10 @@ class Editor:
                 entry["duration_seconds"] = payload["duration_seconds"]
                 self._recalc_starts()
                 self._recalc_caption_timings_for_panel(payload["panel_id"])
+                # A duration change shifts every LATER panel's captions too.
+                for e in self.project.edited_timeline:
+                    if e["start_seconds"] >= entry["start_seconds"] + entry["duration_seconds"]:
+                        self._recalc_caption_timings_for_panel(e["panel_id"])
         elif action_type == "effect":
             eff = next((e for e in self.project.effects if e["panel_id"] == payload["panel_id"]), None)
             if eff:
@@ -276,7 +279,6 @@ class Editor:
             if cap["panel_id"] == panel_id:
                 auto_start = cap["automated_start_seconds"]
                 auto_end = cap["automated_end_seconds"]
-                auto_dur = max(auto_end - auto_start, 0.01)
                 scale = (end - start) / max(entry.get("automated_duration", end - start), 0.01)
                 if scale != 1.0:
                     rel_start = auto_start - (entry.get("automated_start_seconds", start) or start)
@@ -309,38 +311,44 @@ class Editor:
                      {"panel_id": panel_id, "duration_seconds": entry["duration_seconds"]})
 
     def set_effect(self, panel_id: str, kind: str, duration: float) -> None:
-        before = next((e for e in self.project.effects if e["panel_id"] == panel_id), None)
+        found = next((e for e in self.project.effects if e["panel_id"] == panel_id), None)
+        # Snapshot BEFORE mutating: `found` is the live dict, so recording
+        # it after .update() would store the AFTER state as "before" and
+        # make undo a no-op.
+        before = copy.deepcopy(found) if found else None
         payload = {"panel_id": panel_id, "kind": kind, "duration": round(duration, 3)}
-        if before is None:
+        if found is None:
             self.project.effects.append(payload)
         else:
-            before.update(payload)
+            found.update(payload)
         self._record("effect",
-                     {"panel_id": panel_id, "kind": before.get("kind", "static") if before else "static",
-                      "duration": before.get("duration", 0.0) if before else 0.0},
+                     {"panel_id": panel_id,
+                      "kind": before["kind"] if before else "static",
+                      "duration": before["duration"] if before else 0.0},
                      payload)
 
     def update_caption(self, caption_id: str, **kwargs) -> None:
         cap = next((c for c in self.project.captions if c["id"] == caption_id), None)
         if cap is None:
             return
-        before = {k: cap[k] for k in kwargs if k in cap}
+        before = {k: copy.deepcopy(cap[k]) for k in kwargs if k in cap}
         cap.update({k: v for k, v in kwargs.items() if k in cap})
         self._record("caption", {"id": caption_id, **before}, {"id": caption_id, **kwargs})
 
     def set_transition(self, from_panel_id: str, to_panel_id: str, type: str, duration: float) -> None:
-        before = next((t for t in self.project.transitions
+        found = next((t for t in self.project.transitions
                        if t["from_panel_id"] == from_panel_id and t["to_panel_id"] == to_panel_id), None)
+        before = copy.deepcopy(found) if found else None
         payload = {"from_panel_id": from_panel_id, "to_panel_id": to_panel_id,
                     "type": type, "duration": round(duration, 3)}
-        if before is None:
+        if found is None:
             self.project.transitions.append(payload)
         else:
-            before.update(payload)
+            found.update(payload)
         self._record("transition",
                      {"from_panel_id": from_panel_id, "to_panel_id": to_panel_id,
-                      "type": before.get("type", "cut") if before else "cut",
-                      "duration": before.get("duration", 0.5) if before else 0.5},
+                      "type": before["type"] if before else "cut",
+                      "duration": before["duration"] if before else 0.5},
                      payload)
 
     def remove_panel(self, panel_id: str) -> None:

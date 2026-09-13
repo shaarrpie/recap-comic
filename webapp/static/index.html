@@ -180,6 +180,12 @@ button{font-family:inherit}
 .dropzone h3{font-family:var(--disp); font-weight:700; font-size:21px; margin-bottom:4px}
 .dropzone p{color:var(--txt3); font-size:13px}
 .dropzone .fmts{margin-top:10px; display:flex; gap:6px; flex-wrap:wrap}
+/* automation/manual mode toggle on the studio dropzone */
+.modeToggle{display:inline-flex; gap:0; margin-top:14px; border:1px solid var(--line2); border-radius:var(--r); overflow:hidden; background:var(--ink3)}
+.mtBtn{padding:8px 16px; font-size:13px; font-weight:600; font-family:var(--body); color:var(--txt3); background:transparent; border:0; cursor:pointer; transition:background .15s,color .15s}
+.mtBtn:hover{color:var(--txt)}
+.mtBtn.on{background:var(--acc); color:var(--ink)}
+.mtBtn.on[data-mode="manual"]{background:var(--amber)}
 .sysgrid{display:grid; gap:var(--gut)}
 .recent{display:flex; flex-direction:column; gap:12px}
 .rcard{display:grid; grid-template-columns:1fr auto; gap:6px 14px; align-items:center; cursor:pointer}
@@ -315,6 +321,26 @@ dialog .closebtn{position:absolute; top:10px; right:12px}
 /* Narrator Studio grid */
 .vs-grid{display:grid; grid-template-columns:minmax(0,1fr) 340px; gap:var(--gut); align-items:start}
 @media (max-width:1120px){ .vs-grid{grid-template-columns:1fr} }
+/* Manual Crop — boundary editor */
+.manual-wrap{display:flex;gap:var(--gut);height:calc(100vh - 120px)}
+.manual-stage{flex:1;display:flex;flex-direction:column;gap:10px;min-width:0}
+.manual-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.manual-canvas{flex:1;overflow:auto;background:var(--ink3);border:1px solid var(--line);border-radius:var(--r);position:relative;cursor:crosshair}
+.manual-canvas img{display:block;width:100%;height:auto;pointer-events:none;user-select:none}
+.boundary{position:absolute;left:0;right:0;height:2px;background:var(--coral);pointer-events:auto;cursor:row-resize;z-index:2}
+.boundary:hover{background:var(--amber)}
+.boundary.selected{background:var(--amber);height:3px}
+.boundary-handle{position:absolute;left:0;right:0;height:28px;top:-13px;cursor:row-resize;z-index:3;display:flex;align-items:center;justify-content:center}
+.boundary-handle::after{content:"";width:36px;height:5px;border-radius:3px;background:var(--coral);opacity:.9}
+.boundary-handle:hover::after{background:var(--amber);opacity:1}
+.boundary.selected .boundary-handle::after{background:var(--amber)}
+.boundary-grip{position:absolute;left:4px;top:-9px;width:22px;height:18px;border-radius:4px;background:rgba(255,110,110,.85);display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;cursor:row-resize;z-index:4;user-select:none;letter-spacing:1px}
+.boundary-grip:hover{background:var(--amber)}
+.boundary.selected .boundary-grip{background:var(--amber)}
+.mc-ytip{position:absolute;left:70px;padding:2px 8px;background:var(--ink4);border:1px solid var(--line2);border-radius:4px;font-family:var(--mono);font-size:12px;color:var(--txt);z-index:6;pointer-events:none;white-space:nowrap}
+.manual-side{width:260px;display:flex;flex-direction:column;gap:10px;overflow-y:auto}
+.preview-thumb{width:100%;border:1px solid var(--line);border-radius:var(--r);background:var(--ink2)}
+.preview-thumb canvas{display:block;width:100%;height:auto}
 /* source strip map in panel inspector */
 .stripmap{position:relative;width:100%;border:1.5px solid var(--line2);border-radius:6px;
   background:linear-gradient(var(--ink4),var(--ink3));overflow:hidden;margin-top:8px}
@@ -336,9 +362,11 @@ dialog .closebtn{position:absolute; top:10px; right:12px}
     <div class="brand">recap<em>·</em>comic<small>manhwa recap studio</small></div>
     <a href="#/studio"    data-view="studio"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M4 9h16M4 15h16"/></svg>Studio</a>
     <a href="#/panels"    data-view="panels"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="7" rx="1.5"/><rect x="3" y="14" width="18" height="7" rx="1.5"/></svg>Panel Review</a>
+    <a href="#/manual-crop" data-view="manual-crop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Manual Crop</a>
     <a href="#/narrate"   data-view="narrate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 10h10M4 14h16M4 18h8"/></svg>Narration</a>
 
     <a href="#/generate"  data-view="generate"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>Generate</a>
+    <a href="#/pipeline"   data-view="pipeline"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>Pipeline</a>
     <a href="#/voice"     data-view="voice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 19v3"/></svg>Narrator</a>
     <a href="#/review"    data-view="review"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m10 9 5 3-5 3V9z"/></svg>Review</a>
     <a href="#/editor"    data-view="editor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Editor</a>
@@ -421,7 +449,7 @@ const api={
   edGet:       s=>req(`/api/editor/${s}`),
   edCreate:    s=>req(`/api/editor/${s}/create`,{method:"POST"}),
   edPost:      (s,what,body={})=>req(`/api/editor/${s}/${what}`,jbody(body)),
-  panelsGet:   s=>req(`/api/panels/${s}`),
+  panelsGet:   s=>req(`/api/panels/${s}?combined=1`),
   panelsOrder: (s,ids)=>req(`/api/panels/${s}/order`,jbody({ids})),
   panelsDelete:(s,ids)=>req(`/api/panels/${s}/delete`,jbody({ids})),
   panelsRestore:(s,ids)=>req(`/api/panels/${s}/restore`,jbody({ids})),
@@ -430,27 +458,46 @@ const api={
   panelsDuplicate:(s,pid)=>req(`/api/panels/${s}/duplicate`,jbody({panel_id:pid})),
   panelsMerge:   (s,ids)=>req(`/api/panels/${s}/merge`,jbody({ids})),
   panelsSplit:   (s,pid,frac)=>req(`/api/panels/${s}/split`,jbody({panel_id:pid,fraction:frac})),
+  manualState:   s=>req(`/api/manual-crop/${s}/state`),
+  manualSave:    (s,b)=>req(`/api/manual-crop/${s}/boundaries`,jbody({boundaries:b})),
+  manualGenerate:s=>req(`/api/manual-crop/${s}/generate`,{method:"POST"}),
+  manualReset:   s=>req(`/api/manual-crop/${s}/reset`,{method:"POST"}),
+  manualGuides:  s=>req(`/api/manual-crop/${s}/guides`),
+  manualStrip:   s=>req(`/api/manual-crop/${s}/strip`),
   narrGet:       s=>req(`/api/narration/${s}`),
   narrText:      (s,pid,text)=>req(`/api/narration/${s}/text`,jbody({panel_id:pid,text})),
   narrReset:     (s,pid)=>req(`/api/narration/${s}/reset`,jbody({panel_id:pid})),
   narrStyle:     (s,style)=>req(`/api/narration/${s}/style`,jbody({style})),
   narrRegen:     (s,pid)=>req(`/api/narration/${s}/regenerate`,jbody({panel_id:pid,api_key:store.settings.api_key,model:store.settings.model})),
+  narrGenerateAll:(s)=>req(`/api/narration/${s}/generate`,jbody({api_key:store.settings.api_key,model:store.settings.model})),
   voiceGet:    s=>req(`/api/voice/${s}`),
   voicePut:    (s,cfg)=>req(`/api/voice/${s}`,jbody(cfg)),
   voiceList:   p=>req(`/api/voices?provider=${encodeURIComponent(p||"edge")}`),
   voicePreview:(s,cfg,text)=>req(`/api/voice/${s}/preview`,jbody({cfg,text})),
+  /* Step-by-Step pipeline / checkpoints */
+  pipeState:   s=>req(`/api/pipeline/${s}`),
+  pipeEvents:  (s,step)=>req(`/api/pipeline/${s}/events${step!=null?`?step=${step}`:""}`),
+  pipeStepDetail:(s,n)=>req(`/api/pipeline/${s}/step/${n}`),
+  pipeRunStep: (s,stage)=>req(`/api/pipeline/${s}/run-step`,jbody({session:s,stage,...runCreds()})),
+  pipeRunUntil:(s,until,from)=>req(`/api/pipeline/${s}/run-until`,jbody({session:s,until_stage:until,from_stage:from,...runCreds()})),
+  pipeResetFrom:(s,stage)=>req(`/api/pipeline/${s}/reset-from`,jbody({stage})),
+  settingsGet:    ()=>req("/api/settings"),
+  settingsGetKey: ()=>req("/api/settings/key"),
+  settingsPost:   s=>req("/api/settings",jbody(s)),
 };
 /* ---------------- store (persisted) ---------------- */
 const store=Object.assign({
   session:null, recent:[], order:{}, genJob:{}, names:{}, queue:[],
   settings:{backend:"gemini",model:"",tts:"edge",voice:"en-US-AriaNeural",style:"recap",
-            api_key:"",endpoint:"",cf_account_id:""}
+            api_key:"",endpoint:"",cf_account_id:"",mode:"automation"}
 }, JSON.parse(localStorage.getItem("rc.studio.v1")||"{}"));
 const save=()=>localStorage.setItem("rc.studio.v1",JSON.stringify(store));
 /* pipeline stages — the real spine from webapp/pipeline.py (generate) */
 const STAGES=[
   ["validate_config","Check config"],["load_images","Load images"],
-  ["segment_panels","Segment panels"],["apply_order","Apply order"],
+  ["segment_panels","Segment panels"],["panel_validation","Validate panels"],
+  ["apply_confirmed","Apply review"],["merge_continuation","Merge sequence"],
+  ["apply_order","Apply order"],
   ["gemini_narration","Gemini narration"],["build_script","Build script"],
   ["render_video","Render video"],["save_outputs","Save outputs"],
   ["create_editor_project","Editor project"]
@@ -486,7 +533,7 @@ function watch(jobId,onChange){
 }
 /* ---------------- router ---------------- */
 const viewEl=$("#view");
-const routes={studio:vStudio,panels:vPanels,"review-panels":vPanels,narrate:vNarrate,voice:vVoice,generate:vGenerate,review:vReview,editor:vEditor,logs:vLogs,settings:vSettings};
+const routes={studio:vStudio,panels:vPanels,"review-panels":vPanels,"manual-crop":vManualCrop,narrate:vNarrate,voice:vVoice,generate:vGenerate,pipeline:vPipeline,review:vReview,editor:vEditor,logs:vLogs,settings:vSettings};
 function parseHash(){const h=location.hash.replace(/^#\/?/,"");const[a,b]=h.split("/");return{view:a||"studio",arg:b}}
 function nav(view,arg){location.hash=arg?`#/${view}/${arg}`:`#/${view}`}
 async function render(){
@@ -520,28 +567,38 @@ async function vStudio(){
         <div class="stripmark" aria-hidden="true"></div>
         <div>
           <h3>Drop strips here</h3>
-          <p>PNG · JPG · WebP — add one or more full-height chapter strips. Nothing runs until you press Run.</p>
+          <p>PNG Â· JPG Â· WebP â€” add one or more full-height chapter strips. Nothing runs until you press Run.</p>
           <div class="fmts"><span class="chip">multiple strips</span><span class="chip">gemini narration</span><span class="chip">edge-tts</span><span class="chip">9:16 render</span></div>
+          <div class="modeToggle" id="modeToggle" title="Automation runs every stage end-to-end. Manual stops after upload â€” you crop, review, narrate and render step by step.">
+            <button class="mtBtn ${store.settings.mode!=="manual"?"on":""}" data-mode="automation" id="mtAuto">âš¡ Automation</button>
+            <button class="mtBtn ${store.settings.mode==="manual"?"on":""}" data-mode="manual" id="mtManual">âœ‚ Manual</button>
+          </div>
+          <p class="auto" id="modeHint">${store.settings.mode==="manual"?"Manual: uploads land in the queue cropped by YOU in Manual Crop â€” nothing runs until you continue.":"Automation: queued strips run end-to-end (segment â†' narrate â†' render) when you press Run."}</p>
         </div>
+      </div>
       </div>
       <input type="file" id="fileIn" accept="image/png,image/jpeg,image/webp" multiple hidden>
       ${store.queue.length?`
       <div class="panel lift reveal" style="--d:40ms;margin-top:18px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-          <div class="lbl">ready to run · ${store.queue.length} queued</div>
-          <button class="btn sm acc" id="runAll">Run all (${store.queue.length})</button>
+          <div class="lbl">ready to ${store.settings.mode==="manual"?"crop":"run"} Â· ${store.queue.length} queued</div>
+          ${store.settings.mode==="manual"
+            ?`<button class="btn sm" id="runAll">Open Manual Crop (${store.queue.length})</button>`
+            :`<button class="btn sm acc" id="runAll">Run all (${store.queue.length})</button>`}
         </div>
         <div class="recent" style="margin-top:12px">
           ${store.queue.map(q=>`
             <article class="rcard" data-q="${esc(q.session)}" style="cursor:default">
               <div style="min-width:0">
                 <div class="name">${esc(store.names?.[q.session]||q.session)}</div>
-                <div class="sub">${esc(q.session)} · <span style="color:var(--amber)">queued</span></div>
+                <div class="sub">${esc(q.session)} Â· <span style="color:var(--amber)">queued</span></div>
               </div>
-              <span class="pill" data-status="idle"><span class="dot"></span>queued</span>
+              <span class="pill" data-status="idle"><span class="dot"></span>${store.settings.mode==="manual"?"manual":"queued"}</span>
               <div class="acts">
                 <button class="btn sm danger" data-qdel="${esc(q.session)}">Remove</button>
-                <button class="btn sm acc" data-qrun="${esc(q.session)}">Run</button>
+                ${store.settings.mode==="manual"
+                  ?`<button class="btn sm" data-qcrop="${esc(q.session)}">Crop â†'</button>`
+                  :`<button class="btn sm acc" data-qrun="${esc(q.session)}">Run</button>`}
               </div>
             </article>`).join("")}
         </div>
@@ -592,8 +649,28 @@ async function vStudio(){
   ["dragleave","drop"].forEach(ev=>dz.addEventListener(ev,e=>{e.preventDefault();dz.classList.remove("over")}));
   dz.addEventListener("drop",e=>{const fs=[...e.dataTransfer.files];if(fs.length)queueFiles(fs)});
   fi.addEventListener("change",()=>{if(!fi.files.length)return;const fs=[...fi.files];fi.value="";queueFiles(fs)});
-  if($("#runAll"))$("#runAll").onclick=()=>runAllQueued();
+  if($("#runAll"))$("#runAll").onclick=()=>{
+    if(store.settings.mode==="manual"){
+      /* Manual: walk the queue into Manual Crop one strip at a time */
+      const snap=[...store.queue];
+      if(!snap.length){toast("Queue is empty","warn");return}
+      nav("manual-crop",snap[0].session);
+      if(snap.length>1)toast(`${snap.length-1} more queued â€” they open in Manual Crop after this one`,"ok");
+      return;
+    }
+    runAllQueued();
+  };
+  /* automation/manual mode toggle */
+  $$(".mtBtn",viewEl).forEach(b=>b.onclick=e=>{
+    e.stopPropagation();
+    const mode=b.dataset.mode;
+    if(store.settings.mode===mode)return;
+    store.settings.mode=mode;save();
+    toast(mode==="manual"?"Manual mode: nothing auto-runs â€” crop strips yourself in Manual Crop":"Automation mode: queued strips run end-to-end","ok");
+    render();
+  });
   $$("[data-qrun]",viewEl).forEach(b=>b.onclick=e=>{e.stopPropagation();runQueued(b.dataset.qrun)});
+  $$("[data-qcrop]",viewEl).forEach(b=>b.onclick=e=>{e.stopPropagation();nav("manual-crop",b.dataset.qcrop)});
   $$("[data-qdel]",viewEl).forEach(b=>b.onclick=e=>{e.stopPropagation();dropQueued(b.dataset.qdel)});
   $$(".rcard[data-s]",viewEl).forEach(card=>{
     const s=card.dataset.s;
@@ -624,17 +701,37 @@ async function queueFiles(files){
   if(ok){toast(`Added ${ok} strip${ok>1?"s":""} — press Run when ready`,"ok");render();}
   else if(!failed){toast("Nothing to add","warn")}
 }
-function runBody(session){
+function runBody(session, continueFrom){
   return{session,order:null,
     tts:store.settings.tts,voice:store.settings.voice,style:store.settings.style,
     backend:store.settings.backend,api_key:store.settings.api_key,
     model:store.settings.model,endpoint:store.settings.endpoint,
-    cf_account_id:store.settings.cf_account_id};
+    cf_account_id:store.settings.cf_account_id,
+    continue_from:continueFrom||null};
+}
+/* credentials for step-mode runs (same fields as /api/run) */
+function runCreds(){
+  return{tts:store.settings.tts,voice:store.settings.voice,
+         style:store.settings.style,backend:store.settings.backend,
+         api_key:store.settings.api_key,model:store.settings.model,
+         endpoint:store.settings.endpoint,
+         cf_account_id:store.settings.cf_account_id};
 }
 async function runQueued(session){
   try{
-    toast("Automation started — segmenting","ok");
-    const{job_id}=await api.run(runBody(session));
+    /* Continue the most recent sequence automatically: find the latest
+       session (excluding this one) that already has panels, so this
+       strip's panels are ADDED after them in Panel Review instead of
+       replacing the previous strip's panels. */
+    let contFrom=null;
+    try{
+      const r=await api.projects();
+      const withPanels=(r.projects||[]).filter(p=>p.id!==session&&p.panels>0)
+        .sort((a,b)=>(b.updated_at||b.created_at||0)-(a.updated_at||a.created_at||0));
+      if(withPanels.length)contFrom=withPanels[0].id;
+    }catch(_){}
+    toast(contFrom?"Continuing sequence — panels will be added after the previous strips":"Automation started — new sequence");
+    const{job_id}=await api.run(runBody(session,contFrom));
     store.genJob[session]=job_id;
     store.queue=store.queue.filter(q=>q.session!==session);save();
     watch(job_id);
@@ -644,11 +741,27 @@ async function runQueued(session){
 async function runAllQueued(){
   const snap=[...store.queue];
   if(!snap.length){toast("Queue is empty","warn");return}
-  let ok=0,failed=0;
+  let ok=0,failed=0,prev=null;
+  toast(`Running ${snap.length} strips as one sequence…`);
   for(const q of snap){
     try{
-      const{job_id}=await api.run(runBody(q.session));
-      store.genJob[q.session]=job_id;watch(job_id);ok++;
+      /* chain each queued strip onto the previous one so the sequence
+         builds up: strip1 -> strip2(continue strip1) -> strip3(continue
+         strip2)... serialized: /api/run requires the previous strip to
+         already have panels, so wait for each job to finish first. */
+      const{job_id}=await api.run(runBody(q.session,prev));
+      store.genJob[q.session]=job_id;watch(job_id);ok++;prev=q.session;
+      /* wait for segmentation (panels.json) before continuing the chain */
+      if(snap.length>1){
+        const t0=Date.now();
+        for(;;){
+          let j=null;
+          try{j=await api.job(job_id)}catch(_){break}
+          if(!j||["completed","failed","cancelled"].includes(j.status))break;
+          if(Date.now()-t0>15*60*1000){toast(`${q.session.slice(0,6)} still running — not chaining the rest automatically`,"warn");prev=null;break}
+          await new Promise(r=>setTimeout(r,1500));
+        }
+      }
     }catch(e){failed++;toast(`${q.session.slice(0,6)}: ${e.message}`,"err")}
   }
   store.queue=[];save();
@@ -662,6 +775,10 @@ function dropQueued(session){
 }
 function setSession(s,name){
   store.session=s;if(name)store.names=Object.assign(store.names||{},{[s]:name});save();
+  if(!store.recent.some(r=>r.session===s)){
+    store.recent.unshift({session:s,name:name||null,created:Date.now()/1000});
+    store.recent=store.recent.slice(0,20);save();
+  }
   $("#projBtn").textContent=`${store.names?.[s]||s}`;
 }
 /* Resolve the session a view should act on. Bounces are painful, so when
@@ -712,15 +829,22 @@ async function vPanels(session){
   const act=()=>R.panels.filter(p=>!p.deleted);
   const del=()=>R.panels.filter(p=>p.deleted);
   const need=()=>act().filter(p=>p.review_status==="needs_review");
+  const multi=R.strips&&R.strips.length>1;
+  const ownSession=session;
+  const imgSrc=p=>fileURL(p.source_session||ownSession,p.image_file.startsWith("s")&&p.source_session?p.image_file.replace(/^s[0-9a-f]+_/,""):p.image_file);
   viewEl.innerHTML=`
   <div style="display:flex;align-items:end;justify-content:space-between;gap:14px;flex-wrap:wrap">
     <div>
-      <div class="lbl">panel review · ${esc(session)}</div>
+      <div class="lbl">panel review · ${esc(session)}${multi?` · ${R.strips.length} strips in sequence`:""}</div>
       <h2 class="h-disp" style="font-size:30px;margin-top:4px">${R.active} panels
         ${R.confirmed?`<span class="chip ok" style="vertical-align:middle;margin-left:8px">✓ confirmed</span>`
           :need().length?`<span class="chip warn" style="vertical-align:middle;margin-left:8px">${need().length} need review</span>`:""}</h2>
+      ${multi?`<p style="color:var(--txt3);font-size:12px;margin-top:6px">Combined sequence: ${R.strips.map((s,i)=>`<span class="chip">${i+1}. ${esc(store.names?.[s.session]||s.session.slice(0,8))} (${s.active})</span>`).join(" → ")} — previous strips keep their own panels and edits.</p>`:""}
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+      <span class="lbl" style="margin-right:4px">Detection Mode</span>
+      <button class="btn sm acc" id="modeAuto" onclick="location.hash='#/panels/${esc(session)}'">Automatic</button>
+      <button class="btn sm" id="modeManual" onclick="location.hash='#/manual-crop/${esc(session)}'">Manual</button>
       <button class="btn" id="revNext" ${need().length?"":"disabled"} title="Jump to the lowest-confidence unreviewed panel">Review Next</button>
       <button class="btn acc" id="confirmBtn">Confirm Panels &amp; Continue</button>
     </div>
@@ -731,7 +855,7 @@ async function vPanels(session){
   ${del().length?`<hr class="cutline"><div class="lbl">deleted · ${del().length} (recoverable)</div>
   <div class="pgrid" style="margin-top:12px">${del().map(p=>`
     <article class="panel pcard" style="opacity:.45" data-del="${esc(p.id)}">
-      <div class="frame"><img loading="lazy" src="${fileURL(session,p.image_file)}" alt=""></div>
+      <div class="frame"><img loading="lazy" src="${imgSrc(p)}" alt=""></div>
       <div class="meta" style="flex-direction:row;align-items:center;justify-content:space-between">
         <span class="chip bad">deleted</span>
         <button class="btn sm" data-restore="${esc(p.id)}">↺ Restore</button>
@@ -778,15 +902,20 @@ function panelCard(p,i){
   const stChip=st==="reviewed"?`<span class="chip ok">✓ reviewed</span>`
     :st==="edited"?`<span class="chip info">✎ edited</span>`
     :`<span class="chip ${low?"warn":""}">· needs review</span>`;
+  const owner=p.source_session||store.session;
+  const img=`/api/jobs/${owner}/files/${encodeURIComponent(p.source_session?p.image_file.replace(/^s[0-9a-f]+_/,""):p.image_file)}`;
+  const stripChip=p.source_session&&p.source_session!==store.session
+    ?`<span class="chip" title="${esc(p.source_session)}">${esc(store.names?.[p.source_session]||p.source_session.slice(0,8))}</span>`:"";
   return`
   <article class="panel lift pcard reveal" draggable="true" data-id="${esc(p.id)}" data-i="${i}"
            tabindex="0" aria-label="Panel ${p.display_order}, ${p.panel_type}, confidence ${((p.confidence??0)*100).toFixed(0)} percent" style="--d:${Math.min(i*35,420)}ms">
-    <div class="frame"><img loading="lazy" src="${fileURL(store.session,p.image_file)}" alt="Panel ${p.display_order}"></div>
+    <div class="frame"><img loading="lazy" src="${img}" alt="Panel ${p.display_order}"></div>
     <span class="ord">${p.display_order}</span>
     <div class="meta">
       <div class="chips">
         <span class="chip ${low?"warn":""}">✓${((p.confidence??0)*100).toFixed(0)}%</span>
         <span class="chip">${esc(p.panel_type)}</span>
+        ${stripChip}
       </div>
       <p class="nar">${esc(p.narration)||"<i style='color:var(--txt3)'>no narration yet</i>"}</p>
       <div class="flags"><span class="${p.dialogue?"ok":""}">${p.dialogue?"✓":"○"} dialogue</span></div>
@@ -829,10 +958,14 @@ async function openReview(p,act){
   const session=store.session;
   const idx=act.findIndex(x=>x.id===p.id);
   const next=act[idx+1],prev=act[idx-1];
-  $("#lbImg").src=fileURL(session,p.image_file);
-  $("#lbTitle").textContent=`Panel ${p.display_order} · ${p.id}`;
+  const owner=p.source_session||session;
+  const imgName=p.source_session?p.image_file.replace(/^s[0-9a-f]+_/,""):p.image_file;
+  $("#lbImg").src=fileURL(owner,imgName);
+  $("#lbTitle").textContent=`Panel ${p.display_order} · ${p.id}${p.source_session&&p.source_session!==session?` · strip ${store.names?.[p.source_session]||p.source_session.slice(0,8)}`:""}`;
   const conf=(p.confidence??0)*100;
-  const stripH=Math.max(1,act.reduce((m,x)=>Math.max(m,x.y_end||0),0));
+  /* stripmap within THIS panel's own strip (mixed-strip max would skew it) */
+  const peers=act.filter(x=>(x.source_session||session)===owner);
+  const stripH=Math.max(1,peers.reduce((m,x)=>Math.max(m,x.y_end||0),0));
   $("#lbKv").innerHTML=`
     <div>type&nbsp;&nbsp;&nbsp;: ${esc(p.panel_type)}</div>
     <div>confidence: ${conf.toFixed(0)}% ${conf<60?"⚠ low":""}</div>
@@ -894,6 +1027,480 @@ async function openReview(p,act){
 $("#lbClose").onclick=()=>$("#lightbox").close();
 $("#lightbox").addEventListener("click",e=>{if(e.target.id==="lightbox")e.target.close()});
 /* ================================================================
+   VIEW — Manual Crop — boundary-based panel definition (no AI)
+   ================================================================ */
+// Document-level listeners from previous vManualCrop visits must be
+// inert when the view is re-entered or left.
+const MC_CLEANUPS=[];
+async function vManualCrop(session){
+  while(MC_CLEANUPS.length){try{MC_CLEANUPS.pop()()}catch(_){}}
+  session=await requireSession(session);if(!session)return studioEmpty("Manual Crop");
+  setSession(session);
+  let boundaries=[], selectedIdx=-1, naturalW=0, naturalH=0, history=[], historyIdx=-1, guides=[], stripUrl="", rowVariances=null;
+  let saveTimer, dragIdx=-1, dragStartY=0, dragStartVal=0;
+  /* NOTE: do NOT shadow the global $ (querySelector-based) with a
+     getElementById variant here — every call in this view uses
+     "#id"-prefixed selectors, and $("#id") under getElementById
+     silently returns null (the wiring guard then bails, killing
+     dblclick/drag/save). The global $ at the top of the file is the
+     correct one for this view. */
+  
+  function pairwise(arr){const o=[];for(let i=0;i<arr.length-1;i++)o.push([arr[i],arr[i+1]]);return o;}
+  function clamp(v,lo,hi){return Math.max(lo,Math.min(hi,v));}
+  function updateYDisplay(){
+    const el=$("#mcYDisplay");
+    if(el) el.textContent=selectedIdx>=0?`Y: ${boundaries[selectedIdx]}px`:"Y: —";
+  }
+  async function computeRowVariances(){
+    if(!naturalW||!img.complete) return;
+    const cvs=document.createElement("canvas");
+    cvs.width=naturalW; cvs.height=naturalH;
+    const ctx=cvs.getContext("2d");
+    ctx.drawImage(img,0,0);
+    const data=ctx.getImageData(0,0,naturalW,naturalH).data;
+    rowVariances=new Float32Array(naturalH);
+    for(let y=0;y<naturalH;y++){
+      let sum=0,sumSq=0,count=0;
+      for(let x=0;x<naturalW;x++){
+        const i=(y*naturalW+x)*4;
+        const gray=data[i]*0.299+data[i+1]*0.587+data[i+2]*0.114;
+        sum+=gray; sumSq+=gray*gray; count++;
+      }
+      const mean=sum/count;
+      rowVariances[y]=sumSq/count-mean*mean;
+    }
+  }
+  function findNearestGutter(y,tol=15){
+    if(!rowVariances) return y;
+    let best=y, bestVar=rowVariances[y];
+    for(let d=1;d<=tol;d++){
+      for(const candidate of [y-d,y+d]){
+        if(candidate<0||candidate>=naturalH) continue;
+        if(rowVariances[candidate]<bestVar){
+          bestVar=rowVariances[candidate];
+          best=candidate;
+        }
+      }
+    }
+    return best;
+  }
+  
+  function pushHistory(){
+    history=history.slice(0,historyIdx+1);
+    history.push(JSON.stringify(boundaries));
+    historyIdx=history.length-1;
+  }
+  function undo(){if(historyIdx>0){historyIdx--;boundaries=JSON.parse(history[historyIdx]);render();saveDebounced();}}
+  function redo(){if(historyIdx<history.length-1){historyIdx++;boundaries=JSON.parse(history[historyIdx]);render();saveDebounced();}}
+  
+  function saveDebounced(){
+    clearTimeout(saveTimer);
+    const st=$("#mcStatus"); if(st) st.textContent="Saving...";
+    saveTimer=setTimeout(async()=>{
+      try{
+        const userBounds=boundaries.slice(1,-1);
+        await api.manualSave(session, userBounds);
+        const st=$("#mcStatus"); if(st) st.textContent="Saved ✓";
+      }catch(e){const st=$("#mcStatus"); if(st) st.textContent="Save failed";toast(e.message,"err");}
+    },300);
+  }
+  
+  function render(){
+    const canvas=$("#mcCanvas"), wrap=$("#mcImgWrap"), img=$("#mcImg"), bdiv=$("#mcBoundaries"), pre=$("#mcPreviews");
+    if(!wrap||!img||!bdiv||!pre||!naturalW) return;
+    // wrap.clientWidth already includes the zoom (setZoom sets its width%);
+    // do NOT multiply by zoom again.
+    const scale=wrap.clientWidth/naturalW;
+    const hint=$("#mcHint");
+    if(hint)hint.style.display=boundaries.length>2?"none":"block";
+    bdiv.innerHTML="";
+    boundaries.forEach((y,i)=>{
+      const top=y*scale;
+      const d=document.createElement("div");
+      d.className="boundary"+(i===selectedIdx?" selected":"");
+      d.style.top=(top-1)+"px";
+      d.dataset.idx=i;
+      const g=document.createElement("div");
+      g.className="boundary-grip";
+      g.textContent="⋮⋮";
+      g.dataset.idx=i;
+      d.appendChild(g);
+      const h=document.createElement("div");
+      h.className="boundary-handle";
+      h.dataset.idx=i;
+      d.appendChild(h);
+      bdiv.appendChild(d);
+    });
+    if(dragIdx>=0&&boundaries[dragIdx]!==undefined){
+      const tip=document.createElement("div");
+      tip.className="mc-ytip";
+      tip.style.top=(boundaries[dragIdx]*scale-22)+"px";
+      tip.textContent=`Y: ${boundaries[dragIdx]}px`;
+      bdiv.appendChild(tip);
+    }
+    if(guides.length){
+      guides.forEach(y=>{
+        const g=document.createElement("div");
+        g.style.cssText=`position:absolute;left:0;right:0;height:1px;top:${y*scale}px;background:repeating-linear-gradient(to right,var(--txt3) 0 4px,transparent 4px 8px);opacity:.5;pointer-events:none;z-index:1;`;
+        bdiv.appendChild(g);
+      });
+    }
+    pre.innerHTML="";
+    if(img.complete&&naturalW){
+      pairwise(boundaries).forEach(([y0,y1],i)=>{
+        if(y1-y0<1) return;
+        const h=y1-y0;
+        const thumbW=clamp(Math.round((h/120)*120),60,240);
+        const thumbH=120;
+        const cvs=document.createElement("canvas");
+        cvs.width=thumbW; cvs.height=thumbH;
+        const ctx=cvs.getContext("2d");
+        ctx.drawImage(img,0,y0,naturalW,h,0,0,thumbW,thumbH);
+        if(h<30){
+          ctx.fillStyle="rgba(255,93,93,.25)";
+          ctx.fillRect(0,0,thumbW,thumbH);
+          ctx.fillStyle="#FF5D5D";
+          ctx.font="bold 10px sans-serif";
+          ctx.fillText("thin",4,12);
+        }
+        const wrap=document.createElement("div");
+        wrap.className="preview-thumb";
+        wrap.appendChild(cvs);
+        const lbl=document.createElement("div");
+        lbl.style.cssText="font-size:11px;color:var(--txt2);padding:4px 6px;text-align:right;font-family:var(--mono)";
+        lbl.textContent=`${y0}–${y1} px`;
+        wrap.appendChild(lbl);
+        pre.appendChild(wrap);
+      });
+    }
+    updateYDisplay();
+  }
+  
+  function addBoundary(y){
+    if(!naturalH) return;
+    y=clamp(Math.round(y),0,naturalH);
+    if($("#mcSnap")&&$("#mcSnap").checked) y=findNearestGutter(y);
+    boundaries.push(y);
+    boundaries.sort((a,b)=>a-b);
+    pushHistory();
+    render();saveDebounced();
+  }
+  function deleteSelected(){
+    if(selectedIdx<=0||selectedIdx>=boundaries.length-1)return;
+    boundaries.splice(selectedIdx,1);
+    selectedIdx=-1;
+    pushHistory();
+    render();saveDebounced();
+  }
+  
+  // init data
+  try{
+    const state=await api.manualState(session);
+    const raw=state.boundaries||[];
+    const g=await api.manualGuides(session);
+    guides=g.guides||[];
+    if(!raw.length&&!guides.length){
+      // start with default if nothing exists
+      boundaries=[0];
+    }else{
+      boundaries=[0,...raw];
+    }
+  }catch(e){toast(e.message,"err");return}
+  
+  try{
+    // manualStrip returns a FileResponse (image bytes), NOT JSON — the api
+    // helper hands back the raw Response, so use the route URL directly.
+    stripUrl=`/api/manual-crop/${session}/strip`;
+    const tmpImg=new Image();
+    await new Promise((res,rej)=>{tmpImg.onload=res;tmpImg.onerror=rej;tmpImg.src=stripUrl;});
+    naturalW=tmpImg.naturalWidth; naturalH=tmpImg.naturalHeight;
+    boundaries=[0,...boundaries.filter(b=>b>0&&b<naturalH),naturalH];
+    boundaries=[...new Set(boundaries)].sort((a,b)=>a-b);
+    pushHistory();
+  }catch(e){toast(e.message,"err");return}
+  
+  render();
+  
+  viewEl.innerHTML=`
+  <div class="manual-wrap">
+    <div class="manual-stage">
+      <div class="manual-toolbar">
+        <span class="lbl">Manual Crop</span>
+        <button class="btn sm" id="mcAdd">+ Add Boundary</button>
+        <button class="btn sm" id="mcDel">Delete Boundary</button>
+        <button class="btn sm" id="mcUndo">Undo</button>
+        <button class="btn sm" id="mcRedo">Redo</button>
+        <button class="btn sm" id="mcZoomOut">−</button>
+        <span class="lbl" id="mcZoomLbl">100%</span>
+        <button class="btn sm" id="mcZoomIn">+</button>
+        <button class="btn sm" id="mcFit">Fit</button>
+        <button class="btn sm" id="mcAutoCrop" title="Run ONLY the AI panel segmentation (no narration, no render) and load its detected edges as editable boundaries">âš¡ Auto Crop</button>
+        <button class="btn sm" id="mcLoadGuides" title="Load automatic boundaries as guides">Load Guides</button>
+        <label class="lbl" style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Snap boundaries to nearby gutters">
+          <input type="checkbox" id="mcSnap"> Snap
+        </label>
+        <span class="lbl" id="mcYDisplay">Y: —</span>
+        <input type="number" id="mcYInput" style="width:70px;background:var(--ink3);color:var(--txt);border:1px solid var(--line);border-radius:4px;padding:2px 6px;font-family:var(--mono);font-size:12px" placeholder="Y px">
+        <span class="lbl" id="mcStatus">Ready</span>
+        <div style="flex:1"></div>
+        <button class="btn acc" id="mcGenerate">Generate Panels</button>
+        <button class="btn ghost sm" id="mcReset">Reset to Automatic</button>
+      </div>
+      <div class="manual-canvas" id="mcCanvas">
+        <div class="manual-img-wrap" id="mcImgWrap">
+          <img id="mcImg" src="${esc(stripUrl)}" alt="strip" crossorigin="anonymous">
+          <div id="mcBoundaries"></div>
+        </div>
+        <div id="mcHint" style="position:absolute;left:50%;transform:translateX(-50%);bottom:14px;background:var(--ink4);border:1px solid var(--line2);border-radius:var(--r);padding:8px 14px;font-size:12px;color:var(--txt2);pointer-events:none;z-index:5">
+          double-click the strip to add a panel boundary · drag handles to move · Shift+↑↓ = 10px
+        </div>
+      </div>
+    </div>
+    <div class="manual-side" id="mcSide">
+      <div class="lbl">Panels</div>
+      <div id="mcPreviews"></div>
+    </div>
+  </div>`;
+  
+  const canvas=$("#mcCanvas"), wrap=$("#mcImgWrap"), img=$("#mcImg"), bdiv=$("#mcBoundaries"), pre=$("#mcPreviews"), status=$("#mcStatus");
+  // The async init above awaits network fetches; the user may have
+  // navigated to another view meanwhile (viewEl.innerHTML replaced), so
+  // every #mc element can be gone. Wiring handlers on null would throw
+  // ("Cannot set properties of null").
+  if(!canvas||!wrap||!img||!bdiv||!pre){
+    return; /* view left while loading — nothing to wire */
+  }
+  let currentZoom=1;
+  function setZoom(z){
+    currentZoom=clamp(z,0.5,5);
+    wrap.style.width=(100*currentZoom)+"%";
+    const lbl=$("#mcZoomLbl"); if(lbl) lbl.textContent=Math.round(currentZoom*100)+"%";
+    render();
+  }
+  img.onload=()=>{naturalW=img.naturalWidth;naturalH=img.naturalHeight;computeRowVariances();render();};
+  img.onerror=()=>{status.textContent="strip failed to load";toast("strip image failed to load — re-upload or check the session","err")};
+  if(img.complete&&img.naturalWidth){
+    // cached image: onload may never fire again
+    naturalW=img.naturalWidth;naturalH=img.naturalHeight;
+    computeRowVariances();
+  }
+  
+  bdiv.addEventListener("mousedown",e=>{
+    const handle=e.target.closest(".boundary-handle,.boundary-grip,.boundary");
+    if(!handle) return;
+    e.preventDefault();
+    dragIdx=+handle.dataset.idx;
+    selectedIdx=dragIdx;
+    dragStartY=e.clientY;
+    dragStartVal=boundaries[dragIdx];
+    render();
+  });
+  // Document-level listeners persist across views; entering this view
+  // multiple times would stack them (stale closures mutating invisible
+  // state). An alive-token makes every handler inert once the view is
+  // left or re-entered.
+  const alive={ok:true};
+  MC_CLEANUPS.push(()=>{alive.ok=false});
+  document.addEventListener("mousemove",e=>{
+    if(!alive.ok||dragIdx<0||!naturalW) return;
+    const scale=wrap.clientWidth/naturalW;   // wrap width already includes zoom
+    const dy=e.clientY-dragStartY;
+    let newY=Math.round(dragStartVal+dy/scale);
+    newY=clamp(newY,0,naturalH);
+    if(dragIdx>0) newY=Math.max(newY,boundaries[dragIdx-1]+1);
+    if(dragIdx<boundaries.length-1) newY=Math.min(newY,boundaries[dragIdx+1]-1);
+    if($("#mcSnap")&&$("#mcSnap").checked) newY=findNearestGutter(newY);
+    boundaries[dragIdx]=newY;
+    render();
+  });
+  document.addEventListener("mouseup",()=>{
+    if(!alive.ok) return;
+    if(dragIdx>=0){dragIdx=-1;pushHistory();saveDebounced();render();}
+  });
+  // Touch support — same math as mouse, for tablets/touchscreens
+  bdiv.addEventListener("touchstart",e=>{
+    const t=e.target.closest(".boundary-handle,.boundary-grip,.boundary");
+    if(!t) return;
+    e.preventDefault();
+    dragIdx=+t.dataset.idx;
+    selectedIdx=dragIdx;
+    dragStartY=e.touches[0].clientY;
+    dragStartVal=boundaries[dragIdx];
+    render();
+  },{passive:false});
+  document.addEventListener("touchmove",e=>{
+    if(!alive.ok||dragIdx<0||!naturalW) return;
+    e.preventDefault();
+    const scale=wrap.clientWidth/naturalW;
+    const dy=e.touches[0].clientY-dragStartY;
+    let newY=Math.round(dragStartVal+dy/scale);
+    newY=clamp(newY,0,naturalH);
+    if(dragIdx>0) newY=Math.max(newY,boundaries[dragIdx-1]+1);
+    if(dragIdx<boundaries.length-1) newY=Math.min(newY,boundaries[dragIdx+1]-1);
+    if($("#mcSnap")&&$("#mcSnap").checked) newY=findNearestGutter(newY);
+    boundaries[dragIdx]=newY;
+    render();
+  },{passive:false});
+  document.addEventListener("touchend",()=>{
+    if(!alive.ok) return;
+    if(dragIdx>=0){dragIdx=-1;pushHistory();saveDebounced();render();}
+  });
+  
+  canvas.addEventListener("dblclick",e=>{
+    if(e.target.closest(".boundary-handle,.boundary-grip,.boundary")) return;
+    const rect=wrap.getBoundingClientRect();
+    const scaleY=wrap.clientHeight/naturalH;
+    const y=Math.round((e.clientY-rect.top)/scaleY);
+    addBoundary(y);
+  });
+  
+  document.addEventListener("keydown",e=>{
+    if(!alive.ok) return;
+    if(selectedIdx<0||!naturalH) return;
+    const step=e.shiftKey?10:1;
+    if(e.key==="ArrowUp"){
+      e.preventDefault();
+      boundaries[selectedIdx]=Math.max(0,boundaries[selectedIdx]-step);
+      if(selectedIdx>0) boundaries[selectedIdx]=Math.max(boundaries[selectedIdx],boundaries[selectedIdx-1]+1);
+      render();saveDebounced();
+    }else if(e.key==="ArrowDown"){
+      e.preventDefault();
+      boundaries[selectedIdx]=Math.min(naturalH,boundaries[selectedIdx]+step);
+      if(selectedIdx<boundaries.length-1) boundaries[selectedIdx]=Math.min(boundaries[selectedIdx],boundaries[selectedIdx+1]-1);
+      render();saveDebounced();
+    }else if(e.key==="Delete"||e.key==="Backspace"){
+      e.preventDefault();deleteSelected();
+    }else if((e.ctrlKey||e.metaKey)&&e.key==="z"){
+      e.preventDefault();undo();
+    }else if((e.ctrlKey||e.metaKey)&&e.key==="y"){
+      e.preventDefault();redo();
+    }
+  });
+  
+  $("#mcAdd").onclick=()=>addBoundary(naturalH/2);
+  $("#mcDel").onclick=deleteSelected;
+  $("#mcUndo").onclick=undo;
+  $("#mcRedo").onclick=redo;
+  $("#mcZoomIn").onclick=()=>setZoom(currentZoom+0.25);
+  $("#mcZoomOut").onclick=()=>setZoom(currentZoom-0.25);
+  $("#mcFit").onclick=()=>setZoom(1);
+  $("#mcLoadGuides").onclick=async()=>{
+    try{
+      const g=await api.manualGuides(session);
+      const raw=g.guides||[];
+      if(!raw.length){toast("No automatic guides found","warn");return}
+      boundaries=[0,...raw.filter(b=>b>0&&b<naturalH),naturalH];
+      boundaries=[...new Set(boundaries)].sort((a,b)=>a-b);
+      selectedIdx=-1;
+      pushHistory();render();saveDebounced();
+      toast("Guides loaded");
+    }catch(e){toast(e.message,"err")}
+  };
+  $("#mcAutoCrop").onclick=async()=>{
+    if(!naturalH){toast("strip not loaded yet","warn");return}
+    const btn=$("#mcAutoCrop"); btn.disabled=true;
+    status.textContent="Auto crop runningâ€¦";
+    try{
+      const r=await req(`/api/manual-crop/${session}/auto-crop`,{method:"POST",body:JSON.stringify({
+        backend:store.settings.backend==="none"?"none":store.settings.backend,
+        api_key:store.settings.api_key||"",model:store.settings.model||"",endpoint:store.settings.endpoint||""
+      }),headers:{"Content-Type":"application/json"}});
+      const jobId=r.job_id;
+      /* poll the segment job; on success seed the boundaries from the
+         freshly detected panels */
+      await new Promise((resolve,reject)=>{
+        const poll=setInterval(async()=>{
+          try{
+            const j=await api.job(jobId);
+            if(["completed","failed","cancelled"].includes(j.status)){
+              clearInterval(poll);
+              j.status==="completed"?resolve(j):reject(new Error(j.error||`auto crop ${j.status}`));
+            }
+          }catch(e){clearInterval(poll);reject(e)}
+        },1200);
+      });
+      const g=await api.manualGuides(session);
+      const raw=(g.guides||[]).filter(b=>b>0&&b<naturalH);
+      if(!raw.length){toast("Auto crop finished but detected no edges","warn")}
+      else{
+        boundaries=[0,...raw,naturalH];
+        boundaries=[...new Set(boundaries)].sort((a,b)=>a-b);
+        selectedIdx=-1;
+        pushHistory();render();saveDebounced();
+        toast(`Auto crop done â€” ${boundaries.length-1} panels detected; adjust freely`,"ok");
+      }
+      status.textContent="Ready";
+    }catch(e){
+      status.textContent="Auto crop failed";
+      toast(e.message,"err");
+    }finally{btn.disabled=false}
+  };
+  $("#mcSnap").onchange=render;
+  $("#mcYInput").onchange=()=>{
+    if(selectedIdx<0) return;
+    const y=clamp(parseInt($("#mcYInput").value,10)||0,0,naturalH);
+    boundaries[selectedIdx]=y;
+    if(selectedIdx>0) boundaries[selectedIdx]=Math.max(boundaries[selectedIdx],boundaries[selectedIdx-1]+1);
+    if(selectedIdx<boundaries.length-1) boundaries[selectedIdx]=Math.min(boundaries[selectedIdx],boundaries[selectedIdx+1]-1);
+    pushHistory();render();saveDebounced();
+  };
+  $("#mcGenerate").onclick=async()=>{
+    try{
+      const R=await api.manualGenerate(session);
+      const v=R.validation;      if(v){
+        toast(`Generated ${R.active} panels — valid:${v.accepted} suspicious:${v.suspicious} rejected:${v.rejected} duplicates:${v.duplicates}`,"ok");
+        const bad=(v.verdicts||[]).filter(x=>x.quality!=="normal");
+        if(bad.length){
+          const list=bad.map(x=>`<li><b>${esc(x.panel_id)}</b>: ${esc(x.quality)} — ${esc((x.reasons||[]).join("; "))}
+            <br><button class="btn sm bad" data-del="${esc(x.panel_id)}">Delete</button>
+            <button class="btn sm ok" data-keep="${esc(x.panel_id)}">Keep Anyway</button></li>`).join("");
+          viewEl.insertAdjacentHTML("beforeend",`<div id="mcReview" style="position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:99">
+            <div class="panel" style="max-width:520px;width:90%;max-height:80vh;overflow:auto">
+              <div class="lbl">Post-crop validation</div>
+              <p style="margin-top:8px">Some panels need attention before continuing.</p>
+              <ul style="margin:10px 0 14px 18px;color:var(--txt2)">${list}</ul>
+              <div style="display:flex;gap:8px;justify-content:flex-end">
+                <button class="btn acc" id="mcReviewOk">Continue to Panels</button>
+              </div>
+            </div>
+          </div>`);
+          $("#mcReviewOk").onclick=async()=>{
+            for(const btn of $$("#mcReview [data-del]")){
+              try{await api.panelsDelete(session,[btn.dataset.del]);}catch(_){}
+            }
+            for(const btn of $$("#mcReview [data-keep]")){
+              try{await api.panelsRestore(session,[btn.dataset.keep]);}catch(_){}
+            }
+            $("#mcReview").remove();
+            /* strip is no longer waiting in the studio queue */
+            store.queue=store.queue.filter(q=>q.session!==session);save();
+            nav("panels",session);
+          };
+          return;
+        }
+      }else{
+        toast("Generated "+R.active+" panels","ok");
+      }
+      nav("panels",session);
+    }catch(e){
+      /* the no-boundaries guard: offer to load guides instead of failing
+         into a giant single panel */
+      if(/no manual boundaries/i.test(e.message||"")){
+        if(confirm("No boundaries set yet.\n\nLoad the AI's detected panel edges as a starting point?"))$("#mcLoadGuides").click();
+        return;
+      }
+      toast(e.message,"err")
+    }
+  };
+  $("#mcReset").onclick=async()=>{
+    if(!confirm("Restore previous automatic panels? Manual boundaries will be lost."))return;
+    try{const R=await api.manualReset(session);toast("Restored automatic panels","ok");nav("panels",session);}
+    catch(e){toast(e.message,"err")}
+  };
+  
+  setZoom(1);
+}
+/* ================================================================
    VIEW — Narration Studio (per-panel script review & editing)
    ================================================================ */
 let NR=null; /* {session, data, sel, saveT} */
@@ -910,7 +1517,7 @@ async function vNarrate(session){
     <div style="display:flex;gap:8px;align-items:center">
       <label class="field" style="flex-direction:row;align-items:center;gap:8px"><span class="lbl">style</span>
         <select id="nrStyle">${["recap","literal"].map(s=>`<option ${s===NR.data.style?"selected":""}>${s}</option>`).join("")}</select></label>
-      <button class="btn" id="nrRunAI" title="Run the Gemini narration stage for panels without narration">Generate narration (AI)</button>
+      <button class="btn" id="nrRunAI" title="AI narration for the already-cropped panels (Qwen, Mistral fallback). Cropping is never touched.">Generate narration (AI)</button>
       <button class="btn acc" id="nrToVoice">Narrator Studio →</button>
     </div>
   </div>
@@ -922,13 +1529,19 @@ async function vNarrate(session){
   $("#nrStyle").onchange=async e=>{try{NR.data=await api.narrStyle(NR.session,e.target.value);toast(`Style: ${e.target.value}`);drawNrList()}catch(err){toast(err.message,"err")}};
   $("#nrToVoice").onclick=()=>nav("voice",NR.session);
   $("#nrRunAI").onclick=async()=>{
-    try{toast("Narration stage started");
-      const s=store.settings;
-      const{job_id}=await api.run({session:NR.session,order:null,tts:s.tts,voice:s.voice,style:NR.data.style,
-        backend:s.backend,api_key:s.api_key,model:s.model,endpoint:s.endpoint,cf_account_id:s.cf_account_id,
-        start_stage:"gemini_narration"});
-      store.genJob[NR.session]=job_id;save();watch(job_id);nav("generate",NR.session);
-    }catch(e){toast(e.message,"err")}};
+    const btn=$("#nrRunAI");btn.disabled=true;btn.textContent="AI narrating…";
+    try{toast("AI narration started (cropped panels only)");
+      const{job_id}=await api.narrGenerateAll(NR.session);
+      store.genJob[NR.session]=job_id;save();
+      const poll=setInterval(async()=>{
+        try{const j=await api.job(job_id);
+          if(j.status==="completed"){clearInterval(poll);btn.disabled=false;btn.textContent="Generate narration (AI)";
+            NR.data=await api.narrGet(NR.session);drawNrList();toast("AI narration complete","ok")}
+          else if(j.status==="failed"){clearInterval(poll);btn.disabled=false;btn.textContent="Generate narration (AI)";
+            toast("AI narration failed: "+(j.error||"unknown"),"err")}
+        }catch(e){clearInterval(poll);btn.disabled=false;btn.textContent="Generate narration (AI)";toast(e.message,"err")}
+      },2000);
+    }catch(e){btn.disabled=false;btn.textContent="Generate narration (AI)";toast(e.message,"err")}};
   drawNrList();
 }
 function drawNrList(){
@@ -1019,12 +1632,18 @@ async function vVoice(session){
       <p class="auto" id="vsState" style="margin-top:10px"></p>
       <hr class="cutline">
       <div class="lbl">voice comparison</div>
-      <p style="font-size:12px;color:var(--txt3);margin:6px 0 10px">Preview the sample with other voices — only short clips are synthesized, cached by content.</p>
+      <p style="font-size:12px;color:var(--txt3);margin:6px 0 10px">Preview the sample with other voices â€” only short clips are synthesized, cached by content.</p>
       <div id="vsCompare" style="display:grid;gap:6px"></div>
     </section>
+  </div>
+  <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
+    <button class="btn" id="vsBack">â† Back to Narration</button>
+    <button class="btn acc" id="vsNext" title="Click 'Use This Voice' first if you changed anything — then render the recap">Continue â†' Generate</button>
   </div>`;
   VS={session,cfg:await api.voiceGet(session),voices:null,previewUrl:null};
   const $v=s=>$(s);
+  $("#vsBack").onclick=()=>nav("narrate",session);
+  $("#vsNext").onclick=()=>nav("generate",session);
   const paint=()=>{
     $v("#vsProvider").value=VS.cfg.provider||"edge";
     $v("#vsRate").value=VS.cfg.rate??0; $v("#vsPitch").value=VS.cfg.pitch??0; $v("#vsSpeed").value=VS.cfg.speed??1;
@@ -1089,9 +1708,6 @@ async function vVoice(session){
 /* ================================================================
    VIEW — Generate (stage machine + run/cancel/retry)
    ================================================================ */
-/* ================================================================
-   VIEW — Generate (stage machine + run/cancel/retry)
-   ================================================================ */
 let genStop=null;
 async function vGenerate(session){
   session=await requireSession(session);if(!session)return studioEmpty("Generate");
@@ -1119,13 +1735,19 @@ async function vGenerate(session){
         <div>backend&nbsp;: ${esc(store.settings.backend)}</div>
         <div>model&nbsp;&nbsp;&nbsp;: ${esc(store.settings.model||"(default)")}</div>
         <div>tts&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;: ${esc(store.settings.tts)} · ${esc(store.settings.voice)}</div>
-        <div>style&nbsp;&nbsp;&nbsp;: ${esc(store.settings.style)}</div>
-        <div>order&nbsp;&nbsp;&nbsp;: ${store.order[session]?store.order[session].length+" panels (custom)":"auto"}</div>
+        <div>style&nbsp;&nbsp;: ${esc(store.settings.style)}</div>
+        <div>order&nbsp;&nbsp;: ${store.order[session]?store.order[session].length+" panels (custom)":"auto"}</div>
       </div>
+      <hr class="cutline">
+      <div class="lbl">Continuation</div>
+      <p style="margin-top:8px;font-size:12px;color:var(--txt3)">Append this strip to a previous strip's sequence. Panels, narration and numbering continue — one merged recap.</p>
+      <select id="genContinue" style="margin-top:8px;width:100%;background:var(--ink3);color:var(--txt);border:1px solid var(--line);border-radius:var(--r);padding:8px 10px">
+        <option value="">— New sequence (standalone) —</option>
+      </select>
       <button class="btn ghost sm" style="margin-top:12px" onclick="location.hash='#/settings'">Change settings</button>
     </aside>
   </div>`;
-  genStop&&genStop();
+  genStop&&clearInterval(genStop);genStop=null;
   paint(jobFor(session));
   watchActive(session);
 }
@@ -1137,7 +1759,7 @@ async function watchActive(session){
   const paintLive=async()=>{try{paint(await jobFor(session))}catch(_){}};
   await paintLive();
   genStop=setInterval(async()=>{
-    if(parseHash().view!=="generate"){clearInterval(genStop);return}
+    if(parseHash().view!=="generate"){clearInterval(genStop);genStop=null;return}
     await paintLive();
   },1200);
 }
@@ -1153,35 +1775,276 @@ async function paint(jobP){
   });
   $("#pbar").style.width=(job.progress||0)+"%";
   $("#pPct").textContent=(job.progress||0)+"% · "+(job.stage?job.stage.replace(/_/g," "):job.status);
-  $("#errSlot").innerHTML=job.status==="failed"&&job.error?`<div class="errbox">${esc(job.error)}</div>`:"";
   setPill(job.status, job.status==="running"?(job.stage||"running").replace(/_/g," "):job.status);
   /* context buttons */
   const running=job.status==="running", failed=job.status==="failed", done=job.status==="completed";
+  const renderErr=job.outputs&&job.outputs.render_error;
   $("#genBtns").innerHTML=
     running?`<button class="btn danger" id="bCancel">Cancel</button>`:
-    failed ?`<button class="btn acc" id="bRun">Retry automation</button>`:
-    done   ?`<button class="btn" id="bRerun">Re-run</button><button class="btn acc" id="bRev">Review →</button>`:
-            `<button class="btn acc" id="bRun">Run Automation</button>`;
+    failed ?`<button class="btn acc" id="bRun">Retry automation</button>${job.stage?`<button class="btn" id="bResume" title="Resume from the failed stage; earlier stages are skipped (cached outputs on disk are reused)">Retry from ${job.stage.replace(/_/g," ")}</button>`:""}`:
+    done&&!renderErr?`<button class="btn" id="bRerun">Re-run</button><button class="btn acc" id="bRev">Review â†’</button>`:
+    done&&renderErr?`<button class="btn acc" id="bResumeRender" title="Only re-runs the render stage">Retry render</button><button class="btn" id="bRev">Review â†’</button>`:
+            `<button class="btn acc" id="bRun">Run Automation</button><button class="btn" id="bStep" title="Run ONE stage at a time with checkpoints, inspection and retry per step">â–¡â–¡ Step-by-Step</button>`;
   const s=store.session;
-  const run=async()=>{
+  const run=async(startStage,continueFrom)=>{
     try{
-      toast("Automation started");
+      toast(startStage?`Resuming from ${startStage.replace(/_/g," ")}`:continueFrom?`Continuing sequence — merging previous strips`:"Automation started");
       const{job_id}=await api.run({session:s,order:store.order[s]||null,
         tts:store.settings.tts,voice:store.settings.voice,style:store.settings.style,
         backend:store.settings.backend,api_key:store.settings.api_key,
         model:store.settings.model,endpoint:store.settings.endpoint,
-        cf_account_id:store.settings.cf_account_id});
+        cf_account_id:store.settings.cf_account_id,
+        start_stage:startStage||null,
+        continue_from:continueFrom||null});
       store.genJob[s]=job_id;save();watch(job_id);paintLiveSoon();
     }catch(e){toast(e.message,"err")}
   };
   const paintLiveSoon=()=>setTimeout(()=>paint(api.job(store.genJob[s]||s)),400);
-  $("#bRun")&&($("#bRun").onclick=run);
-  $("#bRerun")&&($("#bRerun").onclick=run);
+  $("#bRun")&&($("#bRun").onclick=()=>{
+    const cont=$("#genContinue")?$("#genContinue").value:null;
+    run(null, cont||null);
+  });
+  $("#bStep")&&($("#bStep").onclick=async()=>{
+    /* Step-by-Step: run the first stage, then continue in the Pipeline
+       view (checkpoints + per-step Run/Retry/Reset). */
+    try{
+      const r=await api.pipeRunStep(s,"validate_config");
+      toast("Step 1 ran â€” continuing in the Pipeline view","ok");
+      nav("pipeline",s);
+    }catch(e){toast(e.message,"err")}
+  });
+  $("#bResume")&&($("#bResume").onclick=()=>run(job.stage,null));
+  $("#bResumeRender")&&($("#bResumeRender").onclick=()=>run("render_video",null));
+  $("#bRerun")&&($("#bRerun").onclick=()=>run(null,null));
   $("#bCancel")&&($("#bCancel").onclick=async()=>{try{await api.cancel(store.genJob[s]||s);toast("Cancel requested","warn")}catch(e){toast(e.message,"err")}});
   $("#bRev")&&($("#bRev").onclick=()=>nav("review",s));
+  /* populate the continuation picker (sessions with panels, newest first) */
+  const contSel=$("#genContinue");
+  if(contSel){
+    api.projects().then(r=>{
+      const opts=(r.projects||[]).filter(p=>p.id!==s&&p.panels>0);
+      if(!opts.length)return;
+      opts.forEach(p=>{
+        const o=document.createElement("option");
+        o.value=p.id;
+        o.textContent=`${store.names?.[p.id]||p.id} · ${p.panels} panels`;
+        contSel.appendChild(o);
+      });
+    }).catch(()=>{});
+  }
+  /* render-soft-failure banner */
+  const errSlot=$("#errSlot");
+  if(errSlot){
+    errSlot.innerHTML=
+      job.status==="failed"&&job.error?`<div class="errbox">${esc(job.error)}</div>`:
+      renderErr?`<div class="errbox" style="border-color:var(--amber)">Video not rendered: ${esc(renderErr)}. Everything else is ready — retry the render above.</div>`:"";
+  }
 }
 /* ================================================================
-   VIEW — Review (video + synced narration cues)
+   VIEW â€” Pipeline (Step-by-Step + checkpoint debugger)
+   ================================================================ */
+const PIPE_ICONS={success:"âœ“",failed:"âœ—",stale:"â†»",pending:"â—‹",running:"â–¶"};
+let pipeTimer=null;
+async function vPipeline(session){
+  session=await requireSession(session);if(!session)return studioEmpty("Pipeline");
+  setSession(session);
+  viewEl.innerHTML=`
+  <div class="pipe">
+    <div class="pipe-head">
+      <div>
+        <div class="lbl">step-by-step pipeline Â· checkpoints</div>
+        <h2 style="font-size:22px;margin:2px 0 4px">Pipeline Debugger</h2>
+        <p style="font-size:12.5px;color:var(--txt3)" id="pipeSub">loading ledgerâ€¦</p>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap" id="pipeBtns"></div>
+    </div>
+    <div class="pipe-grid">
+      <section class="panel" id="pipeSteps"></section>
+      <section class="panel" id="pipeDetail"><div class="lbl">inspector</div><p style="color:var(--txt3);margin-top:8px;font-size:13px">Select a step to inspect its output, logs, duration and artifacts.</p></section>
+    </div>
+    <section class="panel" style="margin-top:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+        <div class="lbl">debug console Â· persistent (debug_events.jsonl)</div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="pipeEvSev" style="min-width:110px"><option value="">all severities</option><option>INFO</option><option>DEBUG</option><option>WARNING</option><option>ERROR</option></select>
+          <label style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--txt3)"><input type="checkbox" id="pipeAutoScroll" checked>auto-scroll</label>
+        </div>
+      </div>
+      <div class="pipe-console" id="pipeConsole"></div>
+    </section>
+  </div>
+  <style>
+    .pipe{display:flex;flex-direction:column;gap:16px}
+    .pipe-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
+    .pipe-grid{display:grid;grid-template-columns:minmax(320px,1.2fr) minmax(280px,1fr);gap:16px}
+    @media(max-width:980px){.pipe-grid{grid-template-columns:1fr}}
+    .pstep{display:flex;align-items:center;gap:12px;padding:10px 12px;border:1px solid var(--line);border-radius:var(--r);margin-bottom:8px;cursor:pointer;transition:border-color .15s,background .15s;position:relative}
+    .pstep:hover{border-color:var(--line2)}
+    .pstep.selected{border-color:var(--acc)}
+    .pstep .pico{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;border:1px solid var(--line);color:var(--txt3)}
+    .pstep[data-st="success"] .pico{color:var(--acc);border-color:var(--acc)}
+    .pstep[data-st="failed"] .pico{color:var(--coral);border-color:var(--coral)}
+    .pstep[data-st="stale"] .pico{color:var(--amber);border-color:var(--amber)}
+    .pstep[data-st="running"] .pico{color:var(--sky);border-color:var(--sky);animation:pulse 1.2s infinite}
+    @keyframes pulse{50%{opacity:.5}}
+    .pstep .pmain{flex:1;min-width:0}
+    .pstep .pname{font-weight:600;font-size:13.5px}
+    .pstep .psub{font-size:11.5px;color:var(--txt3)}
+    .pstep .pacts{display:flex;gap:6px;flex-shrink:0}
+    .pipe-console{font-family:var(--mono);font-size:11.5px;background:var(--ink2);border:1px solid var(--line);border-radius:var(--r);padding:10px;max-height:340px;overflow-y:auto;margin-top:10px}
+    .pev{display:grid;grid-template-columns:70px 64px 1fr;gap:10px;padding:2px 0;border-bottom:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
+    .pev .t{color:var(--txt3)}
+    .pev.s-ERROR{color:var(--coral)}
+    .pev.s-WARNING{color:var(--amber)}
+    .pev.s-DEBUG{color:var(--txt3)}
+    .errcard{border:1px solid var(--coral);border-radius:var(--r);padding:12px;margin-top:10px;background:rgba(255,93,93,.06)}
+    .errcard .fn{font-family:var(--mono);font-size:11.5px;color:var(--txt3)}
+    .tb{font-family:var(--mono);font-size:10.5px;white-space:pre-wrap;max-height:220px;overflow:auto;background:var(--ink3);padding:8px;border-radius:6px;margin-top:8px}
+  </style>`;
+  const draw=async()=>{
+    let d;
+    try{d=await api.pipeState(session)}catch(e){$("#pipeSub").textContent=e.message;return}
+    const st=d.state||{};
+    const steps=d.steps||[];
+    const running=d.running;
+    const sel=`step ${st.current_step||1}/${steps.length} Â· ${st.status||"idle"}`
+      +(st.mode?` Â· ${st.mode==="step"?"step-by-step":"automation"} mode`:"");
+    $("#pipeSub").textContent=sel;
+    /* step rows */
+    const rows=steps.map(s=>{
+      const e=(st.steps||[]).find(x=>x.step===s.step);
+      let status=e?e.status:"pending";
+      if(running&&running.stage===s.pipeline_name)status="running";
+      const stale=(d.stale||[]).includes(s.step);
+      const dur=e?`${(e.duration_s||0).toFixed(1)}s`:"";
+      const warn=(e&&e.warnings&&e.warnings.length)?` âš  ${e.warnings.length}`:"";
+      const sub=[dur,status+(stale?" Â· stale":""),warn].filter(Boolean).join(" Â· ");
+      return `<div class="pstep" data-st="${status}" data-step="${s.step}" data-stage="${s.pipeline_name}">
+        <div class="pico">${PIPE_ICONS[status]||"â—‹"}</div>
+        <div class="pmain"><div class="pname">${s.step}. ${esc(s.label)}</div>
+        <div class="psub">${esc(sub)}</div></div>
+        <div class="pacts">
+          ${status==="failed"||stale?`<button class="btn sm" data-rerun="${s.pipeline_name}">Rerun</button>`:""}
+        </div>
+      </div>`;
+    }).join("");
+    $("#pipeSteps").innerHTML=`<div class="lbl">pipeline state</div>
+      <div style="margin:10px 0 12px">${rows}</div>`;
+    /* action buttons */
+    const nextStep=steps.find(s=>s.step===(st.current_step||1));
+    const btns=[];
+    if(running){
+      btns.push(`<button class="btn sm" disabled>${running.status}â€¦ ${esc((running.stage||"").replace(/_/g," "))}</button>`);
+    }else{
+      if(nextStep)btns.push(`<button class="btn sm acc" id="pRunNext">Run Step ${nextStep.step} Â· ${esc(nextStep.label)}</button>`);
+      btns.push(`<button class="btn sm" id="pRunAll">Run to End (Automation)</button>`);
+    }
+    $("#pipeBtns").innerHTML=btns.join("");
+    if($("#pRunNext"))$("#pRunNext").onclick=()=>pipeRun(session,nextStep.pipeline_name);
+    if($("#pRunAll"))$("#pRunAll").onclick=()=>pipeRunUntil(session,null);
+    /* step clicks -> inspector */
+    $$(".pstep",viewEl).forEach(el=>{
+      el.onclick=async e=>{
+        if(e.target.closest("[data-rerun]"))return;
+        $$(".pstep",viewEl).forEach(x=>x.classList.remove("selected"));
+        el.classList.add("selected");
+        await pipeDetail(session,parseInt(el.dataset.step,10));
+      };
+    });
+    $$("[data-rerun]",viewEl).forEach(b=>b.onclick=async e=>{
+      e.stopPropagation();
+      pipeRun(session,b.dataset.rerun);
+    });
+    await pipeConsoleDraw(session);
+  };
+  draw();
+  clearInterval(pipeTimer);
+  pipeTimer=setInterval(()=>{if(parseHash().view==="pipeline")draw();else clearInterval(pipeTimer)},1500);
+}
+async function pipeRun(session,stage){
+  try{
+    const r=await api.pipeRunStep(session,stage);
+    toast(`Step running â€” ${stage.replace(/_/g," ")}`,"ok");
+    watch(r.job_id,()=>{});
+  }catch(e){toast(e.message,"err")}
+}
+async function pipeRunUntil(session,until,from){
+  try{
+    const r=await api.pipeRunUntil(session,until,from||null);
+    toast(until?`Running until ${until.replace(/_/g," ")}`:"Running to end","ok");
+    watch(r.job_id,()=>{});
+  }catch(e){toast(e.message,"err")}
+}
+async function pipeDetail(session,stepNo){
+  let d;
+  try{d=await api.pipeStepDetail(session,stepNo)}catch(e){$("#pipeDetail").innerHTML=`<p style="color:var(--coral)">${esc(e.message)}</p>`;return}
+  const e=d.entry;
+  const el=$("#pipeDetail");
+  if(!e){el.innerHTML=`<div class="lbl">step ${d.step.step} Â· ${esc(d.step.label)}</div><p style="color:var(--txt3);margin-top:8px;font-size:13px">Not run yet. Consumes: ${esc(d.step.consumes.join(", ")||"â€“")}. Produces: ${esc(d.step.produces.join(", ")||"â€“")}.</p>`;return}
+  const err=e.status==="failed"?`<div class="errcard">
+      <div class="lbl" style="color:var(--coral)">âœ— ${esc(e.label)} failed</div>
+      <p style="margin-top:6px;font-size:13px">${esc(e.error||"")}</p>
+      <div class="fn">duration: ${(e.duration_s||0).toFixed(1)}s</div>
+      ${e.warnings&&e.warnings.length?`<div class="fn" style="color:var(--amber)">warnings: ${esc(e.warnings.join(" | "))}</div>`:""}
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn sm acc" id="pdRetry">Retry Step ${e.step}</button>
+        <button class="btn sm" id="pdTb">View Full Traceback</button>
+        <button class="btn sm" id="pdCopy">Copy Error</button>
+      </div>
+      <div class="tb" id="pdTbBox" style="display:none"></div>
+    </div>`:"";
+  el.innerHTML=`<div class="lbl">step ${e.step} Â· ${esc(e.label)} Â· ${e.status}</div>
+    ${err}
+    <div style="margin-top:10px;display:grid;gap:4px;font-size:12.5px">
+      <div><b>duration:</b> ${(e.duration_s||0).toFixed(1)}s</div>
+      <div><b>artifacts:</b> ${esc((e.artifacts||[]).join(", ")||"â€“")}</div>
+      ${e.warnings&&e.warnings.length?`<div style="color:var(--amber)"><b>warnings:</b> ${esc(e.warnings.join(" | "))}</div>`:""}
+    </div>
+    <div class="lbl" style="margin-top:14px">step log</div>
+    <div class="pipe-console" style="max-height:200px" id="pdLog"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button class="btn sm" id="pdRerun">Re-run from here</button>
+      <button class="btn sm danger" id="pdResetFrom">Reset from here</button>
+    </div>`;
+  const log=$("#pdLog");
+  const evs=d.events||[];
+  log.innerHTML=evs.length?evs.map(ev=>`<div class="pev s-${esc(ev.severity)}"><span class="t">${fmtT(ev.t)}</span><span>${esc(ev.severity)}</span><span>${esc(ev.message)}${ev.duration_s!=null?` (${ev.duration_s.toFixed(1)}s)`:""}</span></div>`).join(""):"<p style='color:var(--txt3)'>no events</p>";
+  if($("#pdRetry"))$("#pdRetry").onclick=()=>pipeRun(session,d.step.pipeline_name);
+  if($("#pdTb"))$("#pdTb").onclick=()=>{
+    const box=$("#pdTbBox");
+    if(box.style.display==="none"){
+      box.style.display="block";
+      const errEv=evs.find(x=>x.traceback)||{};
+      box.textContent=errEv.traceback||e.error||"no traceback recorded";
+    }else box.style.display="none";
+  };
+  if($("#pdCopy"))$("#pdCopy").onclick=()=>{
+    navigator.clipboard.writeText(e.error||"").then(()=>toast("Error copied"));
+  };
+  if($("#pdRerun"))$("#pdRerun").onclick=()=>pipeRunUntil(session,null,d.step.pipeline_name);
+  if($("#pdResetFrom"))$("#pdResetFrom").onclick=async()=>{
+    try{
+      const r=await api.pipeResetFrom(session,d.step.pipeline_name);
+      toast(`Reset from ${d.step.label}; later steps invalidated`,"ok");
+      if(r&&r.state)location.reload();
+    }catch(e2){toast(e2.message,"err")}
+  };
+}
+async function pipeConsoleDraw(session){
+  const el=$("#pipeConsole");if(!el)return;
+  let d;
+  const sev=$("#pipeEvSev")?$("#pipeEvSev").value:null;
+  try{d=await api.pipeEvents(session)}catch(_){el.innerHTML="";return}
+  const evs=(d.events||[]).filter(ev=>!sev||ev.severity===sev);
+  el.innerHTML=evs.length?evs.slice(-200).map(ev=>`<div class="pev s-${esc(ev.severity)}"><span class="t">${fmtT(ev.t)}</span><span>${esc(ev.severity)}</span><span>${esc(ev.message)}${ev.duration_s!=null?` (${ev.duration_s.toFixed(1)}s)`:""}${ev.exception?` â€” ${esc(ev.exception)}`:""}</span></div>`).join(""):`<p style="color:var(--txt3)">no events yet â€” run a step</p>`;
+  if($("#pipeAutoScroll")&&$("#pipeAutoScroll").checked)el.scrollTop=el.scrollHeight;
+}
+function fmtT(t){
+  const d=new Date((t||0)*1000);
+  return d.toTimeString().slice(0,8);
+}
+/* ================================================================
+   VIEW â€” Review (video + synced narration cues)
    ================================================================ */
 async function vReview(session){
   session=await requireSession(session);if(!session)return studioEmpty("Review");
@@ -1394,8 +2257,20 @@ addEventListener("keydown",e=>{
    ================================================================ */
 let logTimer=null;
 async function vLogs(){
-  const jobs=store.recent.concat(Object.values(store.genJob||{}).map(id=>({session:id})))
-    .filter((v,i,a)=>a.findIndex(x=>x.session===v.session)===i).slice(0,10);
+  let jobs=store.recent.concat(Object.values(store.genJob||{}).map(id=>({session:id})))
+    .filter((v,i,a)=>a.findIndex(x=>x.session===v.session)===i);
+  if(!jobs.length){
+    /* localStorage empty/stale or browser refreshed — the dropdown would be
+       empty and the `if(!id)return` guard would silently render nothing. Fall
+       back to the server's project list (updated_at desc, limit 20). */
+    try{
+      const r=await api.projects();
+      jobs=(r.projects||[]).filter(p=>p.id)
+        .sort((a,b)=>(b.updated_at||b.created_at||0)-(a.updated_at||a.created_at||0))
+        .slice(0,20).map(p=>({session:p.id}));
+    }catch(_){/* server unreachable — dropdown stays empty, draw() shows the fetch error */}
+  }
+  jobs=jobs.slice(0,20);
   viewEl.innerHTML=`
   <div class="lbl">debug · structured job logs</div>
   <h2 class="h-disp" style="font-size:28px;margin:4px 0 16px">Logs</h2>
@@ -1423,7 +2298,17 @@ async function vLogs(){
           <span class="msg">${esc(r.msg||"")}</span></li>`).join("")
         ||`<li><time></time><span class="lv"></span><span class="st"></span><span class="msg" style="color:var(--txt3)">no log lines</span></li>`;
       $("#logList").scrollTop=$("#logList").scrollHeight;
-    }catch(e){$("#logList").innerHTML=`<li><span class="msg" style="color:var(--coral)">${esc(e.message)}</span></li>`}
+    }catch(e){
+      // 404 = the job no longer exists in this server process (it was
+      // created before a restart). Stop the 2s poll loop instead of
+      // hammering the endpoint forever, and say so clearly.
+      // "Failed to fetch" = no server listening at all (uvicorn down).
+      const msg=e.message||"";
+      const gone=/404|not found/i.test(msg);
+      const down=/failed to fetch|networkerror|load failed/i.test(msg);
+      $("#logList").innerHTML=`<li><span class="msg" style="color:var(--coral)">${esc(gone?"job no longer exists on the server (it was restarted?) — polling stopped":down?"cannot reach the server — is uvicorn running on :8000? (start it with: uvicorn webapp.main:app --port 8000)":msg)}</span></li>`;
+      if(gone)clearInterval(logTimer);
+    }
   };
   $("#logJob").onchange=draw;
   $$(".logbar .chip").forEach(c=>c.onclick=()=>{$$(".logbar .chip").forEach(x=>x.classList.remove("on"));c.classList.add("on");lvl=c.dataset.l;draw()});
@@ -1441,13 +2326,13 @@ async function vLogs(){
 async function vSettings(){
   const s=store.settings;
   viewEl.innerHTML=`
-  <div class="lbl">settings · stored in this browser, sent only on /api/run</div>
+  <div class="lbl">settings · stored server-side and in this browser, sent on /api/run</div>
   <h2 class="h-disp" style="font-size:28px;margin:4px 0 18px">Automation config</h2>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;max-width:980px">
     <label class="field"><span class="lbl">backend</span>
       <select id="sBackend">${["gemini","openai","anthropic","ollama","cloudflare","none"].map(b=>`<option ${b===s.backend?"selected":""}>${b}</option>`).join("")}</select></label>
     <label class="field"><span class="lbl">model</span><input id="sModel" value="${esc(s.model)}" placeholder="e.g. gemini-2.5-flash"></label>
-    <label class="field"><span class="lbl">api key (optional — .env works too)</span><input id="sKey" type="password" value="${esc(s.api_key)}" autocomplete="off"></label>
+    <label class="field"><span class="lbl">api key (saved server-side)</span><input id="sKey" type="password" value="${esc(s.api_key)}" autocomplete="off"></label>
     <label class="field"><span class="lbl">endpoint / base url</span><input id="sEp" value="${esc(s.endpoint)}" placeholder="http://localhost:11434"></label>
     <label class="field"><span class="lbl">cloudflare account id</span><input id="sCf" value="${esc(s.cf_account_id)}"></label>
     <label class="field"><span class="lbl">tts</span><select id="sTts">${["edge","kokoro","none"].map(b=>`<option ${b===s.tts?"selected":""}>${b}</option>`).join("")}</select></label>
@@ -1458,11 +2343,21 @@ async function vSettings(){
     <button class="btn acc" id="sSave">Save settings</button>
     <span class="gbadge" id="sG">checking gemini…</span>
   </div>
-  <p style="margin-top:14px;font-size:12px;color:var(--txt3)">Keys are kept in localStorage and passed per-request; the server never persists them (see webapp/jobs.py — config is not serialised).</p>`;
-  $("#sSave").onclick=()=>{
-    Object.assign(store.settings,{backend:$("#sBackend").value,model:$("#sModel").value,api_key:$("#sKey").value,
-      endpoint:$("#sEp").value,cf_account_id:$("#sCf").value,tts:$("#sTts").value,voice:$("#sVoice").value,style:$("#sStyle").value});
-    save();toast("Settings saved");
+  <p style="margin-top:14px;font-size:12px;color:var(--txt3)">Keys are persisted in webapp_output/settings.json server-side AND in this browser's localStorage, and are never written into job logs.</p>`;
+  /* pre-fill the key field from the server (survives browser cache clears);
+     fall back to the localStorage copy if the endpoint is unavailable */
+  api.settingsGetKey().then(k=>{const el=$("#sKey");if(el&&k.api_key)el.value=k.api_key})
+    .catch(()=>{});
+  $("#sSave").onclick=async()=>{
+    const fields={backend:$("#sBackend").value,model:$("#sModel").value,api_key:$("#sKey").value,
+      endpoint:$("#sEp").value,cf_account_id:$("#sCf").value,tts:$("#sTts").value,voice:$("#sVoice").value,style:$("#sStyle").value};
+    Object.assign(store.settings,fields);save();
+    try{
+      await api.settingsPost(fields);
+      toast("Settings saved (server + browser)","ok");
+    }catch(e){
+      toast("Settings saved in browser only — server save failed: "+e.message,"warn");
+    }
   };
   api.config().then(c=>{const b=$("#sG");b.textContent=c.gemini_configured?`gemini ready · ${c.model}`:"gemini not configured";b.classList.toggle("ok",c.gemini_configured)});
 }

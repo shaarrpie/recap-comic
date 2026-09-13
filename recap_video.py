@@ -60,6 +60,12 @@ try:
 except ImportError:
     _HAS_RICH = False
 
+# Set to True by the webapp (webapp.pipeline) before running jobs: the
+# rich.Progress bars are a CLI affordance and garble the shared uvicorn
+# console when 10+ jobs run concurrently. The frontend tracks progress
+# through job stages instead.
+EMBEDDED_MODE = False
+
 log = logging.getLogger(__name__)
 
 WIDTH, HEIGHT = 1080, 1920
@@ -243,9 +249,15 @@ def _token_overlap_ratio(a: str, b: str) -> float:
 
 def build_narration(artifact: CutArtifact, cfg: VideoConfig,
                     *, panels_hash: str) -> NarrationArtifact:
-    panels = sorted(artifact.panels, key=lambda p: p.y_start)
+    # Order by panel_index: panels_confirmed.json renumbers panel_index to
+    # the user's confirmed order (Panel Review reordering must survive).
+    # y_start is only a tiebreak for legacy artifacts with duplicate indices.
+    panels = sorted(artifact.panels, key=lambda p: (p.panel_index, p.y_start))
     entries: list[NarrationEntry] = []
     for order, p in enumerate(panels, start=1):
+        if getattr(p, "blank_flag", "normal") == "blank":
+            # blank crops are never narrated or spoken
+            continue
         text = script_text(p, include_dialogue=cfg.include_dialogue)
         quotes = [q.strip() for q in re.findall(r"[\"“]([^\"”]+)[\"”]",
                                                 p.dialogue or "")]
@@ -314,7 +326,7 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
         synth_count += 1
     total = synth_count
     done = 0
-    if _HAS_RICH:
+    if _HAS_RICH and not EMBEDDED_MODE:
         progress_ctx = Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
@@ -415,10 +427,16 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
     t = 0.0
     skipped_missing = 0
     for order, p in enumerate(sorted(artifact.panels,
-                                     key=lambda p: p.y_start), start=1):
+                                      key=lambda p: (p.panel_index, p.y_start)), start=1):
         h = p.y_end - p.y_start
         if h <= 0:
             log.warning("skipping zero-height panel %s", p.id)
+            continue
+        if getattr(p, "blank_flag", "normal") == "blank":
+            # deterministic blank detector marked this crop empty; it must
+            # not reach narration/TTS/render unless the user kept it.
+            log.info("skipping panel %s in timeline: blank_flag=blank "
+                     "(score %.2f)", p.id, getattr(p, "blank_score", 0.0))
             continue
         img = (panels_dir / p.image_file).resolve()
         if not img.is_file():
@@ -433,7 +451,7 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
                 p.id, img)
             skipped_missing += 1
             continue
-        pan = compute_pan(artifact.width, h)
+        pan = compute_pan(p.strip_width or artifact.width, h)
         a = by_audio.get(p.id)
         text = by_text[p.id].text if p.id in by_text else ""
         dur = display_seconds(
@@ -523,28 +541,24 @@ def write_srt(timeline: TimelineArtifact, narration: NarrationArtifact,
 def render_video(timeline: TimelineArtifact, out_path: Path,
                  cfg: VideoConfig) -> None:
     exe = _resolve_ffmpeg(cfg.ffmpeg_exe)
-    from adapters.render_ffmpeg import RenderError, render
+    from adapters.render_ffmpeg import (
+        RenderError, pick_render_strategy, render, render_chunked)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(out_path.stem + ".partial.mp4")
     log.info("render_video start out=%s timeline_entries=%d",
              out_path, len(timeline.entries))
     t0 = time.time()
-    if _HAS_RICH:
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            transient=True,
-        ) as progress_ctx:
-            progress_ctx.add_task("Rendering video with ffmpeg...")
-            try:
-                render(timeline, tmp, ffmpeg_exe=exe)
-            except RenderError as exc:
-                raise VideoError(str(exc)) from exc
-    else:
-        try:
+    strategy = pick_render_strategy(len(timeline.entries), total_seconds(timeline))
+    log.info("render strategy=%s", strategy)
+    try:
+        if strategy == "chunked":
+            render_chunked(
+                timeline, tmp, ffmpeg_exe=exe, chunk_size=12,
+                profile={"preset": "veryfast", "crf": "23", "threads": "4"})
+        else:
             render(timeline, tmp, ffmpeg_exe=exe)
-        except RenderError as exc:
-            raise VideoError(str(exc)) from exc
+    except RenderError as exc:
+        raise VideoError(str(exc)) from exc
     elapsed = time.time() - t0
     tmp.replace(out_path)
     _apply_faststart(out_path, exe)
@@ -678,8 +692,6 @@ def render_edited_project(editor_path: Path, out_path: Path,
     cfg = cfg or VideoConfig()
     editor = Editor.load(editor_path)
     session_dir = editor_path.parent
-    panels_dir = session_dir
-    audio_dir = session_dir / "audio"
 
     # Reconstruct timeline from edited entries
     tl_entries = []

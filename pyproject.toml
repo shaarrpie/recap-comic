@@ -40,8 +40,10 @@ kokoro = ["kokoro-onnx==0.6.1"]
 # Render + OCR
 render = ["moviepy==2.2.1", "imageio-ffmpeg==0.6.0"]
 ocr = ["pytesseract==0.3.13"]
-# Webapp
-web = ["fastapi==0.115.0", "uvicorn==0.30.0", "python-multipart==0.0.12"]
+# Webapp (fastapi is imported at module scope by webapp.voice_api, so
+# edge-tts is required for `uvicorn webapp.main:app` to boot)
+web = ["fastapi==0.115.0", "uvicorn==0.30.0", "python-multipart==0.0.12",
+       "edge-tts==7.2.8"]
 # Development / testing
 dev = [
     "pytest==9.1.1",
@@ -65,10 +67,15 @@ py-modules = [
     "debug_view",
     "bubble_detector",
     "recap_video",
+    "panel_validator",
+    "blank_detector",
 ]
 
+[tool.setuptools.package-data]
+webapp = ["static/*.html"]
+
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "webapp"]
 addopts = "-q"
 
 [tool.ruff]

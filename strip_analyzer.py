@@ -50,6 +50,13 @@ from pydantic import BaseModel, Field, PrivateAttr, ValidationError, model_valid
 from adapters._logging import sanitize
 from adapters.schemas import BBox
 
+# Set to True by the webapp (webapp.pipeline) before running jobs. The
+# rich.Progress spinner in analyze_strip is a CLI affordance: inside the
+# server it garbles the uvicorn console (10+ jobs each drawing their own
+# 0% bar into the same terminal) and the frontend tracks progress via
+# job stages anyway. When embedded, progress is logged instead.
+EMBEDDED_MODE = False
+
 try:
     from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
     _HAS_RICH = True
@@ -448,7 +455,7 @@ def _call_with_retry(
             kwargs: dict[str, object] = {"previous_context": previous_context}
             if retry_feedback and attempt > 1 and supports_feedback:
                 kwargs["retry_feedback"] = retry_feedback
-            return backend.analyze_chunk(image, **kwargs)
+            return backend.analyze_chunk(image, **kwargs)  # type: ignore[arg-type]
         except Exception as exc:  # noqa: BLE001 - retried, then re-raised
             last = exc
             msg = str(exc).lower()
@@ -462,12 +469,12 @@ def _call_with_retry(
             # over and the user sees a clear message instead of a 3-attempt
             # stall that still fails.
             if is_quota and attempt < attempts:
-                retry_delay = _parse_retry_delay(exc) or 0
+                quota_delay = _parse_retry_delay(exc) or 0
                 log.warning(
                     "chunk analysis attempt %d/%d hit a quota/rate-limit "
                     "(%s); not retrying on the same key — failing fast so "
                     "the fallback can take over (retry-after ~%.0fs)",
-                    attempt, attempts, exc, retry_delay)
+                    attempt, attempts, exc, quota_delay)
                 raise
             # Feed parse/validation errors back to the model on the next
             # attempt (temperature=0 means an identical prompt will produce
@@ -540,7 +547,7 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
         bases: list[int] = []
         prev_entries: list[PanelPlanEntry] = []
         characters: list[str] = []
-        if _HAS_RICH:
+        if _HAS_RICH and not EMBEDDED_MODE:
             progress_ctx = Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
@@ -905,7 +912,12 @@ class OpenAIVisionBackend:
         if not model or not model.strip():
             raise ValueError("--model is required for the openai backend")
         self.model = model
-        self._api_key = api_key or os.environ.get("OPENAI_API_KEY")
+        # Key chain: caller api_key -> OPENAI_API_KEY env -> manual webapp
+        # settings.json key (shared helper in adapters.ai_models; no
+        # duplicated file-read logic here).
+        from adapters.ai_models import manual_key
+        self._api_key = (api_key or os.environ.get("OPENAI_API_KEY")
+                         or manual_key())
         if not self._api_key:
             raise RuntimeError(
                 "OPENAI_API_KEY is not set; pass api_key or set the env var")
@@ -946,6 +958,144 @@ class OpenAIVisionBackend:
         return parse_entries_from_json(raw_text, image.size[1],
                                       chunk_width=image.size[0])
 
+
+class XkiroVisionBackend:
+    """OpenAI-compatible vision backend: Qwen primary + Mistral fallback.
+
+    Default endpoint https://api.xkiro.com/v1 (XKIRO_BASE_URL override),
+    key from adapters.ai_models.api_key_from_env: explicit param, then
+    manual webapp settings.json, then XKIRO_API_KEY / XKIRO_API_KEYS /
+    GEMINI_API_KEYS / GEMINI_API_KEY.
+
+    The SAME prompt + SAME chunk image is sent to both models; the input /
+    output contract (parse_entries_from_json) is identical, so task
+    compatibility is preserved. Empty / invalid-JSON / image-rejection /
+    timeout / HTTP errors from Qwen all trigger the Mistral retry via the
+    shared adapters.ai_models wrapper. If both fail, VisionAnalysisError
+    surfaces both causes (never fabricated panels).
+
+    AI scope: semantic panel understanding only. Physical crop coordinates
+    remain advisory here — guided_cutter snaps every boundary to
+    deterministically detected gutters and blank_detector stays pure CV.
+    """
+
+    name = "xkiro"
+
+    def __init__(self, model: str | None = None,
+                 api_key: str | None = None,
+                 base_url: str | None = None,
+                 timeout: int = 120,
+                 primary_model: str | None = None,
+                 fallback_model: str | None = None,
+                 max_tokens: int = 4096,
+                 request_fn: object = None) -> None:
+        from adapters import ai_models as _ai
+        self.primary_model = _ai.resolve_model_id(
+            primary_model or model or _ai.PRIMARY_MODEL)
+        self.fallback_model = _ai.resolve_model_id(
+            fallback_model or _ai.FALLBACK_MODEL)
+        if not self.primary_model.strip():
+            raise ValueError("primary model id is required")
+        # Cache key must distinguish the model pair (plus prompt/image,
+        # which analyze_strip already folds in via input/config hashes).
+        self.model = f"{self.primary_model}=>{self.fallback_model}"
+        self._api_key = api_key or _ai.api_key_from_env()
+        if not self._api_key and request_fn is None:
+            raise RuntimeError(
+                "XKIRO_API_KEY is not set; set it in .env or pass api_key "
+                "(use --backend none for offline mode)")
+        self._base_url = (base_url or _ai.DEFAULT_BASE_URL).rstrip("/")
+        self.timeout = timeout
+        self.max_tokens = max_tokens
+        self._request_fn = request_fn
+        self.usage_log: list[dict] = []
+        self.last_usage: dict | None = None
+        self.last_model_used: str | None = None
+        self.fallback_used = False
+        self.last_primary_error: Exception | None = None
+
+    def _request_once(self, model_id: str, prompt: str, b64: str,
+                      image: Image.Image):
+        """Single raw request for `model_id`. Raises on any failure,
+        including empty or non-JSON responses (callers treat as fallback
+        triggers, never as usable output)."""
+        if self._request_fn is not None:
+            raw_text = self._request_fn(model_id, prompt, b64, image)  # type: ignore[operator]
+            if raw_text is None or not str(raw_text).strip():
+                raise ValueError(f"model {model_id} returned an empty response")
+            return raw_text, None
+        import openai  # optional dependency, imported lazily
+
+        client = openai.OpenAI(api_key=self._api_key, base_url=self._base_url,
+                               timeout=self.timeout)
+        resp = client.chat.completions.create(
+            model=model_id,
+            max_tokens=self.max_tokens,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": [
+                    {"type": "image_url", "image_url": {
+                        "url": f"data:image/png;base64,{b64}"}}]},
+            ],
+        )
+        raw_text = resp.choices[0].message.content
+        if raw_text is None or not raw_text.strip():
+            raise ValueError(f"model {model_id} returned an empty response")
+        return raw_text, resp
+
+    def _analyze_with(self, model_id: str, image: Image.Image,
+                      prompt: str, b64: str):
+        raw_text, resp = self._request_once(model_id, prompt, b64, image)
+        if resp is not None:
+            self.last_usage = _capture_usage(resp)
+            self.usage_log.append(self.last_usage or {})
+        # Raises ValueError on invalid JSON / schema violations -> fallback.
+        entries, characters = parse_entries_from_json(
+            raw_text, image.size[1], chunk_width=image.size[0])
+        if not entries:
+            # An empty panel list is an unusable response for a strip chunk:
+            # fall back to the next model rather than silently continuing
+            # with no panels.
+            raise ValueError(f"model {model_id} returned no panels")
+        return entries, characters
+
+    def analyze_chunk(self, image: Image.Image,
+                      previous_context: str = "",
+                      retry_feedback: str = ""
+                      ) -> tuple[list[PanelPlanEntry], list[str]]:
+        import base64
+
+        from adapters import ai_models as _ai
+
+        # Always send the ACTUAL chunk image; never text-only. Both models
+        # share this OpenAI-compatible image_url shape.
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
+        prompt = _chunk_prompt(image.size[1], previous_context,
+                               retry_feedback=retry_feedback)
+        operation = f"xkiro-analyze-chunk:{image.size[0]}x{image.size[1]}"
+        try:
+            outcome = _ai.call_ai_with_fallback(
+                operation,
+                lambda: self._analyze_with(self.primary_model, image,
+                                           prompt, b64),
+                lambda: self._analyze_with(self.fallback_model, image,
+                                           prompt, b64),
+                primary_model=self.primary_model,
+                fallback_model=self.fallback_model)
+        except _ai.AIFallbackError as exc:
+            raise VisionAnalysisError(
+                f"xkiro vision failed (primary {self.primary_model}: "
+                f"{exc.primary_error}; fallback {self.fallback_model}: "
+                f"{exc.fallback_error})") from exc
+        self.last_model_used = outcome.model_used
+        self.fallback_used = outcome.fallback_used
+        self.last_primary_error = outcome.primary_error
+        return outcome.result
+
+
 class AnthropicVisionBackend:
     """Anthropic backend. Verified in this session (anthropic==1.4.0):
     messages.create(model, max_tokens, messages, ...) — image content blocks
@@ -959,7 +1109,12 @@ class AnthropicVisionBackend:
         if not model or not model.strip():
             raise ValueError("--model is required for the anthropic backend")
         self.model = model
-        self._api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
+        # Key chain: caller api_key -> ANTHROPIC_API_KEY env -> manual webapp
+        # settings.json key (shared helper in adapters.ai_models; no
+        # duplicated file-read logic here).
+        from adapters.ai_models import manual_key
+        self._api_key = (api_key or os.environ.get("ANTHROPIC_API_KEY")
+                         or manual_key())
         if not self._api_key:
             raise RuntimeError(
                 "ANTHROPIC_API_KEY is not set; pass api_key or set the env var")

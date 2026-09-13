@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "plan.schema.json",
+  "title": "manhwa-recap plan.json",
+  "description": "Phase-1 panel plan emitted by strip_analyzer.PanelPlan. Coordinates are absolute pixels in the source strip; JSON Schema validates the wire shape and Pydantic validates cross-field rules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source",
+    "width",
+    "height",
+    "model",
+    "config_hash",
+    "input_hash",
+    "entries"
+  ],
+  "properties": {
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "config_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "input_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "provenance": {
+      "type": "string",
+      "enum": [
+        "ai",
+        "fallback"
+      ],
+      "default": "ai"
+    },
+    "characters": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [],
+      "uniqueItems": true
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/panelPlanEntry"
+      }
+    }
+  },
+  "$defs": {
+    "bbox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "x",
+        "y",
+        "w",
+        "h"
+      ],
+      "properties": {
+        "x": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "y": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "w": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "h": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "panelPlanEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "panel_index",
+        "y_start",
+        "y_end"
+      ],
+      "properties": {
+        "panel_index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "y_start": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Must be less than y_end and within the plan height."
+        },
+        "y_end": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Must be greater than y_start and within the plan height."
+        },
+        "narration": {
+          "type": "string",
+          "default": ""
+        },
+        "dialogue": {
+          "type": "string",
+          "default": ""
+        },
+        "panel_type": {
+          "type": "string",
+          "enum": [
+            "single",
+            "tall_scenic",
+            "transition_gutter",
+            "multi_sub_panel",
+            "unknown"
+          ],
+          "default": "unknown"
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.5
+        },
+        "bubble_boxes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bbox"
+          },
+          "default": []
+        }
+      }
+    }
+  }
+}

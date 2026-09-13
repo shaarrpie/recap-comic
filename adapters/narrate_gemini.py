@@ -89,12 +89,21 @@ def build_verbatim(ocr: OcrArtifact, panel_ids: list[str]) -> NarrationArtifact:
 
 def generate(narration_request: str, ocr: OcrArtifact, panel_ids: list[str],
                mode: str = "narrator", *, model: str = "gemini-2.0-flash",
-               max_attempts: int = 3, debug_dir: Path = Path("llm_debug")
+               max_attempts: int = 3, debug_dir: Path = Path("llm_debug"),
+               api_key: str | None = None
                ) -> NarrationArtifact:
     from google import genai  # lazy import
     from google.genai import types
 
     from adapters._gemini_keys import from_env
+
+    rotator = from_env()
+    if api_key:
+        # Explicit key wins over the env rotator without mutating the
+        # process environment (thread-safety: concurrent jobs must not
+        # observe each other's swapped keys).
+        from adapters._gemini_keys import KeyRotator
+        rotator = KeyRotator([api_key])
 
     rotator = from_env()
     dump = "\n".join(

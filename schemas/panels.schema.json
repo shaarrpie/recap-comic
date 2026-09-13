@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "panels.schema.json",
+  "title": "manhwa-recap panels.json",
+  "description": "Phase-2 guided-cut artifact emitted by guided_cutter.CutArtifact. Coordinates are absolute pixels in the source strip; JSON Schema validates the wire shape and Pydantic validates model-level rules.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "source",
+    "width",
+    "height",
+    "plan_hash",
+    "config",
+    "panels"
+  ],
+  "properties": {
+    "source": {
+      "type": "string",
+      "minLength": 1
+    },
+    "width": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "height": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "plan_hash": {
+      "type": "string",
+      "minLength": 1
+    },
+    "config": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "panels": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/cutPanel"
+      }
+    }
+  },
+  "$defs": {
+    "cutPanel": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "panel_index",
+        "y_start",
+        "y_end",
+        "narration",
+        "dialogue",
+        "panel_type",
+        "confidence",
+        "image_file"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "panel_index": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "y_start": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Must be less than y_end and within the artifact height."
+        },
+        "y_end": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Must be greater than y_start and within the artifact height."
+        },
+        "narration": {
+          "type": "string"
+        },
+        "dialogue": {
+          "type": "string"
+        },
+        "panel_type": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "image_file": {
+          "type": "string",
+          "minLength": 1
+        },
+        "output_width": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Normalized panel PNG width in px (390 when output normalization is enabled; null for legacy artifacts)."
+        },
+        "output_height": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Normalized panel PNG height in px (clamped to [760, 800] when output normalization is enabled; null for legacy artifacts)."
+        },
+        "strip_width": {
+          "anyOf": [
+            {
+              "type": "integer",
+              "minimum": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "split_of": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "merged_with": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "default": [],
+          "uniqueItems": true
+        },
+        "snap_distances": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "default": [],
+          "maxItems": 2
+        },
+        "blank_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0
+        },
+        "blank_flag": {
+          "type": "string",
+          "enum": [
+            "normal",
+            "suspicious",
+            "blank"
+          ],
+          "default": "normal"
+        },
+        "blank_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        }
+      }
+    }
+  }
+}

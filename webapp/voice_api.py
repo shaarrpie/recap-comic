@@ -14,16 +14,13 @@ studio folds it into `rate` and does not pretend edge has an independent speed.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
-import time
 from pathlib import Path
 
-from fastapi import HTTPException
-
 import edge_tts
-
-from .tts_helpers import synth_one
+from fastapi import HTTPException
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = BASE_DIR / "webapp_output"
@@ -58,16 +55,18 @@ def get_voice(session: str) -> dict:
     p = _session_dir(session) / "voice.json"
     cfg = dict(DEFAULT_VOICE)
     if p.is_file():
-        try:
+        with contextlib.suppress(Exception):
             cfg.update({k: v for k, v in json.loads(p.read_text("utf-8")).items()
                         if k in cfg})
-        except Exception:
-            pass
     return cfg
 
 
 def put_voice(session: str, cfg: dict) -> dict:
     cur = get_voice(session)
+    changed = False
+    for k in DEFAULT_VOICE:
+        if k in cfg and cfg[k] != cur.get(k):
+            changed = True
     for k in DEFAULT_VOICE:
         if k in cfg:
             cur[k] = cfg[k]
@@ -75,16 +74,23 @@ def put_voice(session: str, cfg: dict) -> dict:
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(cur, indent=2), "utf-8")
     tmp.replace(p)
+    if changed:
+        # Step-by-Step ledger: a voice change only invalidates the render.
+        try:
+            from . import checkpoint as _cp
+            _cp.apply_edit_invalidation(session, "voice.json")
+        except Exception:
+            pass
     return cur
 
 
-def list_voices(provider: str = "edge") -> dict:
+async def list_voices(provider: str = "edge") -> dict:
     if provider != "edge":
         raise HTTPException(400, f"provider {provider!r} exposes no catalogue")
     try:
-        raw = asyncio.run(edge_tts.list_voices())
+        raw = await edge_tts.list_voices()
     except Exception as exc:  # network / auth
-        raise HTTPException(503, f"could not fetch voice list: {exc}")
+        raise HTTPException(503, f"could not fetch voice list: {exc}") from exc
     voices = [{
         "id": v["Name"],
         "shortname": v.get("ShortName", ""),
@@ -100,8 +106,10 @@ def _rate_args(cfg: dict) -> dict:
     """Map the studio config onto edge-tts rate/pitch strings."""
     rate = int(cfg.get("rate", 0) or 0)
     speed = float(cfg.get("speed", 1.0) or 1.0)
-    # edge has a single speech-rate control; fold the speed multiplier in.
-    combined = int(round(rate * speed))
+    # edge has a single speech-rate control; fold the speed multiplier in
+    # as a percentage offset so speed=1.0 is neutral (rate*speed would be
+    # stuck at 0% whenever rate is 0).
+    combined = rate + round((speed - 1.0) * 100)
     pitch = int(cfg.get("pitch", 0) or 0)
     return {"rate": f"+{combined}%" if combined >= 0 else f"{combined}%",
             "pitch": f"+{pitch}Hz" if pitch >= 0 else f"{pitch}Hz"}
@@ -136,14 +144,12 @@ async def _preview_mp3(session: str, cfg: dict, text: str) -> Path:
         out.with_suffix(".tmp").write_bytes(bytes(audio))
         out.with_suffix(".tmp").replace(out)
     except Exception as exc:
-        raise HTTPException(502, f"preview synthesis failed: {exc}")
+        raise HTTPException(502, f"preview synthesis failed: {exc}") from exc
     # prune old previews (keep newest 30 by mtime)
     files = sorted(pre.glob("ui-*.mp3"), key=lambda p: p.stat().st_mtime)
     for old in files[:-30]:
-        try:
+        with contextlib.suppress(OSError):
             old.unlink()
-        except OSError:
-            pass
     return out
 
 

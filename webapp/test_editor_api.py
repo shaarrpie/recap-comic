@@ -1,5 +1,7 @@
 # webapp/test_editor_api.py
 import io
+import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,10 +11,19 @@ from webapp import pipeline
 from webapp.jobs import store
 
 
-@pytest.fixture(autouse=True)
-def _stub_engine():
-    def fake_validate(job, **kwargs): job.log("INFO", "ok")
-    def fake_load(job, **kwargs): return None
+def _png_bytes(w: int = 4, h: int = 8) -> bytes:
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (w, h), (255, 255, 255)).save(buf, "PNG")
+    return buf.getvalue()
+
+
+def _stub_generate_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stub heavy stages BY NAME; keep apply_* AND create_editor_project
+    real (the editor project is what this test exercises)."""
+    def fake_stage(job, **kwargs):
+        job.log("INFO", "stubbed")
+
     def fake_segment(job, **kwargs):
         job.panels = [{"id": f"panel_{i:03d}", "panel_index": i,
                        "y_start": 0, "y_end": 10, "narration": "n",
@@ -20,28 +31,26 @@ def _stub_engine():
                        "confidence": 0.9,
                        "image_file": f"panel_{i:03d}.png"}
                       for i in range(1, 5)]
-    def fake_gemini(job, **kwargs): pass
-    def fake_rest(job, **kwargs): pass
 
-    original = list(pipeline.PIPELINES["generate"])
-    original[0] = ("validate_config", fake_validate)
-    for i, name in enumerate(["load_images", "segment_panels",
-                              "apply_order", "gemini_narration",
-                              "build_script", "tts_audio",
-                              "render_video", "save_outputs"]):
-        if name == "segment_panels":
-            fn = fake_segment
-        elif name == "apply_order":
-            fn = pipeline._apply_order
+    keep_real = {"apply_confirmed", "apply_order", "create_editor_project"}
+    stubbed = []
+    for name, fn in pipeline.PIPELINES["generate"]:
+        if name in keep_real:
+            stubbed.append((name, fn))
+        elif name == "segment_panels":
+            stubbed.append((name, fake_segment))
         else:
-            fn = fake_rest
-        original[i] = (name, fn)
-    pipeline.PIPELINES["generate"] = original
+            stubbed.append((name, fake_stage))
+    monkeypatch.setitem(pipeline.PIPELINES, "generate", stubbed)
+
+
+@pytest.fixture(autouse=True)
+def _stub_engine(monkeypatch):
+    _stub_generate_pipeline(monkeypatch)
     yield
 
 
 def _wait_done(job_id, timeout=5.0):
-    import time
     t0 = time.time()
     while time.time() - t0 < timeout:
         j = store.get(job_id)
@@ -51,16 +60,14 @@ def _wait_done(job_id, timeout=5.0):
     raise AssertionError(f"job {job_id} never reached a terminal state")
 
 
-def test_editor_round_trip(client=None):
+def test_editor_round_trip():
     c = TestClient(webmain.app)
-    up = c.post("/api/upload", files={"file": ("s.png", io.BytesIO(b"x"),
-                                               "image/png")})
+    up = c.post("/api/upload", files={"file": ("s.png", io.BytesIO(_png_bytes()),
+                                                "image/png")})
     session = up.json()["job_id"]
 
     # Create minimal automation outputs BEFORE running generation so editor
     # project can be created in the _create_editor_project stage.
-    import json
-    from pathlib import Path
     from webapp.main import OUTPUT_DIR
     d = OUTPUT_DIR / session
     d.mkdir(parents=True, exist_ok=True)
@@ -111,11 +118,12 @@ def test_editor_round_trip(client=None):
     }), "utf-8")
     (d / "recap.srt").write_text("1\n00:00:00,000 --> 00:00:03,000\nA\n\n2\n00:00:03,000 --> 00:00:06,500\nB\n\n3\n00:00:06,500 --> 00:00:10,500\nC\n\n4\n00:00:10,500 --> 00:00:13,500\nD\n\n", "utf-8")
     for i in range(1, 5):
-        (d / f"panel_{i:03d}.png").write_bytes(b"x")
+        (d / f"panel_{i:03d}.png").write_bytes(_png_bytes())
 
-    r = c.post("/api/run", json={"session": session, "order": None})
+    r = c.post("/api/run", json={"session": session, "order": None,
+                                 "backend": "none"})
     job = _wait_done(r.json()["job_id"])
-    assert job.status.value == "completed"
+    assert job.status.value == "completed", job.error
 
     # load editor project
     proj = c.get(f"/api/editor/{session}")
@@ -161,6 +169,13 @@ def test_editor_round_trip(client=None):
     data = r.json()
     fx = next(e for e in data["effects"] if e["panel_id"] == "panel_002")
     assert fx["kind"] == "zoom_in"
+
+    # effect undo restores the previous kind (not the new one)
+    r = c.post(f"/api/editor/{session}/undo")
+    assert r.status_code == 200
+    data = r.json()
+    fx = next(e for e in data["effects"] if e["panel_id"] == "panel_002")
+    assert fx["kind"] == "static"
 
     # caption update
     cap_id = data["captions"][0]["id"]

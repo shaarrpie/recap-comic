@@ -266,6 +266,81 @@ def test_thin_panel_filtered_in_guided_cut(tmp_path: Path) -> None:
     assert len(artifact.panels) >= 2
 
 
+def _panel_png_size(out_dir: Path, image_file: str) -> tuple[int, int]:
+    with Image.open(out_dir / image_file) as img:
+        img.load()
+        return img.size
+
+
+def test_panel_output_size_is_normalized(tmp_path: Path) -> None:
+    """Output-size policy: PNGs are exactly 390px wide, height in [760, 800].
+
+    Source coordinates stay full-resolution; only the PNG bytes change.
+    """
+    strip = tmp_path / "strip.png"
+    make_strip(1700, panels=[(0, 800), (820, 1620)],
+               gutters=[(800, 820)]).save(strip)
+    out = tmp_path / "panels"
+    plan = plan_from([(0, 800), (820, 1620)], height=1700)
+    artifact = gc.guided_cut(strip, plan, out_dir=out)
+    assert len(artifact.panels) == 2
+    for p in artifact.panels:
+        w, h = _panel_png_size(out, p.image_file)
+        assert w == 390
+        assert 760 <= h <= 800
+        assert p.output_width == w
+        assert p.output_height == h
+        # Source geometry untouched: y range still matches the plan.
+        assert p.y_end > p.y_start
+
+
+def test_panel_output_size_clamps_tall_and_short(tmp_path: Path) -> None:
+    """One panel outside the bounds on each side: tall crops to 800, short pads to 760."""
+    strip = tmp_path / "strip.png"
+    # Tall panel: 800px-wide crop, 1600px tall -> scaled to 390x780 (in bounds,
+    # so the direct unit check below covers the true out-of-bounds paths).
+    make_strip(2000, panels=[(0, 1600), (1620, 1720)],
+               gutters=[(1600, 1620)]).save(strip)
+    out = tmp_path / "panels"
+    plan = plan_from([(0, 1600), (1620, 1720)], height=2000)
+    artifact = gc.guided_cut(
+        strip, plan, out_dir=out,
+        config=gc.CutterConfig(normalize_output=True))
+    assert len(artifact.panels) == 2
+    for p in artifact.panels:
+        w, h = _panel_png_size(out, p.image_file)
+        assert w == 390
+        assert 760 <= h <= 800
+
+    # True out-of-bounds paths on the pure helper (deterministic, no I/O):
+    tall = Image.new("RGB", (800, 4000), (120, 30, 30))
+    assert gc.normalize_panel_image(tall).size == (390, 800)
+    short = Image.new("RGB", (800, 100), (30, 120, 30))
+    assert gc.normalize_panel_image(short).size == (390, 760)
+    # Legacy opt-out keeps the raw crop size.
+    raw = gc.normalize_panel_image(tall, max_output_height=5000,
+                                   min_output_height=1)
+    assert raw.size[0] == 390
+
+
+def test_panel_output_normalize_opt_out_keeps_fullres(tmp_path: Path) -> None:
+    """normalize_output=False restores legacy full-resolution crops."""
+    strip = tmp_path / "strip.png"
+    make_strip(1700, panels=[(0, 800), (820, 1620)],
+               gutters=[(800, 820)]).save(strip)
+    out = tmp_path / "panels"
+    plan = plan_from([(0, 800), (820, 1620)], height=1700)
+    artifact = gc.guided_cut(
+        strip, plan, out_dir=out,
+        config=gc.CutterConfig(normalize_output=False))
+    assert len(artifact.panels) == 2
+    for p in artifact.panels:
+        w, h = _panel_png_size(out, p.image_file)
+        assert (w, h) == (800, p.y_end - p.y_start)
+        assert p.output_width is None
+        assert p.output_height is None
+
+
 def test_phase1_cache_avoids_recall(tmp_path: Path) -> None:
     strip = tmp_path / "strip.png"
     make_strip(2200).save(strip)
@@ -357,6 +432,45 @@ def test_fallback_segments_sample_strip(tmp_path: Path) -> None:
     assert len(plan.entries) == 5
     assert [(e.y_start, e.y_end) for e in plan.entries] == [
         (0, 1107), (1107, 1907), (1907, 2807), (2807, 3707), (3707, 4400)]
+
+
+def test_gutter_broken_by_character_still_detected(tmp_path: Path) -> None:
+    """Majority-width gutter test (no AI): a gutter that is NOT uniform across
+    the full strip width — a character stands in it, or a border line breaks
+    it — must still be detected, otherwise the cutter falls back to the
+    nearest locally-flat run and cuts mid-character."""
+    strip = tmp_path / "strip.png"
+    # Two art panels with a 16px white gutter between them, but a 200px-wide
+    # black bar (simulating a character/border) crosses the gutter, so no
+    # row is uniform across the full 800px width.
+    img = make_strip(1200, panels=[(40, 600), (616, 1160)],
+                     gutters=[(600, 616)])
+    arr = np.array(img)
+    arr[600:616, 300:500] = 0   # break the gutter over 200px of its width
+    Image.fromarray(arr).save(strip)
+    plan = gp.fallback_plan_from_gutter_detector(strip)
+    assert len(plan.entries) == 2, (
+        f"expected the broken gutter to be detected; got "
+        f"{[(e.y_start, e.y_end) for e in plan.entries]}")
+    assert plan.entries[0].y_end == plan.entries[1].y_start
+
+
+def test_character_hair_is_not_cut(tmp_path: Path) -> None:
+    """A locally-uniform block (solid black hair) that covers only a fraction
+    of the strip width must NOT be mistaken for a gutter."""
+    strip = tmp_path / "strip.png"
+    # No real gutter anywhere; a 200px-wide solid black block sits in the
+    # middle of otherwise-noisy art. The cutter must keep the strip whole
+    # (no cut) rather than slicing through the hair.
+    img = make_strip(1200, panels=[(40, 1160)])
+    arr = np.array(img)
+    arr[500:600, 300:500] = 0   # solid black block, 200px of 800px width
+    Image.fromarray(arr).save(strip)
+    plan = gp.fallback_plan_from_gutter_detector(strip)
+    # No validated valley -> the strip stays one panel, never a blind cut.
+    assert len(plan.entries) == 1, (
+        f"expected the strip to stay whole (hair is not a gutter); got "
+        f"{[(e.y_start, e.y_end) for e in plan.entries]}")
 
 
 # --- New tests for Step 6 fixes and Step 1/5 additions ---

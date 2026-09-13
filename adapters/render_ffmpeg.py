@@ -284,15 +284,12 @@ def render_chunked(timeline: TimelineArtifact, out_path: Path,
             raise RenderError(concat_cmd, tail)
     finally:
         # clean up temp segment files
+        import contextlib
         for f in tmp.iterdir():
-            try:
+            with contextlib.suppress(OSError):
                 f.unlink()
-            except OSError:
-                pass
-        try:
+        with contextlib.suppress(OSError):
             tmp.rmdir()
-        except OSError:
-            pass
 
 
 def pick_render_strategy(n_panels: int, total_seconds: float) -> str:

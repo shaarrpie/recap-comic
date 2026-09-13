@@ -1,15 +1,21 @@
 # tests/test_editor_render.py
 """Test rendering an edited project without regenerating narration/audio."""
-import io
 import json
-import shutil
 
 import pytest
 from PIL import Image
 
 from adapters.editor import Editor, EditorProject
-from adapters.schemas import AudioArtifact, AudioEntry, BBox, Meta, NarrationArtifact, NarrationEntry, TimelineArtifact
-from recap_video import VideoConfig, render_edited_project, total_seconds
+from adapters.schemas import (
+    AudioArtifact,
+    AudioEntry,
+    BBox,
+    Meta,
+    NarrationArtifact,
+    NarrationEntry,
+    TimelineArtifact,
+)
+from recap_video import VideoConfig, render_edited_project
 
 
 def _has_ffmpeg() -> bool:

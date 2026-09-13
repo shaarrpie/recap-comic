@@ -33,6 +33,7 @@ from PIL import Image
 import guided_pipeline as gp
 import strip_analyzer as sa
 from adapters._logging import get_logger, setup_logging
+from guided_cutter import CutArtifact, CutPanel
 
 _WRITE_ATOMIC = sa.write_atomic
 
@@ -106,9 +107,10 @@ def _default_cache_dir() -> Path:
     return Path.home() / ".cache" / "recap-comic"
 
 
-_VALID_BACKENDS = {"gemini", "openai", "anthropic", "ollama", "local", "cloudflare", "fixture", "none"}
+_VALID_BACKENDS = {"xkiro", "qwen", "mistral", "gemini", "openai", "anthropic", "ollama", "local", "cloudflare", "fixture", "deterministic", "cv", "manual", "none"}
 _VALID_TTS = {"edge", "kokoro", "none"}
 _VALID_STYLES = {"recap", "literal"}
+_VALID_BLANK_SENS = {"low", "conservative", "high"}
 
 
 def _validate_backend(name: str) -> str:
@@ -146,6 +148,41 @@ def _validate_style(name: str) -> str:
     return n
 
 
+def _validate_blank_sensitivity(name: str) -> str:
+    n = name.lower()
+    if n not in _VALID_BLANK_SENS:
+        raise typer.BadParameter(
+            f"unknown --blank-sensitivity {name!r}; choose from: "
+            f"{', '.join(sorted(_VALID_BLANK_SENS))}")
+    return n
+
+
+def _detect_blanks_for_debug(strip: Path, sensitivity: str):
+    """Run the deterministic (no-AI) blank detector on a strip for debug
+    overlays. Never raises: an empty list means 'nothing found'."""
+    try:
+        import numpy as np
+        from PIL import Image
+
+        from blank_detector import BLANK, BlankDetectorConfig, detect_blank_regions
+        with Image.open(strip) as img:
+            img.load()
+            gray = np.asarray(img.convert("L"))
+            rgb = np.asarray(img.convert("RGB"))
+        regions = detect_blank_regions(
+            gray, rgb=rgb, config=BlankDetectorConfig(preset=sensitivity))
+        for r in regions:
+            if r.verdict == BLANK:
+                typer.echo(
+                    f"Blank region detected\n  Y: {r.y_start}-{r.y_end}\n"
+                    f"  Height: {r.height}px\n  Blank score: {r.score:.2f}\n"
+                    f"  Reasons: {'; '.join(r.reasons)}")
+        return regions
+    except Exception as exc:  # noqa: BLE001 - debug tool; never fatal
+        log.warning("blank detection for debug overlay failed: %s", exc)
+        return []
+
+
 @guided_app.command("plan")
 def guided_plan(
     strip: Path = typer.Argument(..., exists=True, dir_okay=False,
@@ -153,11 +190,12 @@ def guided_plan(
     out_plan: Path | None = typer.Option(
         None, "--out-plan", help="also write the plan JSON here"),
     backend: str = typer.Option(
-        "gemini", "--backend",
-        help="gemini|openai|anthropic|ollama|local|cloudflare|fixture|none"),
+        "xkiro", "--backend",
+        help="xkiro (Qwen3.5-397B-A17B + Mistral Medium 3.5 fallback, default)|qwen|mistral|gemini|openai|anthropic|ollama|local|cloudflare|fixture|deterministic (blank-row CV cut, no AI)|none"),
     model: str | None = typer.Option(
         None, "--model",
-        help="vision model id (gemini defaults to gemini-2.5-flash; "
+        help="vision model id (xkiro defaults to Qwen3.5-397B-A17B; "
+             "gemini defaults to gemini-2.5-flash; "
              "required for openai/anthropic/local)"),
     chunk_height: int = typer.Option(2000, "--chunk-height",
                                      help="reading-chunk height in px"),
@@ -172,6 +210,13 @@ def guided_plan(
         None, "--chunk-dir",
         help="also save each chunk sent to the model as chunk_XX.png here "
              "(visual debug: what the model saw)"),
+    blank_overlay: Path | None = typer.Option(
+        None, "--debug-blank-overlay",
+        help="run the offline blank-region detector and draw its verdicts "
+             "(orange) into this PNG"),
+    blank_sensitivity: str = typer.Option(
+        "conservative", "--blank-sensitivity",
+        help="blank detector sensitivity: low | conservative | high"),
     force: bool = typer.Option(False, "--force"),
     log_level: str = typer.Option("INFO", "--log-level"),
 ) -> None:
@@ -183,11 +228,14 @@ def guided_plan(
     every AI-proposed boundary (red), the gutter-snapped final boundary
     (green), panel IDs/confidence labels, and bubble boxes (blue). With
     --chunk-dir, also saves each chunk image the model received.
+    With --debug-blank-overlay, also runs the deterministic (no-AI)
+    blank-region detector and writes its visualization.
     """
     _configure_logging(log_level)
     strip = _resolve_strip_path(strip)
     backend = _validate_backend(backend)
     _validate_chunk_params(chunk_height, overlap)
+    _validate_blank_sensitivity(blank_sensitivity)
     used_cache_dir = cache_dir or _default_cache_dir()
     log.info("guided_plan start strip=%s backend=%s model=%s chunk_height=%d overlap=%d",
              strip.name, backend, model, chunk_height, overlap)
@@ -209,6 +257,13 @@ def guided_plan(
         typer.echo(f"ERROR: unexpected error: {exc} "
                    "(see --log-level DEBUG for details)", err=True)
         raise typer.Exit(1) from exc
+    if blank_overlay is not None:
+        from debug_view import draw_blank_overlay
+        regions = _detect_blanks_for_debug(strip, blank_sensitivity)
+        draw_blank_overlay(strip, regions, out_path=blank_overlay)
+        typer.echo(f"blank overlay: {blank_overlay} "
+                   f"({sum(1 for r in regions if r.verdict == 'blank')} blank, "
+                   f"{len(regions)} total candidates)")
     if debug_overlay is not None:
         from debug_view import draw_overlay
         draw_overlay(strip, plan, out_path=debug_overlay)
@@ -233,6 +288,18 @@ def guided_cut(
     report: Path | None = typer.Option(
         None, "--report",
         help="also write a self-contained HTML review page here"),
+    output_width: int = typer.Option(
+        390, "--output-width",
+        help="normalized panel PNG width in px (source crops stay full-res)"),
+    min_output_height: int = typer.Option(
+        760, "--min-output-height",
+        help="minimum normalized panel PNG height in px (pads with black)"),
+    max_output_height: int = typer.Option(
+        800, "--max-output-height",
+        help="maximum normalized panel PNG height in px (center-crops)"),
+    no_normalize: bool = typer.Option(
+        False, "--no-normalize-output",
+        help="write legacy full-resolution panel crops instead of 390x[760,800]"),
     force: bool = typer.Option(False, "--force"),
     log_level: str = typer.Option("INFO", "--log-level"),
 ) -> None:
@@ -243,7 +310,12 @@ def guided_cut(
         _plan, artifact, _used = gp.run_guided(
             strip, out_dir, backend_name="none", plan_path=plan,
             tolerance=tolerance, max_panel_height=max_panel_height,
-            variance_threshold=variance_threshold, force=force,
+            variance_threshold=variance_threshold,
+            output_width=output_width,
+            min_output_height=min_output_height,
+            max_output_height=max_output_height,
+            normalize_output=not no_normalize,
+            force=force,
             fallback=False)
         if artifact is None:
             raise RuntimeError("guided cut returned no artifact")
@@ -273,11 +345,12 @@ def guided_run(
                                  help="tall strip image or CBZ/ZIP archive"),
     out_dir: Path = typer.Option("guided_out", "--out-dir"),
     backend: str = typer.Option(
-        "gemini", "--backend",
-        help="gemini|openai|anthropic|ollama|local|cloudflare|fixture|none"),
+        "xkiro", "--backend",
+        help="xkiro (Qwen3.5-397B-A17B + Mistral Medium 3.5 fallback, default)|qwen|mistral|gemini|openai|anthropic|ollama|local|cloudflare|fixture|deterministic (blank-row CV cut, no AI)|none"),
     model: str | None = typer.Option(
         None, "--model",
-        help="vision model id (gemini defaults to gemini-2.5-flash; "
+        help="vision model id (xkiro defaults to Qwen3.5-397B-A17B; "
+             "gemini defaults to gemini-2.5-flash; "
              "required for openai/anthropic/local)"),
     plan_path: Path | None = typer.Option(
         None, "--plan", help="reuse an existing plan JSON from 'guided plan'"),
@@ -298,6 +371,25 @@ def guided_run(
     max_panel_height: int = typer.Option(1600, "--max-panel-height"),
     variance_threshold: float = typer.Option(6.0, "--variance-threshold"),
     edge_threshold: float = typer.Option(30.0, "--edge-threshold"),
+    blank_sensitivity: str = typer.Option(
+        "conservative", "--blank-sensitivity",
+        help="deterministic (no-AI) blank-region removal sensitivity: "
+             "low | conservative | high (default conservative)"),
+    disable_blank: bool = typer.Option(
+        False, "--no-blank-detection",
+        help="disable the deterministic blank-region detector"),
+    output_width: int = typer.Option(
+        390, "--output-width",
+        help="normalized panel PNG width in px (source crops stay full-res)"),
+    min_output_height: int = typer.Option(
+        760, "--min-output-height",
+        help="minimum normalized panel PNG height in px (pads with black)"),
+    max_output_height: int = typer.Option(
+        800, "--max-output-height",
+        help="maximum normalized panel PNG height in px (center-crops)"),
+    no_normalize: bool = typer.Option(
+        False, "--no-normalize-output",
+        help="write legacy full-resolution panel crops instead of 390x[760,800]"),
     dry_run: bool = typer.Option(
         False, "--dry-run",
         help="Phase 1 only: print the plan, do not cut anything"),
@@ -312,6 +404,7 @@ def guided_run(
     strip = _resolve_strip_path(strip)
     backend = _validate_backend(backend)
     _validate_chunk_params(chunk_height, overlap)
+    _validate_blank_sensitivity(blank_sensitivity)
     used_cache_dir = cache_dir or _default_cache_dir()
     log.info("guided_run start strip=%s backend=%s model=%s dry_run=%s",
              strip.name, backend, model, dry_run)
@@ -324,6 +417,11 @@ def guided_run(
             max_panel_height=max_panel_height,
             variance_threshold=variance_threshold,
             edge_threshold=edge_threshold, fallback=fallback,
+            blank_sensitivity=None if disable_blank else blank_sensitivity,
+            output_width=output_width,
+            min_output_height=min_output_height,
+            max_output_height=max_output_height,
+            normalize_output=not no_normalize,
             force=force, dry_run=dry_run)
     except (gp.VisionAnalysisError, FileNotFoundError, ValueError) as exc:
         if log.isEnabledFor(logging.DEBUG):
@@ -339,6 +437,7 @@ def guided_run(
     if dry_run:
         log.info("guided_run dry_run complete")
         return
+    assert artifact is not None  # dry_run returned above; artifact is set here
     log.info("guided_run complete panels=%d fallback=%s", len(artifact.panels), used)
     typer.echo(f"cut {len(artifact.panels)} panels into {out_dir}")
     typer.echo(f"sidecar: {Path(out_dir) / 'panels.json'}")
@@ -379,6 +478,46 @@ def guided_narrate(
         typer.echo("WARNING: narration is empty (fallback plan has no AI narration)", err=True)
     typer.echo(f"wrote {out} ({len(script)} chars)")
     typer.echo(f"index: {out.with_suffix('.index.json')}")
+
+
+@guided_app.command("narrate-ai")
+def guided_narrate_ai(
+    panels_dir: Path = typer.Argument(..., exists=True, file_okay=False,
+        help="out dir from 'guided run/cut' (panels.json + panel_*.png), "
+             "typically produced by the deterministic --backend deterministic cut"),
+    model: str | None = typer.Option(
+        None, "--model",
+        help="vision model id (default Qwen3.5-397B-A17B with Mistral "
+             "Medium 3.5 fallback; bare names resolved automatically)"),
+    force: bool = typer.Option(
+        False, "--force", help="re-narrate even cached panels"),
+    log_level: str = typer.Option("INFO", "--log-level"),
+) -> None:
+    """START button (CLI): AI narration for ALREADY-CROPPED panels.
+
+    Cropping needs no AI; this fills narration/dialogue per panel PNG via
+    Qwen -> Mistral. Panel geometry (y ranges, files) is never modified.
+    """
+    _configure_logging(log_level)
+    try:
+        from adapters import ai_narration as ain
+        summary = ain.narrate_cropped_panels(
+            panels_dir, model=model or "", force=force)
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        if log.isEnabledFor(logging.DEBUG):
+            log.exception("guided narrate-ai failed")
+        else:
+            typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    except Exception as exc:
+        log.exception("unexpected error in guided narrate-ai")
+        typer.echo(f"ERROR: unexpected error: {exc} "
+                   "(see --log-level DEBUG for details)", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"panels: {summary['panels']}  narrated: {summary['narrated']} "
+               f"cached: {summary['cached']}  failed: {len(summary['failed'])}")
+    for f in summary["failed"]:
+        typer.echo(f"  kept old text: {f}", err=True)
 
 
 @guided_app.command("video")
@@ -435,7 +574,8 @@ def guided_video(
     tts = _validate_tts(tts)
     out_path = out or panels.parent / "recap.mp4"
     cfg = VideoConfig(
-        tts=tts, voice=voice, rate=rate, pitch=pitch, speed=speed,
+        tts=tts,  # type: ignore[arg-type]
+        voice=voice, rate=rate, pitch=pitch, speed=speed,
         include_dialogue=dialogue, gap_seconds=gap,
         min_display_seconds=min_display, max_display_seconds=max_display,
         max_pan_px_per_sec=pan_speed, fps=fps,
@@ -466,6 +606,91 @@ def guided_video(
         typer.echo("dry run: mp4 not rendered")
     else:
         typer.echo(f"video: {summary['video']}")
+
+
+def _manual_crop(strip: Path, boundaries: list[int], out_dir: Path,
+                 force: bool = False) -> CutArtifact:
+    """Cut a strip at user-supplied Y boundaries (no AI, no plan.json).
+
+    Boundaries are interior cut rows; 0 and the strip height are implied.
+    """
+    from guided_cutter import _check_image_size
+    out = Path(out_dir)
+    if force and out.exists():
+        for prev in out.glob("panel_*.png"):
+            prev.unlink()
+        for stale in ("panels.json", "plan.json"):
+            p = out / stale
+            if p.exists():
+                p.unlink()
+    out.mkdir(parents=True, exist_ok=True)
+    _check_image_size(strip)
+    with Image.open(strip) as img:
+        img.load()
+        width, height = img.size
+        rgb = img.convert("RGB")
+    ys = sorted({0, height} | {max(0, min(height, int(b))) for b in boundaries})
+    from itertools import pairwise
+    ranges = list(pairwise(ys))
+    saved: list[dict] = []
+    for i, (y0, y1) in enumerate(ranges):
+        if y1 - y0 < 30:
+            continue
+        dest_name = f"panel_{i + 1:03d}.png"
+        rgb.crop((0, y0, width, y1)).save(out / dest_name, "PNG")
+        saved.append({
+            "id": f"{i + 1:03d}",
+            "panel_index": i + 1,
+            "y_start": y0,
+            "y_end": y1,
+            "narration": "",
+            "dialogue": "",
+            "panel_type": "panel",
+            "confidence": 1.0,
+            "image_file": dest_name,
+        })
+    artifact = CutArtifact(
+        source=strip.name, width=width, height=height,
+        plan_hash="manual",
+        config={"mode": "manual", "boundaries": boundaries},
+        panels=[CutPanel(**p) for p in saved],
+    )
+    (out / "panels.json").write_text(
+        artifact.model_dump_json(indent=2) + "\n", "utf-8")
+    return artifact
+
+
+@guided_app.command("manual")
+def manual(
+    strip: Path = typer.Argument(..., exists=True, dir_okay=False,
+                                 help="tall strip image (PNG/JPG/WebP)"),
+    boundaries: list[int] = typer.Option(
+        ..., "--at",
+        help="interior Y cut rows, e.g. --at 800 --at 1600 --at 2400"),
+    out_dir: Path = typer.Option("guided_out", "--out-dir"),
+    force: bool = typer.Option(False, "--force"),
+    log_level: str = typer.Option("INFO", "--log-level"),
+) -> None:
+    """Manually cut a strip at user-supplied Y boundaries (no AI, no plan).
+
+    Each --at flag is an interior cut row. 0 and the strip height are implied,
+    so N boundaries produce N+1 panels.  Example:
+
+        recap-comic guided manual strip.png --at 800 --at 1600 --at 2400
+    """
+    _configure_logging(log_level)
+    strip = _resolve_strip_path(strip)
+    try:
+        artifact = _manual_crop(strip, boundaries, out_dir, force=force)
+    except Exception as exc:
+        log.exception("manual crop failed")
+        typer.echo(f"ERROR: {exc} (see --log-level DEBUG for details)", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"cut {len(artifact.panels)} panels into {out_dir}")
+    typer.echo(f"sidecar: {Path(out_dir) / 'panels.json'}")
+    for p in artifact.panels:
+        typer.echo(f"  {p.panel_index:02d}  y=[{p.y_start},{p.y_end}]  "
+                   f"{p.y_end - p.y_start}px  {p.image_file}")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,6 @@ directory under OUTPUT_DIR.
 from __future__ import annotations
 
 import copy
-import json
 import logging
 import re
 import time
@@ -346,7 +345,11 @@ def start_render(session: str, cfg: dict[str, Any]) -> dict[str, Any]:
             job.stage = "render_edited"
             job.touch()
             job.log("INFO", "render started", "render_edited")
-            result = render_edited_project(editor_path, out_mp4, vcfg)
+            # Editor renders go through the same one-render-at-a-time slot
+            # as pipeline renders (bounded CPU, cancellable, no stacking).
+            from .pipeline import render_slot
+            with render_slot():
+                result = render_edited_project(editor_path, out_mp4, vcfg)
             job.status = JobStatus.COMPLETED
             job.outputs = {k: str(v) for k, v in result.items() if isinstance(v, str)}
             job.progress = 100
@@ -366,50 +369,10 @@ def start_render(session: str, cfg: dict[str, Any]) -> dict[str, Any]:
 def update_narration(session: str, panel_id: str, text: str) -> dict[str, Any]:
     """Update narration text for a single panel via the Narration Studio overlay.
     Writes to narration_edit.json (never mutates panels.json)."""
-    d = _session_dir(session)
-    from .narration_api import _panels_source, _read_narr_edit, _write_narr_edit
-    edit = _read_narr_edit(session)
-    src = _panels_source(session)
-    original = None
-    if src.is_file():
-        try:
-            data = json.loads(src.read_text("utf-8"))
-            original = next((p.get("narration", "")
-                             for p in data.get("panels", [])
-                             if p.get("id") == panel_id), None)
-        except Exception:
-            pass
-    if not (text or "").strip():
-        edit.get("overrides", {}).pop(panel_id, None)
-    else:
-        edit.setdefault("overrides", {})[panel_id] = {
-            "text": text,
-            "original": original,
-            "at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
-    _write_narr_edit(session, edit)
-
-    editor_path = d / "editor.json"
-    if editor_path.is_file():
-        try:
-            proj = _get_project(session)
-            if proj is not None:
-                for e in proj.edited_timeline:
-                    if e.get("panel_id") == panel_id:
-                        e["narration"] = text
-                        e["needs_render"] = True
-                Editor(proj).save(editor_path)
-        except Exception as exc:
-            log.warning("narration update editor.json failed session=%s panel=%s err=%s",
-                        session, panel_id, exc)
-
-    for j in store._jobs.values():
-        if j.config.get("session") == session:
-            for p in j.panels:
-                if p.get("id") == panel_id:
-                    p["narration"] = text
-
-    return {"ok": True, "panel_id": panel_id, "text": text}
+    # Reuse narration_api.set_text: one implementation, consistent schema
+    # (epoch `at`, review state, TTS invalidation, editor.json sync).
+    from .narration_api import set_text
+    return set_text(session, panel_id, text)
 
 
 def get_ai_review_data(session: str) -> dict[str, Any]:
@@ -426,7 +389,7 @@ def get_ai_review_data(session: str) -> dict[str, Any]:
     flagged = []
     for p in artifact.panels:
         conf = getattr(p, "confidence", 1.0) or 1.0
-        if conf < 0.7:
+        if conf < 0.6:
             flagged.append({
                 "id": p.id,
                 "confidence": conf,
@@ -453,5 +416,5 @@ def get_panel_confidence(session: str) -> dict[str, Any]:
     panels = []
     for p in artifact.panels:
         conf = getattr(p, "confidence", 1.0) or 1.0
-        panels.append({"id": p.id, "confidence": conf, "needs_review": conf < 0.7})
+        panels.append({"id": p.id, "confidence": conf, "needs_review": conf < 0.6})
     return {"panels": panels}

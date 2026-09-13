@@ -19,7 +19,7 @@ from pathlib import Path
 log = logging.getLogger("render_worker")
 
 _RENDER_SEM = threading.BoundedSemaphore(1)     # one heavy render (req 39)
-_ACTIVE: dict[str, "RenderWorker"] = {}
+_ACTIVE: dict[str, RenderWorker] = {}
 _LOCK = threading.Lock()
 
 
@@ -37,7 +37,9 @@ def render_profiles(threads_all: int) -> dict:    # req 40/41
 
 class RenderWorker:
     def __init__(self, job_id: str, build_cmd, out_path: Path,
-                 on_done=None, stall_seconds: int = 90):
+                 on_done=None, stall_seconds: int = 90,
+                 cancel_event: threading.Event | None = None,
+                 owns_render_slot: bool = True):
         self.job_id, self.on_done = job_id, on_done
         self.build_cmd = build_cmd
         self.out = Path(out_path)
@@ -47,13 +49,19 @@ class RenderWorker:
         self._last_size = -1
         self._last_grow = time.time()
         self._cancelled = False
+        self.cancel_event = cancel_event   # set => terminate (pipeline slot)
+        # When the caller already holds the render slot (webapp.pipeline's
+        # render_slot contextmanager), the worker must NOT re-acquire the
+        # semaphore — BoundedSemaphore(1) would self-deadlock.
+        self.owns_render_slot = owns_render_slot
 
     @staticmethod
     def pick_strategy(n_panels: int, total_seconds: float) -> str:
         return "chunked" if (n_panels > 25 or total_seconds > 150) else "direct"
 
     def start(self):
-        _RENDER_SEM.acquire()
+        if self.owns_render_slot:
+            _RENDER_SEM.acquire()
         with _LOCK:
             _ACTIVE[self.job_id] = self
         threading.Thread(target=self._run, daemon=True).start()
@@ -65,7 +73,9 @@ class RenderWorker:
             self.proc = subprocess.Popen(
                 cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
                 start_new_session=True)
-            threading.Thread(target=self._drain_stderr, daemon=True).start()
+            stderr_tail: list[bytes] = []
+            threading.Thread(target=self._drain_stderr,
+                             args=(stderr_tail,), daemon=True).start()
             threading.Thread(target=self._heartbeat, daemon=True).start()
             rc = self.proc.wait()
             if self._cancelled:
@@ -76,11 +86,7 @@ class RenderWorker:
                 self.on_done and self.on_done(True, None)
             else:
                 self._cleanup_tmp()
-                tail = ""
-                try:
-                    tail = self.proc.stderr.read().decode("utf-8", "replace")[-1500:]
-                except Exception:
-                    pass
+                tail = b"".join(stderr_tail)[-1500:].decode("utf-8", "replace")
                 self.on_done and self.on_done(False, f"ffmpeg exit {rc}\n{tail}")
         except Exception as exc:
             self._cleanup_tmp()
@@ -89,18 +95,53 @@ class RenderWorker:
         finally:
             with _LOCK:
                 _ACTIVE.pop(self.job_id, None)
-            _RENDER_SEM.release()
+            if self.owns_render_slot:
+                _RENDER_SEM.release()
 
-    def _drain_stderr(self):
+    def _drain_stderr(self, tail: list[bytes]):
+        """Consume stderr, keeping the last ~1500 bytes for error reports."""
         try:
             if self.proc and self.proc.stderr:
-                for _ in iter(self.proc.stderr.readline, b""):
-                    pass
+                for line in iter(self.proc.stderr.readline, b""):
+                    tail.append(line)
+                    del tail[:-40]        # bound memory: keep last 40 lines
         except Exception:
             pass
 
+    def _kill_process_group(self) -> None:
+        """Terminate ffmpeg on any OS.
+
+        POSIX: kill the process group started with start_new_session=True.
+        Windows: os.killpg/getpgid/SIGKILL do not exist (AttributeError,
+        not OSError) — use Popen.terminate() then kill() instead.
+        """
+        p = self.proc
+        if p is None or p.poll() is not None:
+            return
+        if hasattr(os, "killpg"):
+            try:
+                os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+                try:
+                    p.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
+        else:
+            try:
+                p.terminate()
+                try:
+                    p.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    p.kill()
+            except OSError:
+                pass
+
     def _heartbeat(self):
         while self.proc and self.proc.poll() is None and not self._cancelled:
+            if self.cancel_event is not None and self.cancel_event.is_set():
+                self.cancel(reason="render slot released")
+                return
             try:
                 size = self.tmp.stat().st_size if self.tmp.is_file() else 0
             except OSError:
@@ -114,17 +155,10 @@ class RenderWorker:
             time.sleep(3)
 
     def cancel(self, reason: str = "cancelled"):
+        if self._cancelled:
+            return
         self._cancelled = True
-        p = self.proc
-        if p and p.poll() is None:
-            try:
-                os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-                try:
-                    p.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(os.getpgid(p.pid), signal.SIGKILL)
-            except (ProcessLookupError, PermissionError, OSError):
-                pass
+        self._kill_process_group()
         self._cleanup_tmp()
         self.on_done and self.on_done(False, reason)
 

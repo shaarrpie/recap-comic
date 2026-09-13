@@ -18,6 +18,7 @@ so one bad sentence never reruns the whole chapter.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import threading
@@ -26,8 +27,8 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from .panel_api import (_all_panels, _read_edit, _session_dir,
-                        _write_edit, get_panels)
+from .jobs import JobStatus, store
+from .panel_api import _all_panels, _read_edit, _session_dir, _write_edit, get_panels
 
 VALID_STYLES = ("recap", "literal")   # the only styles narrator.make_script_from_cut implements
 
@@ -133,9 +134,17 @@ def get_narration(session: str) -> dict:
 def _invalidate_tts(session: str, panel_id: str) -> None:
     """Drop only this panel's TTS clip so the next run re-synthesizes it."""
     mp3 = _session_dir(session) / "audio" / f"{panel_id}.mp3"
-    try:
+    with contextlib.suppress(OSError):
         mp3.unlink(missing_ok=True)
-    except OSError:
+
+
+def _invalidate_pipeline_steps(session: str,
+                               changed: str = "narration_edit.json") -> None:
+    """Step-by-Step ledger: narration edits invalidate build_script+."""
+    try:
+        from . import checkpoint as _cp
+        _cp.apply_edit_invalidation(session, changed)
+    except Exception:
         pass
 
 
@@ -167,6 +176,7 @@ def set_text(session: str, panel_id: str, text: str) -> dict:
     review.setdefault("review", {})[panel_id] = "edited"
     _write_edit(session, review)
     _invalidate_tts(session, panel_id)
+    _invalidate_pipeline_steps(session)
     return get_narration(session)
 
 
@@ -176,6 +186,7 @@ def reset_text(session: str, panel_id: str) -> dict:
     edit.get("overrides", {}).pop(panel_id, None)
     _write_narr_edit(session, edit)
     _invalidate_tts(session, panel_id)
+    _invalidate_pipeline_steps(session)
     return get_narration(session)
 
 
@@ -190,9 +201,12 @@ def set_style(session: str, style: str) -> dict:
 
 def regenerate(session: str, panel_id: str, *, api_key: str = "",
                model: str = "") -> dict:
-    """Regenerate ONE panel's narration with Gemini; stores it as an override.
+    """Regenerate ONE panel's narration; stores it as an override.
 
-    Fails loudly (no fake text) when no key is configured.
+    Default path uses the central Qwen3.5-397B-A17B -> Mistral Medium 3.5
+    fallback (OpenAI-compatible Xkiro endpoint). A `model` starting with
+    "gemini" preserves the legacy Gemini adapter explicitly. Fails loudly
+    (no fake text) when no key is configured or both models fail.
     """
     if panel_id not in _all_panels(session, _read_edit(session)):
         raise HTTPException(404, f"unknown panel {panel_id}")
@@ -201,11 +215,14 @@ def regenerate(session: str, panel_id: str, *, api_key: str = "",
     if panel is None:
         raise HTTPException(404, "panel is deleted; restore it first")
 
-    from adapters._gemini_keys import from_env
-    key = api_key or os.environ.get("GEMINI_API_KEY", "")
+    if (model or "").lower().startswith("gemini"):
+        return _regenerate_gemini(session, panel_id, panel, api_key, model)
+
+    from adapters import ai_models as _ai
+    key = api_key or _ai.api_key_from_env() or ""
     if not key:
         raise HTTPException(400,
-            "no Gemini key: set GEMINI_API_KEY in .env or pass api_key")
+            "no AI key: set XKIRO_API_KEY in .env or pass api_key")
 
     from adapters.schemas import BBox, Meta, OcrArtifact, OcrRegion
     # Reconstruct a minimal OCR artifact from the panel's stored dialogue so
@@ -218,24 +235,134 @@ def regenerate(session: str, panel_id: str, *, api_key: str = "",
     ocr = OcrArtifact(meta=Meta(schema_version=1, generator="narration_api",
                                 config_hash="", input_hashes={}),
                       backend="webapp", regions=regions)
+    dump = "\n".join(
+        f"{r.panel_id or '?'} [{r.kind}] conf={r.confidence}: {r.text}"
+        for r in ocr.regions)
+    request = (f"Write the recap narration for panel {panel_id} only. "
+               f"Match the chapter's style and keep it self-contained.\n"
+               f"OCR lines:\n{dump}\n"
+               'Return JSON: {"entries": [{"panel_id": "...", "speaker": null, '
+               '"text": "..."}]} with exactly 1 entry.')
+    import json as _json
+
+    from adapters.narrate_gemini import NarrationArtifact
+
+    def _parse(text: str):
+        data = _json.loads(text)
+        narration = NarrationArtifact.model_validate(
+            {**data, "mode": "narrator", "meta": ocr.meta})
+        if [e.panel_id for e in narration.entries] != [panel_id]:
+            raise ValueError("panel ids/order do not match panels.json")
+        return narration
+
+    with _regenerate_lock:
+        try:
+            outcome = _ai.generate_text_with_fallback(
+                "You are the narrator for a recap video of a manhwa chapter. "
+                "Use ONLY the provided OCR text. Output ONLY JSON.",
+                request, operation=f"narration-regenerate:{panel_id}",
+                api_key=key,
+                primary_model=model or _ai.PRIMARY_MODEL)
+            plan = _parse(outcome.result)
+        except _ai.AIFallbackError as exc:
+            raise HTTPException(
+                502, f"narration failed: primary ({exc.primary_error}); "
+                     f"fallback ({exc.fallback_error})") from exc
+        except Exception as exc:
+            raise HTTPException(502, f"regeneration failed: {exc}") from exc
+
+    entries = [e for e in plan.entries if (e.text or "").strip()]
+    if not entries:
+        raise HTTPException(502, "regeneration returned no narration text")
+    text = "\n".join(e.text for e in entries)
+    return set_text(session, panel_id, text)   # stores override + invalidates TTS
+
+
+def _run_generate_all(job_id: str, session: str,
+                      api_key: str, model: str) -> None:
+    """Background worker: AI narration for every cropped panel."""
+    job = store.get(job_id)
+    if job is None:
+        return
+    job.status = JobStatus.RUNNING
+    job.started_at = time.time()
+    job.touch()
+    job.log("INFO", "AI narration started (cropped panels only; "
+                     "geometry locked)", "ai_narration")
+    try:
+        import adapters.ai_narration as ain
+        summary = ain.narrate_cropped_panels(
+            _session_dir(session), api_key=api_key or None,
+            model=model or "")
+        job.log("INFO",
+                f"AI narration complete panels={summary['panels']} "
+                f"narrated={summary['narrated']} cached={summary['cached']} "
+                f"failed={len(summary['failed'])}", "ai_narration")
+        for f in summary["failed"]:
+            job.log("WARNING", f"panel kept old text: {f}", "ai_narration")
+        job.status = JobStatus.COMPLETED
+        job.progress = 100
+        job.finished_at = time.time()
+        job.touch()
+    except Exception as exc:
+        import traceback
+        job.fail(f"AI narration failed: {type(exc).__name__}: {exc}",
+                 traceback.format_exc())
+
+
+def generate_all(session: str, *, api_key: str = "",
+                 model: str = "") -> dict:
+    """START button: narrate every cropped panel with Qwen -> Mistral.
+
+    Cropping must already exist (panels.json + panel PNGs), produced with
+    or without AI — typically the deterministic blank-row cut. Only words
+    are written; panel geometry is asserted unchanged. Runs in a background
+    thread; poll /api/jobs/<job_id> for completion, then reload the
+    narration view.
+    """
+    if not _panels_source(session).is_file():
+        raise HTTPException(404,
+            "no panels.json; crop the strip first (deterministic cut needs "
+            "no AI key)")
+    from adapters import ai_models as _ai
+    key = api_key or _ai.api_key_from_env() or ""
+    if not key:
+        raise HTTPException(400,
+            "no AI key: set XKIRO_API_KEY in .env or pass api_key")
+    job = store.create("ai_narration", {"session": session})
+    threading.Thread(target=_run_generate_all,
+                     args=(job.id, session, api_key, model),
+                     daemon=True).start()
+    return {"job_id": job.id, "status": job.status.value}
+
+
+def _regenerate_gemini(session: str, panel_id: str, panel: dict,
+                       api_key: str, model: str) -> dict:
+    """Legacy explicit-Gemini path (only when model starts with 'gemini')."""
+    from adapters._gemini_keys import from_env
+    key = api_key or os.environ.get("GEMINI_API_KEY", "")
+    if not key:
+        raise HTTPException(400,
+            "no Gemini key: set GEMINI_API_KEY in .env or pass api_key")
+
+    from adapters.schemas import BBox, Meta, OcrArtifact, OcrRegion
+    lines = [ln.strip() for ln in panel["dialogue"].splitlines() if ln.strip()]
+    regions = [OcrRegion(id=f"{panel_id}-{i}", panel_id=panel_id, page=1,
+                         bbox=BBox(x=0, y=0, w=0, h=0), text=ln,
+                         confidence=1.0, kind="dialogue")
+               for i, ln in enumerate(lines)]
+    ocr = OcrArtifact(meta=Meta(schema_version=1, generator="narration_api",
+                                config_hash="", input_hashes={}),
+                      backend="webapp", regions=regions)
     request = (f"Write the recap narration for panel {panel_id} only. "
                f"Match the chapter's style and keep it self-contained.")
 
     with _regenerate_lock:
-        old = os.environ.get("GEMINI_API_KEY")
-        try:
-            if api_key:
-                os.environ["GEMINI_API_KEY"] = api_key
-            from_env()  # raises when still unconfigured
-            import adapters.narrate_gemini as ng
-            plan = ng.generate(request, ocr, [panel_id],
-                               model=model or "gemini-2.0-flash")
-        finally:
-            if api_key:
-                if old is None:
-                    os.environ.pop("GEMINI_API_KEY", None)
-                else:
-                    os.environ["GEMINI_API_KEY"] = old
+        from_env()  # raises when still unconfigured (env key required)
+        import adapters.narrate_gemini as ng
+        plan = ng.generate(request, ocr, [panel_id],
+                           model=model or "gemini-2.0-flash",
+                           api_key=api_key or None)
 
     entries = [e for e in plan.entries if (e.text or "").strip()]
     if not entries:

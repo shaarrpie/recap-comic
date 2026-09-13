@@ -12,9 +12,14 @@ sample_strip.png ──► panel_001.png + panel_002.png + ... + panels.json
 
 A two-phase pipeline:
 1. **Phase 1** (`strip_analyzer.py`): the strip is sliced into overlapping
-   2000px chunks and sent to a vision LLM (Gemini / OpenAI / Anthropic / local
-   Ollama). The model returns a strict JSON panel plan: boundaries, narration,
-   dialogue, and per-panel confidence.
+    2000px chunks and sent to a vision LLM. The default backend is **xkiro**
+    (OpenAI-compatible `https://api.xkiro.com/v1`): primary model
+    `qwen/qwen3.5-397b-a17b:free` (Qwen3.5-397B-A17B) with automatic
+    fallback to `mistralai/mistral-medium-3.5` (Mistral Medium 3.5) on any
+    failure — same prompt, same image, no fabricated results. Legacy
+    backends (Gemini / OpenAI / Anthropic / local Ollama) remain available
+    via `--backend`. The model returns a strict JSON panel plan: boundaries, narration,
+    dialogue, and per-panel confidence.
 2. **Phase 2** (`guided_cutter.py`): AI boundaries are *refined* by snapping to
    real gutters (row-variance + Sobel edge density), continuous art is merged,
    oversized panels are split, and cuts never go through speech bubbles. Output:
@@ -94,12 +99,15 @@ pip install -e .[web]
 uvicorn webapp.main:app --port 8000
 ```
 
-Open `http://localhost:8000`. Set `GEMINI_API_KEY` in `.env` for AI features.
+Open `http://localhost:8000`. Nothing runs automatically on upload —
+press Run to start a job. Set `XKIRO_API_KEY` (or `GEMINI_API_KEY`) in
+`.env` for AI features; without a key the app runs in offline mode
+(deterministic cropping; no AI narration).
 
 ## Tests
 
 ```bash
-pytest tests -q
+pytest tests webapp -q
 ```
 
 All tests are offline and synthetic — they prove plumbing, not real-world

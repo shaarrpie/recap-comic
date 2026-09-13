@@ -31,6 +31,46 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
         return ImageFont.load_default()
 
 
+def draw_blank_overlay(strip_path: str | Path,
+                       regions: list,
+                       out_path: str | Path) -> Path:
+    """Debug overlay for the deterministic blank detector (req #25).
+
+    Draws each blank candidate over the strip:
+      - solid orange fill + border for verdict=blank
+      - dashed-style orange border for verdict=suspicious
+    and a label with Y range, score and the leading reasons, e.g.:
+
+        BLANK 8400-9320 score=0.97
+        low variance; low edges; low entropy
+    """
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    from PIL import ImageDraw
+    with Image.open(strip_path) as img:
+        img.load()
+        rgb = img.convert("RGB")
+        w, h = rgb.size
+        draw = ImageDraw.Draw(rgb, "RGBA")
+        font = _load_font(max(12, w // 50))
+        for r in regions:
+            y0 = max(0, r.y_start)
+            y1 = min(h, r.y_end)
+            if r.verdict == "blank":
+                draw.rectangle((0, y0, w, y1), fill=(255, 140, 0, 60),
+                               outline=(255, 140, 0), width=3)
+            else:
+                draw.rectangle((0, y0, w, y1), outline=(255, 200, 0), width=3)
+            label = (f"{r.verdict.upper()} {r.y_start}-{r.y_end} "
+                     f"score={r.score:.2f}")
+            reasons = "; ".join(r.reasons[:3]) if r.reasons else ""
+            if reasons:
+                label += f"  {reasons}"
+            draw.text((6, max(0, y0 + 4)), label, fill=(200, 90, 0), font=font)
+        rgb.save(out, "PNG")
+    return out
+
+
 def draw_overlay(strip_path: str | Path, plan: PanelPlan, out_path: str | Path,
                  cuts: list[CutPanel] | None = None) -> Path:
     """Draw AI-proposed boundaries (red), snapped finals (green), bubbles.

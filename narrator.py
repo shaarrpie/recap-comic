@@ -115,13 +115,13 @@ def narrate_plan(plan_path: Path, out_path: Path, *,
                      len(artifact.panels), style)
         elif "bbox" in first:
             from adapters.schemas import PanelsArtifact
-            artifact = PanelsArtifact.model_validate_json(raw)
-            script = _script_from_panels(artifact, style=style)
+            panels_artifact = PanelsArtifact.model_validate_json(raw)
+            script = _script_from_panels(panels_artifact, style=style)
             index = [{"panel_id": p.id, "panel_index": p.index,
                       "narration": "", "dialogue": ""}
-                     for p in artifact.panels]
+                     for p in panels_artifact.panels]
             log.info("narrate_plan from PanelsArtifact panels=%d style=%s",
-                     len(artifact.panels), style)
+                     len(panels_artifact.panels), style)
         else:
             raise ValueError(
                 f"unrecognised panels format in {plan_path}: "

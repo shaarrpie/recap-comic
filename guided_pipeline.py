@@ -17,17 +17,21 @@ from __future__ import annotations
 import logging
 from itertools import pairwise
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image
 
 import strip_analyzer as sa
-from guided_cutter import CutArtifact, CutterConfig, compute_strip_metrics, guided_cut
+from guided_cutter import CutArtifact, CutterConfig, guided_cut
 
 log = logging.getLogger(__name__)
 
 LOW_CONF_THRESHOLD = 0.5
 LOW_CONF_RATIO_LIMIT = 0.30
+
+_OFFLINE_BACKENDS = frozenset(
+    {"none", "deterministic", "cv", "manual", "no-ai", "noai"})
 
 
 def _merge_narration_into_fallback(ai_plan: sa.PanelPlan,
@@ -64,17 +68,21 @@ def build_backend(name: str, api_key: str | None = None,
     """Backend factory. "none" means no AI call at all (offline fallback).
     "local" uses Ollama's POST /api/generate (llava/qwen2-vl)."""
     name = name.lower()
-    if name == "none":
-        log.debug("backend=none offline fallback")
+    if name in ("none", "deterministic", "cv", "manual", "no-ai", "noai"):
+        # Pure deterministic CV path: uniform blank-color rows -> gutters ->
+        # cuts. No AI call at all; panels get geometry but empty narration.
+        # AI narration (if wanted) runs afterwards, per cropped panel, via
+        # adapters.ai_narration (button-triggered, never touches geometry).
+        log.debug("backend=%s deterministic offline (no AI)", name)
         return None
     if name == "fixture":
         log.debug("backend=fixture offline test backend")
         return sa.FixtureVisionBackend()
     if name == "gemini":
-        kw = {"api_key": api_key}
+        kw: dict[str, object] = {"api_key": api_key}
         if model:
             kw["model"] = model
-        backend = sa.GeminiVisionBackend(**kw)
+        backend: Any = sa.GeminiVisionBackend(**kw)  # type: ignore[arg-type]
         log.info("backend=gemini model=%s", backend.model)
         return backend
     if name == "openai":
@@ -84,7 +92,7 @@ def build_backend(name: str, api_key: str | None = None,
         if base_url:
             kw["base_url"] = base_url
         log.info("backend=openai model=%s", model)
-        return sa.OpenAIVisionBackend(**kw)
+        return sa.OpenAIVisionBackend(**kw)  # type: ignore[arg-type]
     if name == "anthropic":
         if not model:
             raise ValueError("--model is required for the anthropic backend")
@@ -92,13 +100,38 @@ def build_backend(name: str, api_key: str | None = None,
         if base_url:
             kw["base_url"] = base_url
         log.info("backend=anthropic model=%s", model)
-        return sa.AnthropicVisionBackend(**kw)
+        return sa.AnthropicVisionBackend(**kw)  # type: ignore[arg-type]
     if name in ("local", "ollama"):
         kw = {"model": model or "llava", "timeout": timeout}
         if base_url:
             kw["base_url"] = base_url
         log.info("backend=ollama model=%s", kw["model"])
-        return sa.OllamaVisionBackend(**kw)
+        return sa.OllamaVisionBackend(**kw)  # type: ignore[arg-type]
+    if name in ("xkiro", "qwen", "qwen3.5", "qwen3_5"):
+        from adapters import ai_models as _ai
+        kw = {}
+        if model:
+            kw["primary_model"] = model
+        if api_key:
+            kw["api_key"] = api_key
+        kw["base_url"] = base_url or _ai.DEFAULT_BASE_URL
+        kw["timeout"] = timeout
+        backend = sa.XkiroVisionBackend(**kw)  # type: ignore[arg-type]
+        log.info("[AI] backend=xkiro primary=%s fallback=%s",
+                 backend.primary_model, backend.fallback_model)
+        return backend
+    if name == "mistral":
+        from adapters import ai_models as _ai
+        kw = {"primary_model": model or _ai.FALLBACK_MODEL,
+              "fallback_model": _ai.PRIMARY_MODEL}
+        if api_key:
+            kw["api_key"] = api_key
+        kw["base_url"] = base_url or _ai.DEFAULT_BASE_URL
+        kw["timeout"] = timeout
+        backend = sa.XkiroVisionBackend(**kw)  # type: ignore[arg-type]
+        log.info("[AI] backend=mistral primary=%s fallback=%s",
+                 backend.primary_model, backend.fallback_model)
+        return backend
     if name == "cloudflare":
         kw = {"api_key": api_key}
         if model:
@@ -106,10 +139,11 @@ def build_backend(name: str, api_key: str | None = None,
         if cf_account_id:
             kw["account_id"] = cf_account_id
         log.info("backend=cloudflare model=%s", kw.get("model", sa.CloudflareWorkersAIBackend.DEFAULT_MODEL))
-        return sa.CloudflareWorkersAIBackend(**kw)
+        return sa.CloudflareWorkersAIBackend(**kw)  # type: ignore[arg-type]
     raise ValueError(
-        f"unknown backend {name!r}; supported: gemini, openai, anthropic, "
-        "ollama, cloudflare, fixture, none")
+        f"unknown backend {name!r}; supported: xkiro, qwen, mistral, "
+        "gemini, openai, anthropic, ollama, cloudflare, fixture, "
+        "deterministic (aliases: none, cv, manual), none")
 
 
 def low_confidence_ratio(plan: sa.PanelPlan) -> float:
@@ -125,48 +159,36 @@ def fallback_plan_from_gutter_detector(
 ) -> sa.PanelPlan:
     """A PanelPlan from plain pixel analysis (no AI, no narration).
 
-    Uses the SAME dual-metric (variance + edge density) as Phase 2's gutter
-    detection: rows with variance <= variance_threshold AND edge_density <=
-    edge_threshold are gutter rows; contiguous runs that are at least 3 rows
-    wide become gutters; panel cuts are placed at gutter midpoints. The
-    topmost/bottommost runs are treated as page margins.
+    Two-layer detection:
+
+    1. VALLEY DETECTION (primary, adaptive): local minima of the smoothed
+       row-activity profile (variance + edge density + row-uniformity).
+       A gutter is a property of the neighbourhood (a dip between two
+       panel peaks), not of the whole strip, so no per-title threshold
+       tuning — the fixed "variance <= 6" classification that preceded it
+       found 1 gutter on a 12-panel strip and then blind-split at
+       midpoints.
+    2. Strict gutter-run classification (secondary, the legacy
+       variance/edge thresholds) still refines each valley cut to the
+       widest qualifying run when one exists nearby.
+
     Every per-panel confidence is 0.0 on purpose (fallback provenance).
-    Panels taller than max_panel_height are split at internal gutters.
+    Oversized panels are split at internal valleys (never blind
+    midpoints). blank_detector still flags suspicious pieces afterwards.
     """
     with Image.open(strip_path) as img:
         img.load()
         width, height = img.size
         gray = np.asarray(img.convert("L"))
 
-    variance, edge_density = compute_strip_metrics(gray, use_edge_density=True,
-                                                   blur_sigma=0.5)
-    run_is_gutter = np.zeros(height, dtype=bool)
-    for y in range(height):
-        if variance[y] <= variance_threshold and edge_density[y] <= edge_threshold:
-            run_is_gutter[y] = True
-    min_gutter_width = 3
-    runs: list[tuple[int, int]] = []
-    start: int | None = None
-    for y in range(height):
-        if run_is_gutter[y]:
-            if start is None:
-                start = y
-        else:
-            if start is not None:
-                runs.append((start, y - 1))
-                start = None
-    if start is not None:
-        runs.append((start, height - 1))
-    gutters = [r for r in runs
-               if r[0] > 0 and r[1] < height - 1
-               and r[1] - r[0] + 1 >= min_gutter_width]
-    if not gutters:
+    from guided_cutter import CutPanel, CutterConfig, _split_panel, find_valley_cuts
+    cuts = find_valley_cuts(gray, max_panel_height=max_panel_height)
+    if len(cuts) < 2:
         raise sa.VisionAnalysisError(
-            "fallback detected no usable gutters on this strip")
+            "fallback detected no usable gutter runs on this strip")
 
-    cuts = [0] + [(g[0] + g[1]) // 2 for g in gutters]
-    if cuts[-1] < height:
-        cuts.append(height)
+    # find_valley_cuts already snaps each cut to the midpoint of its gutter
+    # run, so no further refinement is needed.
     entries: list[sa.PanelPlanEntry] = []
     for y0, y1 in pairwise(cuts):
         if y1 - y0 < 5:
@@ -175,12 +197,15 @@ def fallback_plan_from_gutter_detector(
             panel_index=len(entries) + 1, y_start=y0, y_end=y1,
             narration="", dialogue="", panel_type="unknown", confidence=0.0))
     plan = sa.PanelPlan(source=strip_path.name, width=width, height=height,
-                        model="gutter-fallback", config_hash="fallback",
+                        model="gutter-run", config_hash="fallback",
                         input_hash="fallback", provenance="fallback",
                         entries=entries)
+    # oversized panels: split at internal VALLEYS first; the legacy
+    # splitter (which searches real gutter runs, midpoints only as an
+    # explicitly-logged last resort) handles the rest.
     if max_panel_height and entries:
         from guided_cutter import CutPanel, CutterConfig, _split_panel
-        dummy = CutPanel(
+        dummy = CutPanel(  # type: ignore[call-arg]
             id="fb", panel_index=0, y_start=0, y_end=0,
             narration="", dialogue="", panel_type="unknown",
             confidence=0.0, image_file="")
@@ -197,7 +222,8 @@ def fallback_plan_from_gutter_detector(
                     "y_end": e.y_end,
                 })
                 pieces = _split_panel(gray, piece, frozenset(),
-                                       CutterConfig(max_panel_height=max_panel_height))
+                                       CutterConfig(max_panel_height=max_panel_height,
+                                                    variance_threshold=variance_threshold))
                 for pc in pieces:
                     new_entries.append(sa.PanelPlanEntry(
                         panel_index=idx, y_start=pc.y_start, y_end=pc.y_end,
@@ -227,6 +253,11 @@ def run_guided(
     max_panel_height: int = 1600,
     variance_threshold: float = 6.0,
     edge_threshold: float = 30.0,
+    blank_sensitivity: str | None = "conservative",
+    output_width: int = 390,
+    min_output_height: int = 760,
+    max_output_height: int = 800,
+    normalize_output: bool = True,
     fallback: bool = True,
     force: bool = False,
     dry_run: bool = False,
@@ -238,6 +269,12 @@ def run_guided(
     The artifact is None in dry-run mode. Pass backend=StubBackend() or
     backend_name="none"/"fixture" for offline use; the fallback takes over
     automatically when the AI path raises or yields a low-confidence plan.
+    blank_sensitivity=None disables the deterministic blank-region detector
+    (low | conservative | high otherwise). Panel PNGs are normalized to
+    exactly `output_width` px wide with height in
+    [`min_output_height`, `max_output_height`] (see
+    guided_cutter.normalize_panel_image); source coordinates are untouched.
+    Pass normalize_output=False for legacy full-resolution crops.
     """
     strip = Path(strip)
     if not strip.is_file():
@@ -252,7 +289,7 @@ def run_guided(
             Path(plan_path).read_text("utf-8"))
         plan_from_file = True
         log.info("plan loaded from file panels=%d", len(plan.entries))
-    elif backend is not None or backend_name.lower() != "none":
+    elif backend is not None or backend_name.lower() not in _OFFLINE_BACKENDS:
         use = backend if backend is not None else build_backend(
             backend_name, api_key=api_key, model=model,
             base_url=base_url, cf_account_id=cf_account_id)
@@ -278,21 +315,28 @@ def run_guided(
         log.warning("AI plan confidence too low (%.0f%% of panels < %.1f); "
                     "falling back to gutter detector for geometry, "
                     "keeping AI narrations", bad, LOW_CONF_THRESHOLD)
-        fallback = fallback_plan_from_gutter_detector(
-            strip, variance_threshold=variance_threshold)
-        plan = _merge_narration_into_fallback(plan, fallback)
+        gutter_plan = fallback_plan_from_gutter_detector(
+            strip, variance_threshold=variance_threshold,
+            edge_threshold=edge_threshold, max_panel_height=max_panel_height)
+        plan = _merge_narration_into_fallback(plan, gutter_plan)
         plan.provenance = "fallback"
         used_fallback = True
     if plan is None:
         if not fallback:
             raise sa.VisionAnalysisError(
                 "no AI plan and fallback is disabled (--no-fallback)")
-        plan = fallback_plan_from_gutter_detector(strip, variance_threshold=variance_threshold)
+        plan = fallback_plan_from_gutter_detector(
+            strip, variance_threshold=variance_threshold,
+            edge_threshold=edge_threshold, max_panel_height=max_panel_height)
         used_fallback = True
         log.warning("using gutter-detector fallback (no AI narration)")
 
     if plan is None:
         raise RuntimeError("internal: plan is None after fallback resolution")
+    if out_plan is not None and plan is not None:
+        # --out-plan must work in dry-run mode too (Phase-1 cache/plan
+        # export); the out-dir plan.json below is only for real runs.
+        sa.write_atomic(Path(out_plan), plan.model_dump_json(indent=2) + "\n")
     if dry_run:
         log.info("dry_run returning plan panels=%d", len(plan.entries))
         return plan, None, used_fallback
@@ -307,7 +351,14 @@ def run_guided(
     config = CutterConfig(tolerance=tolerance,
                           max_panel_height=max_panel_height,
                           variance_threshold=variance_threshold,
-                          edge_threshold=edge_threshold)
+                          edge_threshold=edge_threshold,
+                          blank_detection=blank_sensitivity is not None,
+                          blank_preset=blank_sensitivity or "conservative",
+                          output_width=output_width,
+                          min_output_height=min_output_height,
+                          max_output_height=max_output_height,
+                          normalize_output=normalize_output,
+                          preserve_boundaries=(plan.provenance == "fallback"))
     log.info("Phase-2 starting guided_cut")
     artifact = guided_cut(strip, plan, out_dir, config=config, force=force, validate=validate)
     log.info("Phase-2 complete panels=%d", len(artifact.panels))
