@@ -17,6 +17,7 @@ into a single tall strip before processing.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import re
@@ -694,4 +695,10 @@ def manual(
 
 
 if __name__ == "__main__":
+    # Cinematic effects subcommand (cinematic_effects.py). Registered
+    # before app() runs; silently skipped if the module is missing so
+    # cli.py stays usable without the cinematic feature.
+    with contextlib.suppress(ImportError):
+        from cli_cinematic_patch import add_cinematic_command
+        add_cinematic_command(guided_app)
     app()

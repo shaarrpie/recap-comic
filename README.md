@@ -75,6 +75,31 @@ Outputs next to the mp4: recap.srt (captions), timeline.json, audio/*.mp3,
 narration.json. Re-running is incremental: unchanged narration reuses the
 cached audio, an unchanged timeline skips the ffmpeg render (`--force` resets).
 
+### Cinematic pass (optional Phase 3 variant)
+
+`guided cinematic` renders the same panels.json into a manhwa-recap-style
+video: punch zoom on action panels, Ken-Burns zoom+pan, screen shake, glitch
+transitions, vignette, teal/orange color grade, speed lines, optional
+letterbox and background music. Panels are auto-classified (action / reveal /
+dialogue / calm) from their narration text; see `cinematic_effects.py`.
+
+```bash
+# Full dynamic style on top of an existing guided_out/
+python cli.py guided cinematic guided_out/panels.json
+
+# Subtle effects, with background music
+python cli.py guided cinematic guided_out/panels.json --style subtle \
+    --bgm bgm.mp3 --bgm-volume 0.15
+
+# Letterbox bars, no glitch transitions
+python cli.py guided cinematic guided_out/panels.json --letterbox --no-glitch
+```
+
+The webapp also exposes this as the Cinematic Studio view (`#/cinematic`):
+one-click full pipeline, stage-by-stage semi-auto runs, per-panel effect
+overrides with 3.5s previews, BGM upload, color-grade swatches, and an
+export panel.
+
 ## How the pipeline works
 
 ```
