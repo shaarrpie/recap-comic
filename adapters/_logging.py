@@ -9,6 +9,7 @@ Provides:
 from __future__ import annotations
 
 import logging
+import re
 import sys
 import threading
 import time
@@ -21,6 +22,30 @@ SENSITIVE_KEYS = frozenset({
     "api_key", "apikey", "token", "authorization", "cookie",
     "password", "secret", "x-api-key", "x-auth-token",
 })
+
+# Key-shaped substrings that can appear in provider exception messages or
+# URLs ("key=sk-...", "Bearer ...", Google AIza keys, etc.). A bare
+# alphanumeric run is deliberately NOT matched (too many false positives
+# on ordinary words): only well-known key prefixes and key=value forms.
+_KEY_PATTERNS = [
+    re.compile(r"sk-[A-Za-z0-9_\-]{8,}"),
+    re.compile(r"AIza[A-Za-z0-9_\-]{20,}"),
+    re.compile(r"(?i)(?:api[_-]?key|token|authorization)"
+               r"(?:[\"'\s:=]{1,3})[A-Za-z0-9_\-\.]{8,}"),
+    re.compile(r"(?i)bearer\s+[A-Za-z0-9_\-\.]{8,}"),
+    re.compile(r"(?i)(?:key|token)=([A-Za-z0-9_\-]{8,})"),
+]
+
+
+def _redact_str(text: str) -> str:
+    """Scrub key-shaped substrings (sk-..., AIza..., 'Bearer x', 'key=x')
+    from an arbitrary string such as a provider exception message."""
+    for pat in _KEY_PATTERNS:
+        text = pat.sub(_REDACTED, text)
+    return text
+
+
+_REDACTED = "***REDACTED***"
 
 
 def _safe_str(value: Any) -> str:
@@ -38,18 +63,37 @@ def _redact(value: Any) -> Any:
         out: dict[str, Any] = {}
         for k, v in value.items():
             if k.lower() in SENSITIVE_KEYS:
-                out[k] = "***REDACTED***"
+                out[k] = _REDACTED
             else:
                 out[k] = _redact(v)
         return out
     if isinstance(value, list):
         return [_redact(v) for v in value]
+    if isinstance(value, str):
+        # Dict-value strings are only redacted when their KEY is sensitive;
+        # scrubbing every dict value would mangle legitimate content. Only
+        # clearly key-shaped strings get pattern-scrubbed.
+        return value
     return value
 
 
 def sanitize(obj: Any) -> Any:
-    """Return a copy of obj with sensitive keys redacted for safe logging."""
-    return _redact(obj)
+    """Return a copy of obj with secrets redacted for safe logging.
+
+    - dicts: sensitive keys redacted (recursively)
+    - lists/tuples: redacted per item
+    - strings (including str() of exceptions): key-shaped substrings
+      (sk-..., AIza..., 'Bearer x', 'key=x') scrubbed
+    - other objects: str() them and scrub
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, str):
+        return _redact_str(obj)
+    if isinstance(obj, (dict, list, tuple)):
+        red = _redact(obj)
+        return red
+    return _redact_str(_safe_str(obj))
 
 
 class _JobFilter(logging.Filter):

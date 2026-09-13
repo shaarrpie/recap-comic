@@ -176,9 +176,28 @@ class JobStore:
         if job is None:
             job = self._load(job_id)  # rehydrate after restart/eviction
             if job is not None:
+                # Rehydrated jobs must behave like freshly-created ones:
+                # without _store, mutations (log/touch/fail) after a
+                # restart are memory-only and silently lost again.
+                job._store = self  # type: ignore[attr-defined]
                 with self._lock:
                     self._jobs[job_id] = job
         return job
+
+    def snapshot(self) -> list[Job]:
+        """Locked copy of the live jobs. Iterating store._jobs directly
+        races concurrent create() -> "dict changed size during iteration"."""
+        with self._lock:
+            return list(self._jobs.values())
+
+    def remove(self, job_id: str) -> None:
+        """Drop a job from memory and its persistence file (upload
+        failures: no phantom sessions in /api/projects)."""
+        with self._lock:
+            self._jobs.pop(job_id, None)
+        if self._persist_dir is not None:
+            with contextlib.suppress(OSError):
+                (self._persist_dir / f"{job_id}.json").unlink()
 
     def get_by_session(self, session: str) -> Job | None:
         """Latest job (memory or disk) whose config.session == session.
@@ -212,9 +231,11 @@ class JobStore:
                 job = self._from_dict(data, mark_interrupted=False)
                 if job is None:
                     continue
+                job._store = self  # type: ignore[attr-defined]
                 if best is None or (job.updated_at or 0) > (best.updated_at or 0):
                     best = job
         if best is not None:
+            best._store = self  # type: ignore[attr-defined]
             with self._lock:
                 self._jobs[best.id] = best
         return best
@@ -248,7 +269,10 @@ class JobStore:
             data = json.loads(path.read_text("utf-8"))
         except (OSError, ValueError):
             return None
-        return self._from_dict(data, mark_interrupted=True)
+        job = self._from_dict(data, mark_interrupted=True)
+        if job is not None:
+            job._store = self  # type: ignore[attr-defined]
+        return job
 
     @staticmethod
     def _from_dict(data: dict, *, mark_interrupted: bool) -> Job | None:

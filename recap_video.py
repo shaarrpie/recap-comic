@@ -451,7 +451,20 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
                 p.id, img)
             skipped_missing += 1
             continue
-        pan = compute_pan(p.strip_width or artifact.width, h)
+        # Pan geometry must match the PNG on disk, NOT the source-strip
+        # geometry: the cutter may normalize panel PNGs (390x[760,800]
+        # center-crop/pad) while y_start/y_end/strip width remain source
+        # coordinates. Scaling a 390x800 PNG to source-derived scaled_h
+        # would stretch/crop wrongly and invent pan travel_px that the
+        # image does not have (inflating display_seconds via pan_floor).
+        png_w = p.output_width
+        png_h = p.output_height
+        if png_w is None or png_h is None:
+            # Legacy full-resolution crops (normalize_output=False): the
+            # PNG dimensions are the source crop dimensions.
+            png_w = p.strip_width or artifact.width
+            png_h = h
+        pan = compute_pan(png_w, png_h)
         a = by_audio.get(p.id)
         text = by_text[p.id].text if p.id in by_text else ""
         dur = display_seconds(
@@ -459,7 +472,7 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
             words=_word_count(text), travel_px=pan.travel_px, cfg=cfg)
         entries.append(TimelineEntry(
             panel_id=p.id, order=order, source_image=str(img),
-            bbox=BBox(x=0, y=p.y_start, w=artifact.width, h=h),
+            bbox=BBox(x=0, y=p.y_start, w=png_w, h=png_h),
             start_seconds=round(t, 3), duration_seconds=dur,
             audio_path=str((audio_dir / a.path).resolve()) if a else None,
             pan=pan))
@@ -541,8 +554,7 @@ def write_srt(timeline: TimelineArtifact, narration: NarrationArtifact,
 def render_video(timeline: TimelineArtifact, out_path: Path,
                  cfg: VideoConfig) -> None:
     exe = _resolve_ffmpeg(cfg.ffmpeg_exe)
-    from adapters.render_ffmpeg import (
-        RenderError, pick_render_strategy, render, render_chunked)
+    from adapters.render_ffmpeg import RenderError, pick_render_strategy, render, render_chunked
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(out_path.stem + ".partial.mp4")
     log.info("render_video start out=%s timeline_entries=%d",

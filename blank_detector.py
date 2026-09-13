@@ -90,6 +90,12 @@ class BlankDetectorConfig:
     # region has meaningful sparse content (bubble/character) -> not blank
     content_fg_ratio: float = 0.05
     content_area_frac: float = 0.02        # >=2% of windows with content
+    # Row-mean trend rescue: all five base signals are x-oriented (variance
+    # per row, dx Sobel, per-window entropy/fg) and cannot see a slow
+    # vertical gradient (sky fades, mood transitions). If the per-window
+    # mean brightness drifts by more than this many grey levels across
+    # the run, the region is real art, never BLANK.
+    max_row_mean_drift: float = 10.0
 
     # --- multi-scale -----------------------------------------------------
     # A second pass on a further-downscaled grid rejects regions that only
@@ -335,6 +341,14 @@ def detect_blank_regions(
         ent = float(ent_w[w0:w1 + 1].mean())
         col = float(col_eff[w0:w1 + 1].mean())
         fg = float(fg_w[w0:w1 + 1].mean())
+        # Vertical-gradient rescue: range of per-window mean brightness
+        # across the run. A sky fade / mood gradient drifts steadily in
+        # y while every x-oriented signal (variance, dx Sobel, entropy,
+        # fg) stays low — without this check such regions scored BLANK
+        # and were dropped.
+        row_means = _window_rows(small.mean(axis=1), cfg.window)
+        drift = float(row_means[w0:w1 + 1].max()
+                      - row_means[w0:w1 + 1].min())
 
         # content rescue: any sub-window with clear foreground (line art,
         # bubble, character) inside the run => uncertain, never BLANK.
@@ -373,12 +387,17 @@ def detect_blank_regions(
         verdict = SUSPICIOUS
         if (score >= cfg.blank_score_threshold
                 and content_frac < cfg.content_area_frac
-                and height >= min_h_orig):
+                and height >= min_h_orig
+                and drift <= cfg.max_row_mean_drift):
             verdict = BLANK
             reasons.append(f"blank run height {height}px >= min {min_h_orig}px")
         elif score < cfg.suspicious_score_threshold:
             verdict = NORMAL
             continue
+        if drift > cfg.max_row_mean_drift:
+            # steady brightness gradient: real art, downgraded to review
+            reasons.append(f"row-mean drift {drift:.1f} grey levels "
+                           "(vertical gradient; not blank)")
 
         is_gutter_sized = height <= max_gutter_h_orig
         if is_gutter_sized and verdict == BLANK:
@@ -443,8 +462,8 @@ def score_crop(rgb: np.ndarray, config: BlankDetectorConfig | None = None,
     n_win = max(1, gray.shape[0] // 4)
     ent_arr = _window_entropy(gray, max(8, n_win))
     ent = float(ent_arr.mean()) if ent_arr.size else 0.0
-    fg = _fg_ratio_windows(gray, max(8, n_win))
-    fg = float(fg.mean()) if fg.size else 0.0
+    fg_arr = _fg_ratio_windows(gray, max(8, n_win))
+    fg = float(fg_arr.mean()) if fg_arr.size else 0.0
     med = np.median(rgb.reshape(-1, 3), axis=0)
     col = float(np.sqrt(((rgb.reshape(-1, 3).astype(np.float32) - med) ** 2)
                         .sum(axis=1)).std())

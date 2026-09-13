@@ -131,7 +131,9 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
         alabels.append(f"[a{i}]")
 
     if use_xfade:
-        return _build_xfade_command(cmd, timeline, transitions, has_audio, vlabels, alabels, out_path)
+        return _build_xfade_command(
+            cmd, timeline, transitions or [], has_audio, vlabels, alabels,
+            out_path)
 
     n = len(timeline.entries)
     chains.append(f"{''.join(vlabels)}concat=n={n}:v=1:a=0[vcat];"

@@ -105,7 +105,6 @@ def generate(narration_request: str, ocr: OcrArtifact, panel_ids: list[str],
         from adapters._gemini_keys import KeyRotator
         rotator = KeyRotator([api_key])
 
-    rotator = from_env()
     dump = "\n".join(
         f"{r.panel_id or '?'} [{r.kind}] conf={r.confidence}: {r.text}"
         for r in ocr.regions)
@@ -156,8 +155,8 @@ def generate(narration_request: str, ocr: OcrArtifact, panel_ids: list[str],
             if is_quota and attempt < max_rotation:
                 rotator.advance()
                 log.warning(
-                    "gemini quota error on key ending %s; rotated to next key (%d/%d)",
-                    api_key[-4:], attempt + 1, max_rotation
+                    "gemini quota error on key %d/%d; rotated to next key",
+                    attempt + 1, max_rotation
                 )
                 continue
             last_err = (

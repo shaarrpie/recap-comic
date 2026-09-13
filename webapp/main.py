@@ -268,6 +268,17 @@ async def projects():
     return {"projects": result}
 
 
+def _discard_session(session, session_dir: Path) -> None:
+    """Best-effort cleanup of a failed upload: no phantom empty projects
+    in /api/projects, no orphan job records."""
+    try:
+        if session_dir.is_dir() and not any(session_dir.iterdir()):
+            session_dir.rmdir()
+    except OSError:
+        pass
+    store.remove(session.id)
+
+
 @app.post("/api/upload")
 async def upload(file: UploadFile = File(...), run: int = 0):  # noqa: B008
     allowed = {"png", "jpg", "jpeg", "webp"}
@@ -281,6 +292,7 @@ async def upload(file: UploadFile = File(...), run: int = 0):  # noqa: B008
     dest = session_dir / strip_file
     max_bytes = 200 * 1024 * 1024
     written = 0
+    too_large = False
     with dest.open("wb") as fh:
         while True:
             chunk = await file.read(4 * 1024 * 1024)
@@ -288,9 +300,15 @@ async def upload(file: UploadFile = File(...), run: int = 0):  # noqa: B008
                 break
             written += len(chunk)
             if written > max_bytes:
-                dest.unlink(missing_ok=True)
-                raise HTTPException(413, "upload too large; max 200 MB")
+                too_large = True
+                break
             fh.write(chunk)
+    # The file handle must be CLOSED before unlinking on Windows: an
+    # unlink inside the `with` block raises PermissionError -> 500.
+    if too_large:
+        dest.unlink(missing_ok=True)
+        _discard_session(session, session_dir)
+        raise HTTPException(413, "upload too large; max 200 MB")
     # Validate that the upload is a real, decodable image. Extension checks
     # alone let corrupt files through until load_images blows up much
     # later, after the user has waited for a job to start.
@@ -300,6 +318,7 @@ async def upload(file: UploadFile = File(...), run: int = 0):  # noqa: B008
             img.verify()
     except Exception as exc:
         dest.unlink(missing_ok=True)
+        _discard_session(session, session_dir)
         raise HTTPException(400, f"not a valid {suffix} image: {exc}") from exc
     cfg = {
         "session": session.id,
@@ -377,6 +396,17 @@ async def run(body: RunRequest):
         if not prev_panels.is_file():
             raise HTTPException(400, "continue_from session has no panels "
                                      "yet; run it first, then continue")
+    # One live worker per session: a double-clicked Generate would run two
+    # workers racing on panels.json / recap.mp4 (double render). Upload
+    # records (kind="segment") are excluded: with run=0 they sit queued
+    # forever without any worker, and a queued upload must never block
+    # the first /api/run.
+    for j in store.snapshot():
+        if (j.config.get("session") == body.session
+                and j.kind in ("generate", "pipeline_step", "pipeline_until")
+                and j.status.value in ("queued", "running")):
+            raise HTTPException(409, "a job is already running for this "
+                                     "session; cancel it or wait for it")
     job = store.create("generate", {
         "session": body.session,
         "strip_file": strip_file,
@@ -695,7 +725,11 @@ def _synth_session_status(session: str, *, logs: bool) -> dict | None:
     never ran. Returns a synthetic payload (instead of a bare 404) listing
     what IS on disk, so the Logs view shows an explanation rather than
     "job no longer exists on the server".
+
+    The session id is validated (uuid4 hex[:12]) before it is used as a
+    path: a probing job_id like '..' must never list another directory.
     """
+    _validated_session_id(session)
     d = OUTPUT_DIR / session
     if not d.is_dir():
         return None
@@ -745,10 +779,24 @@ async def cancel(job_id: str):
     return {"job_id": job_id, "cancel_requested": True}
 
 
+_SESSION_ID_RE = re.compile(r"^[0-9a-f]{12}$")
+
+
+def _validated_session_id(session: str) -> str:
+    """Session ids are uuid4().hex[:12]. Anything else (e.g. '..' from a
+    path-probing job_id) must never be used as a path component."""
+    if not _SESSION_ID_RE.fullmatch(session or ""):
+        raise HTTPException(400, "bad session id")
+    return session
+
+
 @app.get("/api/jobs/{job_id}/files/{name:path}")
 async def job_file(job_id: str, name: str):
     job = store.get(job_id)
-    session = job.config.get("session", job_id) if job is not None else job_id
+    if job is not None:
+        session = _validated_session_id(job.config.get("session", job_id))
+    else:
+        session = _validated_session_id(job_id)
     base = (OUTPUT_DIR / session).resolve()
     target = (base / name).resolve()
     if target.parent != base and base not in target.parents:
@@ -888,6 +936,19 @@ def _validate_step_session(session: str) -> None:
         raise HTTPException(404, "session not found")
 
 
+def _guard_no_active_step_job(session: str) -> None:
+    """409 while a step/until worker is live for this session. The ledger
+    'status' field is never set to 'running' by anything, so guarding on
+    it was dead code; the job store is the actual source of truth."""
+    for j in store.snapshot():
+        if (j.config.get("session") == session
+                and j.kind in ("pipeline_step", "pipeline_until")
+                and j.status.value in ("queued", "running")):
+            raise HTTPException(
+                409, "a step is already running for this session; "
+                     "cancel it or wait for it to finish")
+
+
 @app.get("/api/pipeline/{session}")
 async def pipeline_state_get(session: str):
     """Ledger + step list + staleness for the visual pipeline state."""
@@ -895,7 +956,7 @@ async def pipeline_state_get(session: str):
     state = _cp.load_state(session)
     drift = _cp.detect_stale_steps(session)
     running = None
-    for j in store._jobs.values():
+    for j in store.snapshot():
         if (j.config.get("session") == session
                 and j.kind in ("pipeline_step", "pipeline_until")
                 and j.status.value in ("queued", "running")):
@@ -937,6 +998,7 @@ async def pipeline_run_step(session: str, body: StepRunRequest):
     """Run ONE stage (Step-by-Step): worker executes it, checkpoints,
     and the job ends paused-at-next."""
     _validate_step_session(session)
+    _guard_no_active_step_job(session)
     state = _cp.load_state(session)
     # default target: the ledger's current step
     stage = body.stage or _cp.BY_STEP.get(state.get("current_step", 1), {}).get(
@@ -945,8 +1007,6 @@ async def pipeline_run_step(session: str, body: StepRunRequest):
         raise HTTPException(400, "no runnable next step (ledger empty?)")
     _validate_step_stage(stage)
     step_no = _cp.BY_PIPELINE_NAME[stage]["step"]
-    if state.get("status") == "running":
-        raise HTTPException(409, "a step is already running for this session")
     cfg = {"session": session, "strip_file": _strip_file_for(session),
            "stage": stage, "tts": body.tts, "voice": body.voice,
            "style": body.style, "backend": body.backend,
@@ -975,8 +1035,7 @@ async def pipeline_run_until(session: str, body: StepRunRequest):
     from_step = _cp.BY_PIPELINE_NAME.get(body.from_stage or "", {}).get(
         "step") or cur
     from_stage = _cp.BY_STEP[from_step]["pipeline_name"]
-    if state.get("status") == "running":
-        raise HTTPException(409, "a step is already running")
+    _guard_no_active_step_job(session)
     cfg = {"session": session, "strip_file": _strip_file_for(session),
            "start_stage": from_stage, "end_stage": until or "create_editor_project",
            "tts": body.tts, "voice": body.voice, "style": body.style,

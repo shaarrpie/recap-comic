@@ -191,7 +191,7 @@ def normalize_panel_image(piece: Image.Image, *,
         raise ValueError("max_output_height must be >= min_output_height")
     scale = output_width / float(piece.width)
     scaled_h = max(1, int(round(piece.height * scale)))
-    resized = piece.resize((output_width, scaled_h), Image.LANCZOS)
+    resized = piece.resize((output_width, scaled_h), Image.Resampling.LANCZOS)
     if scaled_h > max_output_height:
         top = (scaled_h - max_output_height) // 2
         return resized.crop((0, top, output_width, top + max_output_height))

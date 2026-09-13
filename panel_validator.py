@@ -159,6 +159,7 @@ def validate_panels(gray: np.ndarray, panels: list, *,
     prev_y: tuple[int, int] | None = None
     for p in panels:
         pid = (p.get("id") if isinstance(p, dict) else (getattr(p, "id", None) or getattr(p, "panel_id", None)))
+        pid = str(pid) if pid is not None else ""
         y0 = int(p["y_start"] if isinstance(p, dict) else p.y_start)
         y1 = int(p["y_end"] if isinstance(p, dict) else p.y_end)
         v = PanelVerdict(panel_id=pid, ai_confidence=confs.get(pid))
@@ -213,6 +214,7 @@ def validate_panels(gray: np.ndarray, panels: list, *,
             union = max(prev_y[1], y1) - min(prev_y[0], y0)
             iou = inter / max(1, union)
             if iou >= cfg.overlap_dup:
+                assert prev is not None  # prev_y is not None implies prev
                 v.duplicate_of = v.duplicate_of or prev.panel_id
                 v.quality = SUSPICIOUS if v.quality == NORMAL else v.quality
                 v.reasons.append(f"~identical to previous (IoU {iou:.2f})")

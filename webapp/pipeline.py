@@ -385,9 +385,6 @@ def _merge_continuation(job: Job, **kwargs: Any) -> None:
     from guided_cutter import CutArtifact, CutPanel
     session_dir = OUTPUT_DIR / session
     chain = _continuation_chain(session, current_continue_from=cont_from)
-    (session_dir / "continuation.json").write_text(
-        json.dumps({"continue_from": cont_from, "chain": chain}, indent=2),
-        "utf-8")
     job.log("INFO", f"continuation chain: {' -> '.join([*chain, session])}",
             "merge_continuation")
     # THIS strip's confirmed/AI panels (already ordered by apply_confirmed)
@@ -395,8 +392,21 @@ def _merge_continuation(job: Job, **kwargs: Any) -> None:
     if not own:
         job.log("WARNING", "no own panels; merging previous strips only",
                 "merge_continuation")
-    own_art = CutArtifact.model_validate_json(
-        _panels_source(session_dir).read_text("utf-8"))
+    # OWN baseline: confirmed review or AI baseline ONLY — never
+    # panels_merged.json. A stale merged artifact from a previous
+    # continuation run would re-namespace already-namespaced ids
+    # (sSSSSSSSS_sAAAAAAAA_panel_001) and double-count the old chain.
+    own_src = None
+    for name in ("panels_confirmed.json", "panels.json"):
+        cand = session_dir / name
+        if cand.is_file():
+            own_src = cand
+            break
+    if own_src is None:
+        job.log("WARNING", "own strip has no panels artifact; aborting merge",
+                "merge_continuation")
+        return
+    own_art = CutArtifact.model_validate_json(own_src.read_text("utf-8"))
     panels_out: list[CutPanel] = []
     stats = {"strips": 0, "panels": 0}
     for src_session in chain:
@@ -529,6 +539,12 @@ def _merge_continuation(job: Job, **kwargs: Any) -> None:
     tmp = dst.with_suffix(".tmp")
     tmp.write_text(merged.model_dump_json(indent=2) + "\n", "utf-8")
     tmp.replace(dst)
+    # Link the chain only AFTER the merged artifact landed: a failed merge
+    # must not leave continuation.json pointing at strips whose merge
+    # never completed (the combined Panel Review would show them anyway).
+    (session_dir / "continuation.json").write_text(
+        json.dumps({"continue_from": cont_from, "chain": chain}, indent=2),
+        "utf-8")
     # expose the own-strip id translation so _apply_order can map a raw
     # user-supplied order onto the namespaced merged ids
     job.config["_own_id_map"] = id_map
