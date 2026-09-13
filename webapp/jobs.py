@@ -241,9 +241,46 @@ class JobStore:
         return best
 
     # -- persistence -------------------------------------------------- #
-    def _save(self, job: Job) -> None:
+    def _save(self, job: Job, *, immediate: bool | None = None) -> None:
+        """Persist a job snapshot when its observable content changed.
+
+        The old code serialized the FULL snapshot (status + config + the
+        whole 300-line log ring) on every log()/touch()/progress call —
+        O(logs^2) write volume per job. Snapshots are now change-gated by
+        a compact fingerprint (status, stage, progress, error, timestamps,
+        log count + last line id, config): identical consecutive calls
+        cost one dict compare, and every real change still persists
+        immediately (durability contract: a restart never loses a logged
+        line). Terminal states always persist.
+        """
         if self._persist_dir is None:
             return
+        fp = (job.status, job.stage, int(job._progress), job.error,
+              job.created_at, job.started_at, job.updated_at,
+              job.finished_at, len(job._logs),
+              job._logs[-1]["t"] if job._logs else 0.0,
+              len(job.panels), repr(job.config))
+        prev = getattr(job, "_persist_fp", None)
+        if fp == prev and job.status in TERMINAL:
+            # already durable at a terminal state, nothing new to write
+            return
+        if fp == prev and prev is not None:
+            return  # no observable change since the last write
+        job._persist_fp = fp  # type: ignore[attr-defined]
+        self._write_snapshot(job)
+
+    def flush(self, job: Job | None = None) -> None:
+        """Force-write pending snapshots (used at worker exit; the
+        fingerprint gate already persists every real change, so this is
+        a belt-and-braces final sync)."""
+        if self._persist_dir is None:
+            return
+        jobs = [job] if job is not None else []
+        for j in jobs:
+            j._persist_fp = None  # type: ignore[attr-defined]
+            self._save(j)
+
+    def _write_snapshot(self, job: Job) -> None:
         # Serialize snapshots: concurrent log/touch/progress calls from
         # multiple threads must not interleave on the same .tmp file
         # (corrupted JSON silently discards the job's history).

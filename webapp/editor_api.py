@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -21,7 +22,7 @@ from recap_video import VideoConfig, render_edited_project
 from webapp.jobs import JobStatus, store
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = BASE_DIR / "webapp_output"
+OUTPUT_DIR = Path(os.environ.get("RECAP_OUTPUT_DIR") or BASE_DIR / "webapp_output")
 log = logging.getLogger(__name__)
 
 _SESSION_RE = re.compile(r"^[0-9a-f]{12}$")

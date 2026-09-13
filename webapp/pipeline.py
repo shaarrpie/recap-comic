@@ -19,7 +19,7 @@ from typing import Any
 from .jobs import CancelledError, Job, JobStatus, store
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = BASE_DIR / "webapp_output"
+OUTPUT_DIR = Path(os.environ.get("RECAP_OUTPUT_DIR") or BASE_DIR / "webapp_output")
 
 # We run the whole pipeline inside the server process: switch the CLI
 # progress bars off. Ten concurrent jobs each drawing a rich.Progress
@@ -1145,6 +1145,8 @@ def run_steps_job(job_id: str, first_stage: str,
     except Exception:
         if job.status not in (JobStatus.FAILED, JobStatus.CANCELLED):
             job.fail(f"worker crashed: {_tb_tail()}")
+    finally:
+        store.flush(job)
 
 
 def _tb_tail() -> str:
@@ -1199,3 +1201,5 @@ def run_job(job_id: str, **kwargs: Any) -> None:
         if job.status not in (JobStatus.FAILED, JobStatus.CANCELLED):
             import traceback
             job.fail(f"worker crashed: {traceback.format_exc()[-300:]}")
+    finally:
+        store.flush(job)

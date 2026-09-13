@@ -49,11 +49,22 @@ class RenderWorker:
         self._last_size = -1
         self._last_grow = time.time()
         self._cancelled = False
+        # on_done latch: a stall-cancel racing normal completion used to
+        # deliver on_done twice (True then False -> spurious soft error).
+        # First delivery wins; later calls are no-ops.
+        self._done_delivered = threading.Event()
         self.cancel_event = cancel_event   # set => terminate (pipeline slot)
         # When the caller already holds the render slot (webapp.pipeline's
         # render_slot contextmanager), the worker must NOT re-acquire the
         # semaphore — BoundedSemaphore(1) would self-deadlock.
         self.owns_render_slot = owns_render_slot
+
+    def _deliver(self, ok: bool, err: str | None = None) -> None:
+        """Deliver on_done exactly once (first caller wins)."""
+        if self._done_delivered.is_set() or self.on_done is None:
+            return
+        self._done_delivered.set()
+        self.on_done(ok, err)
 
     @staticmethod
     def pick_strategy(n_panels: int, total_seconds: float) -> str:
@@ -83,15 +94,15 @@ class RenderWorker:
             if rc == 0 and self.tmp.is_file() and self.tmp.stat().st_size > 0:
                 self.tmp.replace(self.out)
                 log.info("[RENDER] job=%s success out=%s", self.job_id, self.out)
-                self.on_done and self.on_done(True, None)
+                self._deliver(True, None)
             else:
                 self._cleanup_tmp()
                 tail = b"".join(stderr_tail)[-1500:].decode("utf-8", "replace")
-                self.on_done and self.on_done(False, f"ffmpeg exit {rc}\n{tail}")
+                self._deliver(False, f"ffmpeg exit {rc}\n{tail}")
         except Exception as exc:
             self._cleanup_tmp()
             if not self._cancelled:
-                self.on_done and self.on_done(False, str(exc))
+                self._deliver(False, str(exc))
         finally:
             with _LOCK:
                 _ACTIVE.pop(self.job_id, None)
@@ -160,7 +171,7 @@ class RenderWorker:
         self._cancelled = True
         self._kill_process_group()
         self._cleanup_tmp()
-        self.on_done and self.on_done(False, reason)
+        self._deliver(False, reason)
 
     def _cleanup_tmp(self):
         try:

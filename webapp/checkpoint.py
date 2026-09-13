@@ -35,13 +35,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import threading
 import time
 from pathlib import Path
 from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = BASE_DIR / "webapp_output"
+OUTPUT_DIR = Path(os.environ.get("RECAP_OUTPUT_DIR") or BASE_DIR / "webapp_output")
 
 STATE_VERSION = 1
 STATE_FILENAME = "pipeline_state.json"
@@ -176,6 +177,10 @@ def record_step(session: str, step: int, *, status: str,
 
     status: success | failed | stale | skipped
     """
+    # Hash inputs BEFORE taking the module-wide lock: hashing a multi-MB
+    # strip inside _STATE_LOCK blocks every other session's checkpoint
+    # I/O (and detect_stale_steps on GET /api/pipeline).
+    input_hashes = _step_input_hashes(session, step)
     with _STATE_LOCK:
         state = load_state(session)
         entry = {
@@ -187,7 +192,7 @@ def record_step(session: str, step: int, *, status: str,
             "error": error,
             "duration_s": round(duration_s, 2),
             "warnings": warnings or [],
-            "input_hashes": _step_input_hashes(session, step),
+            "input_hashes": input_hashes,
             "finished_at": time.time(),
         }
         # replace any prior entry for this step
@@ -237,19 +242,44 @@ def _artifact_paths(session: str, kind: str) -> list[Path]:
 
 
 def _hash_file(p: Path) -> str | None:
+    """SHA-256 (16 hex chars) of a file, cached by (path, mtime, size).
+
+    Caching matters twice over: record_step used to hash the multi-MB
+    strip INSIDE the module-wide _STATE_LOCK (blocking every session's
+    checkpoint I/O), and detect_stale_steps re-hashed on every
+    GET /api/pipeline. mtime+size keying is safe here: edits go through
+    atomic tmp->replace, which always bumps mtime.
+    """
+    try:
+        st = p.stat()
+        key = (str(p), st.st_mtime_ns, st.st_size)
+    except OSError:
+        return None
+    cached = _HASH_CACHE.get(key)
+    if cached is not None:
+        return cached
     try:
         h = hashlib.sha256()
         h.update(p.read_bytes())
-        return h.hexdigest()[:16]
+        val = h.hexdigest()[:16]
     except OSError:
-        return None
+        # Per-file failure sentinel (never a shared "?": two unreadable
+        # files must not compare equal or staleness silently misses drift)
+        return f"unreadable:{p.name}"
+    if len(_HASH_CACHE) > 512:
+        _HASH_CACHE.clear()
+    _HASH_CACHE[key] = val
+    return val
+
+
+_HASH_CACHE: dict[tuple[str, int, int], str] = {}
 
 
 def _step_input_hashes(session: str, step: int) -> dict[str, str]:
     out: dict[str, str] = {}
     for kind in BY_STEP[step]["consumes"]:
         for p in _artifact_paths(session, kind):
-            out[kind] = _hash_file(p) or "?"
+            out[kind] = _hash_file(p) or f"missing:{p.name}"
     return out
 
 
@@ -290,10 +320,13 @@ def validate_artifacts(session: str, step: int) -> tuple[list[str], list[str]]:
             if n == 0:
                 problems.append("segmentation produced 0 panels")
             else:
-                # verify a sample of panel images exist
+                # verify a DETERMINISTIC sample of panel images exist
+                # (random.sample made the check nondeterministic: the
+                # same panels.json could pass one run and fail the next)
                 import random
-                sample = random.sample(data["panels"],
-                                        min(3, len(data["panels"])))
+                panels = data["panels"]
+                rng = random.Random(f"{session}:{len(panels)}")
+                sample = rng.sample(panels, min(3, len(panels)))
                 for pp in sample:
                     img = pp.get("image_file") or ""
                     if img and not (d / img).is_file():

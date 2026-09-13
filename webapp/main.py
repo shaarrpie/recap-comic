@@ -77,12 +77,16 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="recap-comic webapp", lifespan=lifespan)
-OUTPUT_DIR = BASE_DIR / "webapp_output"
+# RECAP_OUTPUT_DIR: test/CI redirection (see conftest.py at the repo
+# root); default is the real per-project webapp_output directory.
+OUTPUT_DIR = Path(os.environ.get("RECAP_OUTPUT_DIR")
+                  or BASE_DIR / "webapp_output")
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 # Job records + log buffers survive uvicorn restarts (see webapp/jobs.py).
 # Without this, every restart turns all job/log lookups into 404s.
-store.configure_persistence(BASE_DIR / ".cache" / "jobs")
+store.configure_persistence(Path(os.environ.get("RECAP_JOBS_DIR")
+                                 or BASE_DIR / ".cache" / "jobs"))
 
 _last_config_state: dict | None = None
 

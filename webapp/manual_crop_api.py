@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from itertools import pairwise
 from pathlib import Path
@@ -25,7 +26,7 @@ from guided_cutter import CutArtifact, CutPanel
 from .panel_api import _read_panels_json, _session_dir, _write_edit, get_panels
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = BASE_DIR / "webapp_output"
+OUTPUT_DIR = Path(os.environ.get("RECAP_OUTPUT_DIR") or BASE_DIR / "webapp_output")
 
 log = logging.getLogger(__name__)
 
@@ -58,10 +59,31 @@ def get_manual_state(session: str) -> dict:
 
 
 def save_manual_boundaries(session: str, boundaries: list[int]) -> dict:
+    # Validate up front (clamping at generate time used to accept
+    # negative/float/oversized values silently): ints only, clamped to
+    # the strip, and at least two distinct values are needed for a cut.
+    if not isinstance(boundaries, list):
+        raise HTTPException(400, "boundaries must be a list of y positions")
+    clean: list[int] = []
+    for b in boundaries:
+        if isinstance(b, bool) or not isinstance(b, (int, float)):
+            raise HTTPException(400, f"boundary {b!r} is not a number")
+        if int(b) != b:
+            raise HTTPException(400, f"boundary {b!r} must be an integer")
+        clean.append(int(b))
+    strip_path = _find_strip(_session_dir(session))
+    if strip_path is not None:
+        with Image.open(strip_path) as img:
+            height = img.size[1]
+        clean = [max(0, min(height, b)) for b in clean]
+    clean = sorted(set(clean))
+    if len(clean) < 2:
+        raise HTTPException(400, "need at least two distinct boundaries "
+                                 "(top and bottom of a panel)")
     data = _read_manual(session)
-    data["boundaries"] = boundaries
+    data["boundaries"] = clean
     # ensure panel_ids matches boundary count (minus 1)
-    n = max(0, len(boundaries) - 1)
+    n = max(0, len(clean) - 1)
     old_ids = data.get("panel_ids", [])
     if len(old_ids) != n:
         data["panel_ids"] = [str(uuid.uuid4())[:8] for _ in range(n)]
@@ -84,8 +106,14 @@ def _find_strip(session_dir: Path) -> Path | None:
         p = session_dir / name
         if p.is_file():
             return p
+    # Fallback must never pick up a PANEL crop (panel_*.png / s<id>_*.png):
+    # generating manual panels from an already-cut panel image silently
+    # produces nonsense. Only a non-panel-named image qualifies.
     for p in session_dir.iterdir():
-        if p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp") and p.is_file():
+        if (p.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp")
+                and p.is_file()
+                and not p.name.startswith("panel_")
+                and not p.name.startswith("s")):
             return p
     return None
 
@@ -129,6 +157,10 @@ def generate_manual_panels(session: str) -> dict:
     saved = []
     for i, (y0, y1) in enumerate(ranges):
         if y1 - y0 < 30:
+            # thin range skipped: the id stays reserved for its position
+            # so ids map 1:1 to ranges across generate runs (a truncated
+            # list would re-shift every id and orphan review/narration
+            # state keyed by the old ids).
             continue
         pid = panel_ids[i]
         dest_name = f"panel_{pid}.png"
@@ -157,7 +189,9 @@ def generate_manual_panels(session: str) -> dict:
     )
     panels_json.write_text(artifact.model_dump_json(indent=2) + "\n", "utf-8")
 
-    data["panel_ids"] = panel_ids[: len(saved)]
+    # panel_ids keeps ALL range positions (skipped thin ranges keep their
+    # reserved slot) so the id<->position mapping is stable.
+    data["panel_ids"] = panel_ids
     _write_manual(session, data)
     # Manual cropping redefines the panel set: every downstream step
     # (validation/review/order/narration/render) is now stale.

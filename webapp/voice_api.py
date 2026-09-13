@@ -17,13 +17,14 @@ import asyncio
 import contextlib
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import edge_tts
 from fastapi import HTTPException
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = BASE_DIR / "webapp_output"
+OUTPUT_DIR = Path(os.environ.get("RECAP_OUTPUT_DIR") or BASE_DIR / "webapp_output")
 PROVIDERS = ("edge", "none")
 
 DEFAULT_VOICE = {
@@ -100,10 +101,8 @@ def get_voice(session: str) -> dict:
             # tolerate legacy string values but never crash on them
             for k in DEFAULT_VOICE:
                 if k in loaded:
-                    try:
+                    with contextlib.suppress(HTTPException):
                         cfg[k] = _coerce_voice_value(k, loaded[k])
-                    except HTTPException:
-                        pass  # keep the default for this key
     return cfg
 
 

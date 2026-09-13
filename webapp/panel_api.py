@@ -15,6 +15,7 @@ recoverable.  Panel ids stay stable; only a *display order* is renumbered.
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -22,7 +23,7 @@ from pathlib import Path
 from fastapi import HTTPException
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-OUTPUT_DIR = BASE_DIR / "webapp_output"
+OUTPUT_DIR = Path(os.environ.get("RECAP_OUTPUT_DIR") or BASE_DIR / "webapp_output")
 _SESSION_RE = re.compile(r"^[0-9a-f]{12}$")
 
 VALID_REVIEW = {"needs_review", "reviewed", "edited"}
@@ -106,15 +107,26 @@ def _parse_ns_id(ns: str) -> tuple[str, str] | None:
 
 
 def _owner_session_of(prefix_or_id: str, chain: list[str]) -> str | None:
-    """Resolve an owner prefix (8+ chars) to a full session id in the chain."""
-    for s in chain:
-        if s.startswith(prefix_or_id):
-            return s
+    """Resolve an owner prefix (8+ chars) to a full session id in the chain.
+
+    Prefers an EXACT full-id match; prefix matches are only accepted when
+    unambiguous (two sessions sharing an 8-char prefix would otherwise
+    silently mis-route edits to the wrong strip)."""
+    if prefix_or_id in chain:
+        return prefix_or_id
+    matches = [s for s in chain if s.startswith(prefix_or_id)]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        # ambiguous prefix: require the caller to use the full session id
+        return None
     return None
 
 
-def _edit_path(session: str) -> Path:
-    return _session_dir(session, create=True) / "panels_edit.json"
+def _edit_path(session: str, *, create: bool = False) -> Path:
+    """Path of the edit layer. Read paths must NOT materialize the session
+    directory (same rule as _session_dir) — only writers create it."""
+    return _session_dir(session, create=create) / "panels_edit.json"
 
 
 def _read_edit(session: str) -> dict:
@@ -131,7 +143,7 @@ def _read_edit(session: str) -> dict:
 
 
 def _write_edit(session: str, edit: dict) -> None:
-    p = _edit_path(session)
+    p = _edit_path(session, create=True)
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(edit, indent=2), "utf-8")
     tmp.replace(p)
@@ -334,15 +346,20 @@ def set_order(session: str, ids: list[str]) -> dict:
 
 def delete_panels(session: str, ids: list[str]) -> dict:
     """Soft-delete (recoverable). panels.json untouched. Namespaced ids
-    are routed to the owning strip's edit layer."""
+    are routed to the owning strip's edit layer.
+
+    ALL ids are resolved/validated BEFORE any edit is persisted: an
+    unknown id mid-list used to leave earlier deletions saved while the
+    request still errored (partial application)."""
+    pending: dict[str, set[str]] = {}
     for i in ids:
         owner, raw = _resolve_panel(session, i)
-        have = set(_all_panels(owner, _read_edit(owner)))
-        if raw not in have:
+        if raw not in set(_all_panels(owner, _read_edit(owner))):
             raise HTTPException(400, f"unknown panel {i}")
+        pending.setdefault(owner, set()).add(raw)
+    for owner, raws in pending.items():
         edit = _read_edit(owner)
-        deleted = set(edit.get("deleted", []))
-        deleted.add(raw)
+        deleted = set(edit.get("deleted", [])) | raws
         edit["deleted"] = sorted(deleted)
         edit["confirmed"] = False
         edit["confirmed_at"] = None
@@ -352,12 +369,17 @@ def delete_panels(session: str, ids: list[str]) -> dict:
 
 
 def restore_panels(session: str, ids: list[str]) -> dict:
+    """Same validate-first ordering as delete_panels."""
+    pending: dict[str, list[str]] = {}
     for i in ids:
         owner, raw = _resolve_panel(session, i)
-        edit = _read_edit(owner)
-        if raw not in set(_all_panels(owner, edit)):
+        if raw not in set(_all_panels(owner, _read_edit(owner))):
             raise HTTPException(400, f"unknown panel {i}")
-        edit["deleted"] = [x for x in edit.get("deleted", []) if x != raw]
+        pending.setdefault(owner, []).append(raw)
+    for owner, raws in pending.items():
+        edit = _read_edit(owner)
+        edit["deleted"] = [x for x in edit.get("deleted", [])
+                           if x not in set(raws)]
         edit["confirmed"] = False
         edit["confirmed_at"] = None
         _write_edit(owner, edit)
