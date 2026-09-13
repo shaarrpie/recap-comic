@@ -353,6 +353,134 @@ dialog .closebtn{position:absolute; top:10px; right:12px}
   *,*::before,*::after{animation:none!important; transition:none!important}
   .reveal{opacity:1; transform:none}
 }
+
+/* ==== Cinematic Studio view ==================================== */
+.cin-grid{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:var(--gut);align-items:start}
+.cin-stages{display:flex;flex-direction:column;gap:6px;margin-bottom:24px}
+.cin-stage{
+  display:grid;grid-template-columns:28px 1fr auto auto;align-items:center;gap:12px;
+  padding:11px 14px;border-radius:var(--r);border:1px solid var(--line);
+  background:var(--ink2);transition:border-color .2s,background .2s;
+}
+.cin-stage.done{border-color:rgba(23,201,100,.3);background:rgba(23,201,100,.05)}
+.cin-stage.running{border-color:rgba(255,178,36,.4);background:rgba(255,178,36,.06);
+  animation:stagepulse 1.6s ease infinite}
+.cin-stage.error{border-color:rgba(255,93,93,.4);background:rgba(255,93,93,.06)}
+.cin-stage.locked{opacity:.45}
+@keyframes stagepulse{0%,100%{box-shadow:none}50%{box-shadow:0 0 0 3px rgba(255,178,36,.18)}}
+.cin-stage .smark{
+  width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+  font-size:12px;border:1.5px solid var(--line2);color:var(--txt3);background:var(--ink3);
+  transition:all .2s;
+}
+.cin-stage.done .smark{background:var(--acc);border-color:var(--acc);color:var(--ink)}
+.cin-stage.running .smark{background:var(--amber);border-color:var(--amber);color:var(--ink);animation:pulse 1s infinite}
+.cin-stage.error .smark{background:var(--coral);border-color:var(--coral);color:var(--ink)}
+.cin-stage .sname{font-weight:600;font-size:13.5px;color:var(--txt)}
+.cin-stage .sdesc{font-family:var(--mono);font-size:10.5px;color:var(--txt3);margin-top:1px}
+.cin-stage .srun{
+  font-size:12px;font-weight:600;padding:5px 12px;border-radius:var(--r);
+  background:var(--acc);color:var(--ink);border:none;cursor:pointer;
+  transition:opacity .15s,transform .12s;white-space:nowrap;
+}
+.cin-stage .srun:hover{opacity:.85;transform:translateY(-1px)}
+.cin-stage .srun:disabled{opacity:.35;cursor:not-allowed;transform:none}
+.cin-stage.done .srun{background:var(--ink4);color:var(--txt2);border:1px solid var(--line2)}
+/* Effect cards grid */
+.fx-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;margin-top:12px}
+.fx-card{
+  border:2px solid var(--line2);border-radius:var(--r);padding:10px;cursor:pointer;
+  background:var(--ink3);transition:border-color .15s,transform .15s;
+  display:flex;flex-direction:column;gap:5px;
+}
+.fx-card.on{border-color:var(--acc);background:rgba(23,201,100,.07)}
+.fx-card:hover{transform:translateY(-2px);border-color:var(--txt3)}
+.fx-card .fx-icon{font-size:22px;line-height:1}
+.fx-card .fx-name{font-family:var(--disp);font-weight:700;font-size:13px}
+.fx-card .fx-tag{font-family:var(--mono);font-size:10px;color:var(--txt3)}
+/* Slider rows */
+.sl-row{display:grid;grid-template-columns:1fr 48px;align-items:center;gap:10px;margin:6px 0}
+.sl-row label{font-family:var(--mono);font-size:11px;color:var(--txt2)}
+.sl-row input[type=range]{accent-color:var(--acc);width:100%}
+.sl-row output{font-family:var(--mono);font-size:11.5px;color:var(--acc);text-align:right}
+/* Color grade swatches */
+.grade-swatches{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.grade-sw{
+  width:54px;height:40px;border-radius:6px;cursor:pointer;border:2px solid transparent;
+  display:flex;align-items:flex-end;padding:3px;font-family:var(--mono);font-size:9px;
+  color:rgba(255,255,255,.8);font-weight:700;text-shadow:0 1px 2px rgba(0,0,0,.7);
+  transition:transform .15s,border-color .15s;
+}
+.grade-sw:hover{transform:scale(1.07)}
+.grade-sw.on{border-color:var(--acc)}
+.grade-sw.manhwa{background:linear-gradient(135deg,#1a2a3a,#3d5a6e,#e8b84b)}
+.grade-sw.dark{background:linear-gradient(135deg,#0a0a1a,#1a1a3a,#2a2a5a)}
+.grade-sw.warm{background:linear-gradient(135deg,#3a1a0a,#8b4513,#e8a030)}
+.grade-sw.cold{background:linear-gradient(135deg,#0a1a3a,#1a3a6a,#5a9ad4)}
+.grade-sw.vivid{background:linear-gradient(135deg,#2a0a4a,#c028c0,#f0e040)}
+.grade-sw.bw{background:linear-gradient(135deg,#111,#555,#eee)}
+/* BGM dropzone */
+.bgm-zone{
+  border:2px dashed var(--line2);border-radius:var(--r);padding:18px;
+  text-align:center;cursor:pointer;transition:border-color .15s,background .15s;
+  background:var(--ink3);
+}
+.bgm-zone:hover,.bgm-zone.over{border-color:var(--acc);background:rgba(23,201,100,.05)}
+.bgm-zone .bgm-icon{font-size:28px;margin-bottom:6px}
+.bgm-zone .bgm-name{font-family:var(--mono);font-size:12px;color:var(--acc);margin-top:6px}
+/* Panel FX strip */
+.pstrip{display:flex;gap:8px;overflow-x:auto;padding:10px 0 4px;scroll-snap-type:x mandatory}
+.pfx-thumb{
+  flex:none;width:90px;border-radius:var(--r);border:2px solid var(--line2);
+  background:var(--ink3);cursor:pointer;transition:border-color .15s;scroll-snap-align:start;
+}
+.pfx-thumb.on{border-color:var(--acc)}
+.pfx-thumb img{width:100%;aspect-ratio:9/16;object-fit:cover;border-radius:4px 4px 0 0;display:block}
+.pfx-thumb .pfx-label{font-family:var(--mono);font-size:9px;color:var(--txt3);padding:3px 5px;text-align:center}
+.pfx-thumb .pfx-type{font-family:var(--disp);font-weight:700;font-size:10px;color:var(--txt);padding:0 5px 4px;text-align:center}
+/* Enhanced timeline */
+.tl-zoom{display:flex;align-items:center;gap:8px}
+.tl-zoom input[type=range]{width:80px;accent-color:var(--acc)}
+.tl-zoom span{font-family:var(--mono);font-size:10px;color:var(--txt3)}
+.clip.selected{border-color:var(--acc)!important;box-shadow:0 0 0 2px rgba(23,201,100,.3)}
+.clip-resize{
+  position:absolute;top:0;bottom:0;width:8px;cursor:ew-resize;
+  background:rgba(23,201,100,.5);border-radius:3px;
+}
+.clip-resize.left{left:0}
+.clip-resize.right{right:0}
+/* Export panel */
+.export-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+/* Semi/auto mode badge on topbar */
+.mode-badge{
+  font-family:var(--mono);font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+  padding:4px 10px;border-radius:999px;border:1px solid;cursor:pointer;
+  transition:all .15s;
+}
+.mode-badge.auto{color:var(--acc);border-color:rgba(23,201,100,.4);background:rgba(23,201,100,.08)}
+.mode-badge.semi{color:var(--amber);border-color:rgba(255,178,36,.4);background:rgba(255,178,36,.08)}
+.mode-badge.manual{color:var(--sky);border-color:rgba(88,166,255,.4);background:rgba(88,166,255,.08)}
+/* Waveform bars */
+.waveform{height:36px;display:flex;align-items:center;gap:1.5px;overflow:hidden;border-radius:4px;padding:0 6px;background:var(--ink3)}
+.wbar{flex:1;border-radius:2px;background:var(--acc);opacity:.45;min-height:3px;transition:opacity .15s}
+.wbar.active{opacity:1}
+/* Text overlay editor */
+.ov-list{display:flex;flex-direction:column;gap:6px;max-height:200px;overflow-y:auto}
+.ov-item{
+  display:grid;grid-template-columns:1fr auto;align-items:center;gap:8px;
+  background:var(--ink3);border:1px solid var(--line2);border-radius:6px;padding:8px 10px;
+}
+.ov-item input{background:transparent;border:none;color:var(--txt);font-size:13px;font-family:var(--body);width:100%}
+.ov-item input:focus{outline:none}
+.ov-del{background:none;border:none;color:var(--coral);font-size:16px;cursor:pointer;padding:0 4px}
+/* Preview player overlay */
+.preview-wrap{position:relative}
+.preview-badge{
+  position:absolute;top:10px;left:10px;font-family:var(--mono);font-size:10px;
+  background:rgba(10,12,16,.7);color:var(--acc);border:1px solid rgba(23,201,100,.4);
+  padding:3px 8px;border-radius:4px;pointer-events:none;
+}
+
 </style>
 </head>
 <body>
@@ -370,7 +498,10 @@ dialog .closebtn{position:absolute; top:10px; right:12px}
     <a href="#/voice"     data-view="voice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v1a7 7 0 0 1-14 0v-1M12 19v3"/></svg>Narrator</a>
     <a href="#/review"    data-view="review"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m10 9 5 3-5 3V9z"/></svg>Review</a>
     <a href="#/editor"    data-view="editor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>Editor</a>
-    <div class="sep"></div>
+    <a href="#/cinematic" data-view="cinematic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+cinematic
+</a>
+<div class="sep"></div>
     <a href="#/logs"      data-view="logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Logs</a>
     <a href="#/settings"  data-view="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.6 2 3.4 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.4-2-1.6c.06-.4.1-.8.1-1.2z"/></svg>Settings</a>
     <div class="foot">v2 · automation-first</div>
@@ -533,7 +664,221 @@ function watch(jobId,onChange){
 }
 /* ---------------- router ---------------- */
 const viewEl=$("#view");
-const routes={studio:vStudio,panels:vPanels,"review-panels":vPanels,"manual-crop":vManualCrop,narrate:vNarrate,voice:vVoice,generate:vGenerate,pipeline:vPipeline,review:vReview,editor:vEditor,logs:vLogs,settings:vSettings};
+const routes={studio:vStudio,panels:vPanels,"review-panels":vPanels,"manual-crop":vManualCrop,narrate:vNarrate,voice:vVoice,generate:vGenerate,pipeline:vPipeline,review:vReview,editor:vEditor,cinematic:vCinematic,logs:vLogs,settings:vSettings};
+/* ---------------- cinematic studio ---------------- */
+async function vCinematic(session){
+  session=await requireSession(session);if(!session)return studioEmpty("Cinematic");
+  setSession(session);
+  viewEl.innerHTML=`
+ class="view">
+
+  <!-- ── Topbar mode switcher ── -->
+  <div style="display:flex;align-items:center;gap:14px;margin-bottom:24px">
+    <div>
+      <div class="h-disp" style="font-size:28px">🎬 Cinematic Studio</div>
+      <div style="color:var(--txt3);font-size:13px;margin-top:3px">Automate, semi-automate, or hand-craft your manhwa recap video</div>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:8px">
+      <button class="mode-badge auto" id="cin-mode-auto" onclick="setCinMode('auto')">⚡ Auto</button>
+      <button class="mode-badge semi" id="cin-mode-semi" onclick="setCinMode('semi')" style="opacity:.45">🎛 Semi</button>
+      <button class="mode-badge manual" id="cin-mode-manual" onclick="setCinMode('manual')" style="opacity:.45">✏️ Manual</button>
+    </div>
+  </div>
+
+  <div class="cin-grid">
+    <!-- ── Left column: pipeline + panel strip ── -->
+    <div>
+
+      <!-- Auto mode: one big button -->
+      <div id="cin-auto-panel" class="panel" style="margin-bottom:var(--gut)">
+        <div class="lbl" style="margin-bottom:10px">Full Automation</div>
+        <p style="color:var(--txt2);font-size:13px;margin-bottom:16px">
+          Upload a strip → AI detects panels → writes narration → TTS voice → base render → cinematic effects pass. One click.
+        </p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn acc" onclick="cinRunFull()" id="cin-run-full-btn">⚡ Run Full Pipeline</button>
+          <button class="btn" onclick="cinRenderOnly()" id="cin-render-btn">🎬 Cinematic Pass Only</button>
+        </div>
+        <div id="cin-full-progress" style="margin-top:14px;display:none">
+          <div class="progress"><i id="cin-pbar" style="width:0%"></i></div>
+          <div id="cin-pstage" class="lbl" style="margin-top:4px">starting...</div>
+        </div>
+      </div>
+
+      <!-- Semi mode: stage-by-stage cards -->
+      <div id="cin-semi-panel" style="display:none;margin-bottom:var(--gut)">
+        <div class="lbl" style="margin-bottom:12px">Semi-Automation — run stages one at a time</div>
+        <div class="cin-stages" id="cin-stages-list">
+          <!-- stages injected by JS -->
+        </div>
+      </div>
+
+      <!-- Manual mode: per-panel effect strip -->
+      <div id="cin-manual-panel" style="display:none;margin-bottom:var(--gut)">
+        <div class="lbl" style="margin-bottom:10px">Panel-by-Panel Effects</div>
+        <p style="color:var(--txt2);font-size:13px;margin-bottom:10px">Click a panel to set its individual effect.</p>
+        <div class="pstrip" id="cin-panel-strip"><!-- injected --></div>
+        <!-- per-panel detail -->
+        <div id="cin-panel-detail" class="panel" style="margin-top:14px;display:none">
+          <div class="lbl" id="cin-detail-title" style="margin-bottom:12px">Panel effect</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px" id="cin-effect-type-btns"></div>
+          <!-- dynamic sliders injected here -->
+          <div id="cin-effect-sliders"></div>
+          <div style="display:flex;gap:8px;margin-top:12px">
+            <button class="btn sm acc" onclick="cinSavePanelFx()">Save effect</button>
+            <button class="btn sm" onclick="cinPreviewPanel()" id="cin-preview-btn">▶ Preview clip</button>
+            <button class="btn sm danger" onclick="cinClearPanelFx()">Clear</button>
+          </div>
+          <video id="cin-panel-preview" controls style="width:100%;margin-top:10px;border-radius:var(--r);display:none;max-height:320px"></video>
+        </div>
+      </div>
+
+      <!-- Waveform / BGM track -->
+      <div class="panel" style="margin-bottom:var(--gut)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div class="lbl">Background Music</div>
+          <label class="btn sm" style="cursor:pointer">
+            📁 Upload
+            <input type="file" accept="audio/*" style="display:none" onchange="cinUploadBgm(this.files[0])">
+          </label>
+        </div>
+        <div class="bgm-zone" id="cin-bgm-zone" onclick="document.querySelector('#cin-bgm-zone + input').click()">
+          <div class="bgm-icon">🎵</div>
+          <div style="font-size:13px;color:var(--txt3)">Drag & drop or click to upload BGM</div>
+          <div class="bgm-name" id="cin-bgm-name" style="display:none"></div>
+        </div>
+        <input type="file" accept="audio/*" style="display:none" onchange="cinUploadBgm(this.files[0])">
+        <div class="waveform" id="cin-waveform" style="margin-top:10px">
+          <!-- bars injected by JS -->
+        </div>
+        <div class="sl-row" style="margin-top:10px">
+          <label>BGM volume</label>
+          <input type="range" min="0" max="1" step="0.01" value="0.18" oninput="this.nextElementSibling.value=Math.round(this.value*100)+'%';cinSaveBgmVolume(this.value)">
+          <output>18%</output>
+        </div>
+      </div>
+
+      <!-- Text / caption overlays -->
+      <div class="panel" style="margin-bottom:var(--gut)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div class="lbl">Custom Text Overlays</div>
+          <button class="btn sm" onclick="cinAddOverlay()">+ Add</button>
+        </div>
+        <div class="ov-list" id="cin-overlay-list"></div>
+      </div>
+
+    </div><!-- /left col -->
+
+    <!-- ── Right column: effect controls ── -->
+    <div style="position:sticky;top:78px">
+
+      <!-- Global effect presets -->
+      <div class="panel" style="margin-bottom:var(--gut)">
+        <div class="lbl" style="margin-bottom:10px">Global Style Preset</div>
+        <div style="display:flex;gap:8px">
+          <button class="btn sm" id="preset-dynamic" onclick="setCinPreset('dynamic')" style="background:var(--acc);color:var(--ink)">⚡ Dynamic</button>
+          <button class="btn sm" id="preset-subtle" onclick="setCinPreset('subtle')">🌙 Subtle</button>
+          <button class="btn sm" id="preset-custom" onclick="setCinPreset('custom')">✏️ Custom</button>
+        </div>
+
+        <!-- Effect toggles -->
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="cin-glitch" checked onchange="cinSaveGlobal()" style="accent-color:var(--acc)">
+            Glitch transitions
+          </label>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="cin-letterbox" onchange="cinSaveGlobal()" style="accent-color:var(--acc)">
+            Letterbox (cinematic bars)
+          </label>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="cin-speedlines" checked onchange="cinSaveGlobal()" style="accent-color:var(--acc)">
+            Speed lines on action panels
+          </label>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="cin-shake" checked onchange="cinSaveGlobal()" style="accent-color:var(--acc)">
+            Screen shake
+          </label>
+          <label style="display:flex;align-items:center;gap:10px;cursor:pointer;font-size:13px">
+            <input type="checkbox" id="cin-vignette" checked onchange="cinSaveGlobal()" style="accent-color:var(--acc)">
+            Vignette
+          </label>
+        </div>
+
+        <!-- Intensity sliders -->
+        <div style="margin-top:14px">
+          <div class="lbl" style="margin-bottom:8px">Effect Intensity</div>
+          <div class="sl-row">
+            <label>Zoom peak</label>
+            <input type="range" min="1.0" max="1.5" step="0.01" value="1.22" id="sl-zoom" oninput="this.nextElementSibling.value=this.value;cinSaveGlobal()">
+            <output>1.22</output>
+          </div>
+          <div class="sl-row">
+            <label>Shake strength</label>
+            <input type="range" min="1" max="20" step="0.5" value="7" id="sl-shake" oninput="this.nextElementSibling.value=this.value+'px';cinSaveGlobal()">
+            <output>7px</output>
+          </div>
+          <div class="sl-row">
+            <label>Speed line opacity</label>
+            <input type="range" min="0" max="0.5" step="0.01" value="0.22" id="sl-slines" oninput="this.nextElementSibling.value=Math.round(this.value*100)+'%';cinSaveGlobal()">
+            <output>22%</output>
+          </div>
+          <div class="sl-row">
+            <label>Ken Burns zoom</label>
+            <input type="range" min="0" max="0.2" step="0.005" value="0.09" id="sl-kb" oninput="this.nextElementSibling.value=(this.value*100).toFixed(0)+'%';cinSaveGlobal()">
+            <output>9%</output>
+          </div>
+        </div>
+      </div>
+
+      <!-- Color grade -->
+      <div class="panel" style="margin-bottom:var(--gut)">
+        <div class="lbl" style="margin-bottom:8px">Color Grade</div>
+        <div class="grade-swatches" id="cin-grade-swatches">
+          <div class="grade-sw manhwa on" data-preset="manhwa" onclick="cinSetGrade('manhwa',this)">MH</div>
+          <div class="grade-sw dark" data-preset="dark" onclick="cinSetGrade('dark',this)">DK</div>
+          <div class="grade-sw warm" data-preset="warm" onclick="cinSetGrade('warm',this)">WM</div>
+          <div class="grade-sw cold" data-preset="cold" onclick="cinSetGrade('cold',this)">CL</div>
+          <div class="grade-sw vivid" data-preset="vivid" onclick="cinSetGrade('vivid',this)">VV</div>
+          <div class="grade-sw bw" data-preset="bw" onclick="cinSetGrade('bw',this)">B&amp;W</div>
+        </div>
+      </div>
+
+      <!-- Export settings -->
+      <div class="panel">
+        <div class="lbl" style="margin-bottom:10px">Export</div>
+        <div class="export-grid">
+          <div class="field">
+            <label class="lbl">Output file</label>
+            <select id="cin-out-format" style="font-family:var(--body);font-size:13px;color:var(--txt);background:var(--ink3);border:1px solid var(--line2);border-radius:var(--r);padding:8px 10px">
+              <option value="cinematic_recap.mp4">cinematic_recap.mp4</option>
+              <option value="recap_edited.mp4">recap_edited.mp4 (replace)</option>
+            </select>
+          </div>
+          <div class="field">
+            <label class="lbl">CRF quality</label>
+            <input type="number" min="16" max="32" value="20" id="cin-crf"
+              style="font-family:var(--body);font-size:13px;color:var(--txt);background:var(--ink3);border:1px solid var(--line2);border-radius:var(--r);padding:8px 10px">
+          </div>
+        </div>
+        <button class="btn acc" style="width:100%;margin-top:12px;justify-content:center" onclick="cinRenderOnly()">
+          🎬 Render Cinematic
+        </button>
+        <div id="cin-video-wrap" style="margin-top:12px;display:none">
+          <div class="preview-wrap">
+            <video id="cin-output-video" controls style="width:100%;border-radius:var(--r);max-height:300px"></video>
+            <div class="preview-badge">CINEMATIC</div>
+          </div>
+          <a id="cin-dl-link" class="btn sm" style="margin-top:8px;display:flex;justify-content:center" download>⬇ Download</a>
+        </div>
+      </div>
+
+    </div><!-- /right col -->
+  </div>
+`;
+  if(window.cinInit) cinInit(session);
+}
+
 function parseHash(){const h=location.hash.replace(/^#\/?/,"");const[a,b]=h.split("/");return{view:a||"studio",arg:b}}
 function nav(view,arg){location.hash=arg?`#/${view}/${arg}`:`#/${view}`}
 async function render(){
@@ -2114,7 +2459,8 @@ async function vEditor(session){
       <div class="tlhead">
         <span class="lbl">timeline · ${ED.project.edited_timeline.length} panels</span>
         <div style="display:flex;gap:6px;align-items:center">
-          <span class="chip ${ED.project.needs_render?"warn":"ok"}" id="nrChip">${ED.project.needs_render?"needs render":"rendered"}</span>
+          <div class="tl-zoom"><span>zoom</span><input type="range" min="1" max="6" step="0.1" value="1" id="tlZoom" oninput="tlSetZoom(parseFloat(this.value))"><span id="tlZoomLbl">1×</span></div>
+        <span class="chip ${ED.project.needs_render?"warn":"ok"}" id="nrChip">${ED.project.needs_render?"needs render":"rendered"}</span>
           <button class="btn sm" id="bUndo" title="Ctrl+Z">↩ Undo</button>
           <button class="btn sm" id="bRedo" title="Ctrl+Shift+Z">↪ Redo</button>
           <button class="btn sm danger" id="bReset">Reset to Automated</button>
@@ -2218,6 +2564,50 @@ function drawProps(){
       await api.edPost(ED.session,"effect",{panel_id:e.panel_id,kind:$("#pEff").value,duration:parseFloat($("#pDur").value)||0});
       refreshEd();};
     $("#pAuto").onclick=async()=>{await api.edPost(ED.session,"duration",{panel_id:e.panel_id,duration:e.automated_duration??e.duration_seconds});refreshEd()};
+    /* ── enhanced editor: pan/zoom, speed, caption style, grade ── */
+    const pan=e.pan||{};
+    el.innerHTML+=`
+      <div class="grp" style="margin-top:12px"><div class="lbl">cinematic pan &amp; zoom</div>
+        <select id="edPanDir">${["static","pan_down","pan_up","pan_right","pan_left"]
+          .map(k=>`<option value="${k}" ${((pan.kind)||"static")===k?"selected":""}>${k}</option>`).join("")}</select>
+        <div class="sl-row"><label>zoom</label>
+          <input type="range" min="1.0" max="1.4" step="0.01" value="${(pan.zoom_factor||1.0)}" id="edZoomAmt"
+            oninput="this.nextElementSibling.value=this.value+'×'"><output>${(pan.zoom_factor||1.0)}×</output></div>
+        <div class="sl-row"><label>speed</label>
+          <input type="range" min="0.3" max="3.0" step="0.05" value="${(pan.speed||1.0)}" id="edPanSpeed"
+            oninput="this.nextElementSibling.value=this.value+'×'"><output>${(pan.speed||1.0)}×</output></div>
+        <button class="btn sm acc" id="edPanApply">Apply pan</button></div>
+      <div class="grp" style="margin-top:12px"><div class="lbl">speed &amp; tempo</div>
+        <div class="sl-row"><label>playback</label>
+          <input type="range" min="0.25" max="3.0" step="0.05" value="${(e.speed||1.0)}" id="edSpeed"
+            oninput="this.nextElementSibling.value=this.value+'×'"><output>${(e.speed||1.0)}×</output></div>
+        <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="edFreeze" ${e.freeze?"checked":""} style="accent-color:var(--acc)"> freeze frame</label>
+        <button class="btn sm acc" id="edSpeedApply">Apply speed</button></div>
+      <div class="grp" style="margin-top:12px"><div class="lbl">caption style</div>
+        <div class="sl-row"><label>font size</label>
+          <input type="range" min="18" max="64" value="${(ED.capStyle?.font_size||32)}" id="edCapSize"
+            oninput="this.nextElementSibling.value=this.value+'px'"><output>${(ED.capStyle?.font_size||32)}px</output></div>
+        <select id="edCapPos">${["bottom","top","center"]
+          .map(k=>`<option value="${k}" ${(ED.capStyle?.position||"bottom")===k?"selected":""}>${k}</option>`).join("")}</select>
+        <button class="btn sm acc" id="edCapApply">Save caption style</button></div>
+      <div class="grp" style="margin-top:12px"><div class="lbl">quick color grade</div>
+        <div class="grade-swatches">${["manhwa","dark","warm","cold","vivid","bw"]
+          .map(k=>`<div class="grade-sw ${k}" data-g="${k}" onclick="edSetGrade('${k}',this)">${k==="bw"?"B&amp;W":k.slice(0,2).toUpperCase()}</div>`).join("")}</div>
+        <button class="btn sm ghost" onclick="location.hash='#/cinematic/${ED.session}'">Open Cinematic Studio →</button></div>`;
+    $("#edPanApply").onclick=async()=>{
+      await api.edPost(ED.session,"pan",{panel_id:e.panel_id,direction:$("#edPanDir").value,
+        zoom_factor:parseFloat($("#edZoomAmt").value),speed:parseFloat($("#edPanSpeed").value)});
+      toast("Pan saved");refreshEd();};
+    $("#edSpeedApply").onclick=async()=>{
+      await api.edPost(ED.session,"speed",{panel_id:e.panel_id,speed:parseFloat($("#edSpeed").value),
+        freeze:$("#edFreeze").checked,freeze_duration:1.0});
+      toast("Speed saved");refreshEd();};
+    $("#edCapApply").onclick=async()=>{
+      ED.capStyle={font_size:parseInt($("#edCapSize").value),position:$("#edCapPos").value};
+      await fetch(`/api/cinematic/${ED.session}/config`,{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({caption_style:ED.capStyle})}).catch(()=>{});
+      toast("Caption style saved (applies to cinematic renders)");};
   }
   if(ED.sel.type==="caption"){
     const c=P.captions.find(x=>x.id===ED.sel.id);
@@ -2365,6 +2755,550 @@ async function vSettings(){
 if(store.session)$("#projBtn").textContent=store.names?.[store.session]||store.session;
 $("#projBtn").onclick=()=>nav("studio");
 render();
+
+/* ── enhanced editor helpers (cinematic upgrade) ───────────────── */
+function tlSetZoom(z){
+  z=Math.max(1,Math.min(6,z));
+  const lbl=$("#tlZoomLbl");if(lbl)lbl.textContent=z.toFixed(1)+"×";
+  const s=$("#tlZoom");if(s)s.value=z;
+  $$(".tlrow").forEach(r=>{r.style.transform=`scaleX(${z})`;r.style.transformOrigin="left"});
+}
+async function edSetGrade(preset,el){
+  $$(".grade-sw").forEach(s=>s.classList.toggle("on",s===el));
+  await fetch(`/api/cinematic/${ED.session}/config`,{method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify({color_preset:preset})}).catch(()=>{});
+  toast(`Grade: ${preset}`);
+}
+/* keyboard shortcuts (editor view active only) */
+addEventListener("keydown",e=>{
+  if(!document.getElementById("view-editor")&&!location.hash.startsWith("#/editor"))return;
+  if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA"||e.target.tagName==="SELECT")return;
+  if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==="z"){e.preventDefault();$("#bUndo")?.click();return}
+  if((e.ctrlKey||e.metaKey)&&(e.key.toLowerCase()==="y"||(e.shiftKey&&e.key.toLowerCase()==="z"))){e.preventDefault();$("#bRedo")?.click();return}
+  if(e.key===" "){e.preventDefault();$("#tPlay")?.click();return}
+  if(e.key==="ArrowLeft"){const v=$("#edVid");if(v)v.currentTime=Math.max(0,v.currentTime-0.04);return}
+  if(e.key==="ArrowRight"){const v=$("#edVid");if(v)v.currentTime+=0.04;return}
+  if(e.key==="[")  {tlSetZoom((ED._zoom||1)-0.5);ED._zoom=(ED._zoom||1)-0.5;return}
+  if(e.key==="]"){const z=Math.min(6,(ED._zoom||1)+0.5);tlSetZoom(z);ED._zoom=z;return}
+});
+</script>
+<script id="cinematic-addon-js">
+window._currentSession=()=>store.session;
+
+// ================================================================
+// Cinematic Studio state
+// ================================================================
+const CIN = {
+  session: null,
+  mode: 'auto',          // 'auto' | 'semi' | 'manual'
+  preset: 'dynamic',
+  grade: 'manhwa',
+  pollTimer: null,
+  selectedPanel: null,
+  stageStates: {},
+  panels: [],
+  panelFxDraft: {},
+  overlays: [],
+};
+
+const CIN_STAGES = [
+  { id: 'segment_panels',    name: 'Panel Detection',  desc: 'AI segments the strip into panels', emoji: '🔍' },
+  { id: 'gemini_narration',  name: 'AI Narration',     desc: 'Gemini writes narration scripts',  emoji: '✍️' },
+  { id: 'tts_audio',         name: 'TTS Voice',        desc: 'Edge/Google TTS renders audio',    emoji: '🎤' },
+  { id: 'render_video',      name: 'Base Render',      desc: 'FFmpeg assembles the base video',  emoji: '🖥' },
+  { id: 'cinematic_render',  name: 'Cinematic Pass',   desc: 'Adds effects, grade, transitions', emoji: '🎬' },
+];
+
+const FX_TYPES = [
+  { id: 'auto',       label: 'Auto',       emoji: '🤖' },
+  { id: 'punch_zoom', label: 'Punch Zoom', emoji: '💥' },
+  { id: 'ken_burns',  label: 'Ken Burns',  emoji: '📷' },
+  { id: 'shake',      label: 'Shake',      emoji: '📳' },
+  { id: 'still',      label: 'Still',      emoji: '🖼' },
+];
+
+// ── Init ─────────────────────────────────────────────────────────
+function cinInit(session) {
+  CIN.session = session;
+  // Load config from server
+  fetch(`/api/cinematic/${session}/config`)
+    .then(r => r.json())
+    .then(cfg => {
+      cinApplyConfig(cfg);
+    })
+    .catch(() => {});
+  // Load panels for manual strip
+  fetch(`/api/panels/${session}?combined=true`)
+    .then(r => r.json())
+    .then(data => {
+      CIN.panels = (data.panels || []).filter(p => !p.deleted);
+      cinRenderPanelStrip();
+    })
+    .catch(() => {});
+  // Load stage states for semi-auto
+  cinRefreshStages();
+  cinRenderStageList();
+  cinRenderWaveform();
+}
+
+function cinApplyConfig(cfg) {
+  if (!cfg) return;
+  if (cfg.style) setCinPreset(cfg.style, false);
+  if (cfg.glitch_transitions !== undefined) document.getElementById('cin-glitch').checked = cfg.glitch_transitions;
+  if (cfg.letterbox !== undefined) document.getElementById('cin-letterbox').checked = cfg.letterbox;
+}
+
+// ── Mode switching ────────────────────────────────────────────────
+function setCinMode(mode) {
+  CIN.mode = mode;
+  ['auto','semi','manual'].forEach(m => {
+    document.getElementById(`cin-mode-${m}`).style.opacity = m === mode ? '1' : '.45';
+  });
+  document.getElementById('cin-auto-panel').style.display   = mode === 'auto'   ? '' : 'none';
+  document.getElementById('cin-semi-panel').style.display   = mode === 'semi'   ? '' : 'none';
+  document.getElementById('cin-manual-panel').style.display = mode === 'manual' ? '' : 'none';
+  if (mode === 'semi') cinRenderStageList();
+  if (mode === 'manual') cinRenderPanelStrip();
+}
+
+// ── Preset ────────────────────────────────────────────────────────
+function setCinPreset(preset, save = true) {
+  CIN.preset = preset;
+  ['dynamic','subtle','custom'].forEach(p => {
+    const el = document.getElementById(`preset-${p}`);
+    if (el) el.style.background = p === preset ? 'var(--acc)' : '';
+    if (el) el.style.color = p === preset ? 'var(--ink)' : '';
+  });
+  if (save) cinSaveGlobal();
+}
+
+// ── Grade swatches ────────────────────────────────────────────────
+function cinSetGrade(preset, el) {
+  CIN.grade = preset;
+  document.querySelectorAll('.grade-sw').forEach(s => s.classList.toggle('on', s === el));
+  cinSaveGlobal();
+}
+
+// ── Save global config ────────────────────────────────────────────
+function cinSaveGlobal() {
+  if (!CIN.session) return;
+  const cfg = {
+    enabled: true,
+    style: CIN.preset,
+    glitch_transitions: document.getElementById('cin-glitch').checked,
+    letterbox: document.getElementById('cin-letterbox').checked,
+    color_preset: CIN.grade,
+    global_overrides: {
+      zoom_peak:          parseFloat(document.getElementById('sl-zoom').value),
+      shake_intensity:    parseFloat(document.getElementById('sl-shake').value),
+      speedlines_opacity: parseFloat(document.getElementById('sl-slines').value),
+      kb_zoom_range:      parseFloat(document.getElementById('sl-kb').value),
+      enable_speedlines:  document.getElementById('cin-speedlines').checked,
+      enable_shake:       document.getElementById('cin-shake').checked,
+      enable_vignette:    document.getElementById('cin-vignette').checked,
+    },
+  };
+  fetch(`/api/cinematic/${CIN.session}/config`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify(cfg),
+  }).catch(() => {});
+}
+
+// ── BGM volume save ───────────────────────────────────────────────
+function cinSaveBgmVolume(v) {
+  if (!CIN.session) return;
+  fetch(`/api/cinematic/${CIN.session}/config`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ bgm_volume: parseFloat(v) }),
+  }).catch(() => {});
+}
+
+// ── BGM upload ────────────────────────────────────────────────────
+function cinUploadBgm(file) {
+  if (!file || !CIN.session) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  const nameEl = document.getElementById('cin-bgm-name');
+  nameEl.textContent = '⏫ Uploading...';
+  nameEl.style.display = '';
+  fetch(`/api/cinematic/${CIN.session}/bgm`, { method: 'POST', body: fd })
+    .then(r => r.json())
+    .then(() => {
+      nameEl.textContent = '✓ ' + file.name;
+      cinRenderWaveform();
+      toast(`BGM set: ${file.name}`);
+    })
+    .catch(e => { nameEl.textContent = '✗ Failed'; toast('BGM upload failed', true); });
+}
+
+// ── Waveform (decorative bars) ────────────────────────────────────
+function cinRenderWaveform() {
+  const el = document.getElementById('cin-waveform');
+  if (!el) return;
+  el.innerHTML = '';
+  const N = 48;
+  for (let i = 0; i < N; i++) {
+    const h = 8 + Math.abs(Math.sin(i * 0.7) * 24 + Math.sin(i * 1.3) * 12);
+    const b = document.createElement('div');
+    b.className = 'wbar';
+    b.style.height = h + 'px';
+    el.appendChild(b);
+  }
+}
+
+// ── Semi-auto: stage list ─────────────────────────────────────────
+function cinRenderStageList() {
+  const el = document.getElementById('cin-stages-list');
+  if (!el) return;
+  el.innerHTML = '';
+  CIN_STAGES.forEach((stage, i) => {
+    const state = CIN.stageStates[stage.id];
+    const done = state === true;
+    const running = state === 'running';
+    const err = state === 'error';
+    const locked = !done && i > 0 && !CIN.stageStates[CIN_STAGES[i-1].id];
+    const cls = done ? 'done' : running ? 'running' : err ? 'error' : locked ? 'locked' : '';
+    const el2 = document.createElement('div');
+    el2.className = `cin-stage ${cls}`;
+    el2.id = `stage-row-${stage.id}`;
+    el2.innerHTML = `
+      <div class="smark">${done ? '✓' : err ? '✗' : stage.emoji}</div>
+      <div>
+        <div class="sname">${stage.name}</div>
+        <div class="sdesc">${stage.desc}</div>
+      </div>
+      <div class="chip ${done?'ok':''} sm" style="font-size:10px;white-space:nowrap">
+        ${done ? 'Done' : running ? 'Running…' : err ? 'Error' : 'Pending'}
+      </div>
+      <button class="srun" id="srun-${stage.id}"
+        ${locked || running ? 'disabled' : ''}
+        onclick="cinRunStage('${stage.id}')">
+        ${done ? '↺ Re-run' : '▶ Run'}
+      </button>`;
+    el.appendChild(el2);
+  });
+}
+
+async function cinRefreshStages() {
+  if (!CIN.session) return;
+  try {
+    const r = await fetch(`/api/pipeline/${CIN.session}/stages`);
+    const d = await r.json();
+    if (d.stages) {
+      Object.entries(d.stages).forEach(([k, v]) => { CIN.stageStates[k] = v; });
+      cinRenderStageList();
+    }
+  } catch (e) {}
+}
+
+async function cinRunStage(stageId) {
+  if (!CIN.session) { toast('Select a session first', true); return; }
+  CIN.stageStates[stageId] = 'running';
+  cinRenderStageList();
+
+  const settings = await fetch('/api/settings').then(r=>r.json()).catch(()=>({}));
+  const payload = {
+    session: CIN.session,
+    stage: stageId,
+    tts: settings.tts || 'edge',
+    voice: settings.voice || 'en-US-AriaNeural',
+    style: settings.style || 'recap',
+    backend: settings.backend || 'none',
+  };
+
+  try {
+    const r = await fetch('/api/pipeline/step', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (d.job_id) cinPollStage(stageId, d.job_id);
+    else { CIN.stageStates[stageId] = 'error'; cinRenderStageList(); }
+  } catch (e) {
+    CIN.stageStates[stageId] = 'error';
+    cinRenderStageList();
+    toast(`Stage failed: ${e}`, true);
+  }
+}
+
+function cinPollStage(stageId, jobId) {
+  const t = setInterval(async () => {
+    try {
+      const r = await fetch(`/api/jobs/${jobId}`);
+      const d = await r.json();
+      if (d.status === 'completed') {
+        CIN.stageStates[stageId] = true;
+        clearInterval(t);
+        cinRenderStageList();
+        // Auto-show video if cinematic render done
+        if (stageId === 'cinematic_render') cinShowOutputVideo();
+        toast(`${stageId} complete ✓`);
+      } else if (d.status === 'failed' || d.status === 'cancelled') {
+        CIN.stageStates[stageId] = 'error';
+        clearInterval(t);
+        cinRenderStageList();
+        toast(`${stageId} failed`, true);
+      }
+    } catch (e) { clearInterval(t); }
+  }, 1800);
+}
+
+// ── Full auto run ─────────────────────────────────────────────────
+async function cinRunFull() {
+  if (!CIN.session) { toast('Select a session first', true); return; }
+  document.getElementById('cin-full-progress').style.display = '';
+  document.getElementById('cin-run-full-btn').disabled = true;
+  const settings = await fetch('/api/settings').then(r=>r.json()).catch(()=>({}));
+  const r = await fetch('/api/run', {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({
+      session: CIN.session,
+      tts: settings.tts || 'edge',
+      voice: settings.voice || 'en-US-AriaNeural',
+      style: settings.style || 'recap',
+      backend: settings.backend || 'none',
+    }),
+  }).catch(() => null);
+  if (!r || !r.ok) { toast('Pipeline start failed', true); return; }
+  const d = await r.json();
+  cinPollFull(d.job_id);
+}
+
+function cinPollFull(jobId) {
+  const bar = document.getElementById('cin-pbar');
+  const stage = document.getElementById('cin-pstage');
+  const t = setInterval(async () => {
+    const r = await fetch(`/api/jobs/${jobId}`).catch(()=>null);
+    if (!r) return;
+    const d = await r.json();
+    bar.style.width = (d.progress||0) + '%';
+    stage.textContent = d.stage || 'running...';
+    if (d.status === 'completed') {
+      clearInterval(t);
+      stage.textContent = 'Complete — running cinematic pass…';
+      cinRenderOnly();
+    } else if (d.status === 'failed') {
+      clearInterval(t);
+      stage.textContent = 'Failed: ' + (d.error || 'unknown');
+      document.getElementById('cin-run-full-btn').disabled = false;
+      toast('Pipeline failed', true);
+    }
+  }, 1500);
+}
+
+async function cinRenderOnly() {
+  if (!CIN.session) { toast('Select a session first', true); return; }
+  const btn = document.getElementById('cin-render-btn');
+  if (btn) btn.disabled = true;
+  toast('Starting cinematic render…');
+  const r = await fetch(`/api/cinematic/${CIN.session}/apply`, { method: 'POST' }).catch(()=>null);
+  if (!r || !r.ok) { toast('Render start failed', true); if (btn) btn.disabled = false; return; }
+  const d = await r.json();
+  const t = setInterval(async () => {
+    const jr = await fetch(`/api/jobs/${d.job_id}`).catch(()=>null);
+    if (!jr) return;
+    const jd = await jr.json();
+    if (jd.status === 'completed') {
+      clearInterval(t);
+      if (btn) btn.disabled = false;
+      cinShowOutputVideo();
+      toast('Cinematic render complete ✓');
+    } else if (jd.status === 'failed') {
+      clearInterval(t);
+      if (btn) btn.disabled = false;
+      toast('Cinematic render failed: ' + (jd.error||'?'), true);
+    }
+  }, 2000);
+}
+
+function cinShowOutputVideo() {
+  if (!CIN.session) return;
+  const wrap = document.getElementById('cin-video-wrap');
+  const video = document.getElementById('cin-output-video');
+  const dlLink = document.getElementById('cin-dl-link');
+  const url = `/api/cinematic/${CIN.session}/video`;
+  video.src = url + '?t=' + Date.now();
+  wrap.style.display = '';
+  if (dlLink) { dlLink.href = url; dlLink.download = 'cinematic_recap.mp4'; }
+}
+
+// ── Panel strip (manual mode) ─────────────────────────────────────
+function cinRenderPanelStrip() {
+  const el = document.getElementById('cin-panel-strip');
+  if (!el) return;
+  el.innerHTML = '';
+  CIN.panels.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'pfx-thumb';
+    div.id = 'pfx-' + p.id;
+    div.onclick = () => cinSelectPanel(p.id);
+    div.innerHTML = `
+      <img src="/api/jobs/${CIN.session}/files/${encodeURIComponent(p.image_file)}" onerror="this.style.background='var(--ink4)'" loading="lazy">
+      <div class="pfx-label">#${(p.panel_index||0)}</div>
+      <div class="pfx-type" id="pfx-type-${p.id}">auto</div>`;
+    el.appendChild(div);
+  });
+}
+
+function cinSelectPanel(panelId) {
+  CIN.selectedPanel = panelId;
+  document.querySelectorAll('.pfx-thumb').forEach(el => el.classList.remove('on'));
+  const el = document.getElementById('pfx-' + panelId);
+  if (el) el.classList.add('on');
+  const detail = document.getElementById('cin-panel-detail');
+  if (detail) detail.style.display = '';
+  const titleEl = document.getElementById('cin-detail-title');
+  const panel = CIN.panels.find(p => p.id === panelId);
+  if (titleEl && panel) titleEl.textContent = `Panel ${panel.panel_index} — ${panel.panel_type || 'unknown'}`;
+  // Render effect type buttons
+  const btns = document.getElementById('cin-effect-type-btns');
+  if (btns) {
+    btns.innerHTML = '';
+    FX_TYPES.forEach(fx => {
+      const b = document.createElement('button');
+      b.className = 'btn sm';
+      b.id = 'fxbtn-' + fx.id;
+      b.textContent = fx.emoji + ' ' + fx.label;
+      b.onclick = () => { CIN.panelFxDraft.effect_type = fx.id; cinUpdateFxBtns(); cinRenderFxSliders(fx.id); };
+      btns.appendChild(b);
+    });
+    cinUpdateFxBtns();
+  }
+  cinRenderFxSliders(CIN.panelFxDraft.effect_type || 'auto');
+}
+
+function cinUpdateFxBtns() {
+  FX_TYPES.forEach(fx => {
+    const b = document.getElementById('fxbtn-' + fx.id);
+    if (b) {
+      const on = (CIN.panelFxDraft.effect_type || 'auto') === fx.id;
+      b.style.background = on ? 'var(--acc)' : '';
+      b.style.color = on ? 'var(--ink)' : '';
+    }
+  });
+}
+
+function cinRenderFxSliders(fxType) {
+  const el = document.getElementById('cin-effect-sliders');
+  if (!el) return;
+  let html = '';
+  if (fxType === 'punch_zoom' || fxType === 'auto') {
+    html += `<div class="sl-row"><label>Zoom peak</label>
+      <input type="range" min="1.0" max="1.5" step="0.01" value="${CIN.panelFxDraft.zoom_peak||1.22}"
+        oninput="CIN.panelFxDraft.zoom_peak=parseFloat(this.value);this.nextElementSibling.value=this.value">
+      <output>${CIN.panelFxDraft.zoom_peak||1.22}</output></div>`;
+  }
+  if (fxType === 'shake' || fxType === 'auto') {
+    html += `<div class="sl-row"><label>Shake px</label>
+      <input type="range" min="1" max="20" step="0.5" value="${CIN.panelFxDraft.shake_px||7}"
+        oninput="CIN.panelFxDraft.shake_px=parseFloat(this.value);this.nextElementSibling.value=this.value+'px'">
+      <output>${CIN.panelFxDraft.shake_px||7}px</output></div>`;
+  }
+  if (fxType === 'ken_burns' || fxType === 'auto') {
+    html += `<div class="sl-row"><label>KB zoom</label>
+      <input type="range" min="0" max="0.2" step="0.005" value="${CIN.panelFxDraft.kb_zoom||0.09}"
+        oninput="CIN.panelFxDraft.kb_zoom=parseFloat(this.value);this.nextElementSibling.value=Math.round(this.value*100)+'%'">
+      <output>${Math.round((CIN.panelFxDraft.kb_zoom||0.09)*100)}%</output></div>`;
+  }
+  el.innerHTML = html;
+}
+
+function cinSavePanelFx() {
+  if (!CIN.session || !CIN.selectedPanel) return;
+  fetch(`/api/cinematic/${CIN.session}/panel-override`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ panel_id: CIN.selectedPanel, overrides: CIN.panelFxDraft }),
+  }).then(() => toast('Panel effect saved ✓')).catch(() => toast('Save failed', true));
+  const typeEl = document.getElementById('pfx-type-' + CIN.selectedPanel);
+  if (typeEl) typeEl.textContent = CIN.panelFxDraft.effect_type || 'custom';
+}
+
+function cinClearPanelFx() {
+  if (!CIN.session || !CIN.selectedPanel) return;
+  CIN.panelFxDraft = {};
+  cinRenderFxSliders('auto');
+  cinUpdateFxBtns();
+  fetch(`/api/cinematic/${CIN.session}/panel-override`, {
+    method: 'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({ panel_id: CIN.selectedPanel, overrides: null }),
+  }).then(() => toast('Panel override cleared')).catch(() => {});
+  const typeEl = document.getElementById('pfx-type-' + CIN.selectedPanel);
+  if (typeEl) typeEl.textContent = 'auto';
+}
+
+async function cinPreviewPanel() {
+  if (!CIN.session || !CIN.selectedPanel) return;
+  await cinSavePanelFx();
+  const btn = document.getElementById('cin-preview-btn');
+  const vid = document.getElementById('cin-panel-preview');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
+  vid.style.display = 'none';
+  // server-side preview generation (blocking for short clips)
+  const url = `/api/cinematic/${CIN.session}/preview/${CIN.selectedPanel}?t=${Date.now()}`;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) throw new Error(await r.text());
+    const blob = await r.blob();
+    vid.src = URL.createObjectURL(blob);
+    vid.style.display = '';
+    vid.play();
+  } catch (e) {
+    toast('Preview failed: ' + e, true);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '▶ Preview clip'; }
+  }
+}
+
+// ── Text overlay helpers ──────────────────────────────────────────
+function cinAddOverlay() {
+  CIN.overlays.push({ id: Date.now(), text: '', start: 0, end: 3 });
+  cinRenderOverlays();
+}
+
+function cinRenderOverlays() {
+  const el = document.getElementById('cin-overlay-list');
+  if (!el) return;
+  el.innerHTML = '';
+  CIN.overlays.forEach((ov, i) => {
+    const div = document.createElement('div');
+    div.className = 'ov-item';
+    div.innerHTML = `<input value="${ov.text||''}" placeholder="Overlay text…" oninput="CIN.overlays[${i}].text=this.value">
+      <button class="ov-del" onclick="CIN.overlays.splice(${i},1);cinRenderOverlays()">✕</button>`;
+    el.appendChild(div);
+  });
+}
+
+// ── Expose init to nav system ─────────────────────────────────────
+// Call from the existing nav() function when view === 'cinematic':
+// if (view === 'cinematic') cinInit(currentSession);
+window.cinInit   = cinInit;
+window.setCinMode= setCinMode;
+
+// ── BGM drag-and-drop ─────────────────────────────────────────────
+(function() {
+  function ready() {
+    const zone = document.getElementById('cin-bgm-zone');
+    if (!zone) return;
+    zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('over'); });
+    zone.addEventListener('dragleave', () => zone.classList.remove('over'));
+    zone.addEventListener('drop', e => {
+      e.preventDefault();
+      zone.classList.remove('over');
+      const f = e.dataTransfer.files[0];
+      if (f) cinUploadBgm(f);
+    });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready);
+  else ready();
+})();
+
 </script>
 </body>
 </html>

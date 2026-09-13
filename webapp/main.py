@@ -1302,3 +1302,107 @@ async def editor_narration_regenerate(session: str, body: dict):
         return {"ok": True, "panel_id": panel_id, "text": new_text}
     except Exception as exc:
         raise HTTPException(500, f"narration regeneration failed: {exc}") from None
+
+
+# --------------------------------------------------------------------------- #
+# Enhanced editor: per-panel pan/zoom + speed controls (cinematic upgrade)
+# --------------------------------------------------------------------------- #
+@app.post("/api/editor/{session}/pan")
+async def editor_pan(session: str, body: dict):
+    """Set pan direction / zoom factor / pan speed for one panel's
+    edited_timeline entry. Zoom and speed are applied at render time
+    by scaling the entry's pan spec."""
+    panel_id = body.get("panel_id")
+    if not panel_id:
+        raise HTTPException(400, "panel_id required")
+    direction = body.get("direction", "static")
+    valid_dirs = {"static", "pan_down", "pan_up", "pan_right", "pan_left"}
+    if direction not in valid_dirs:
+        raise HTTPException(400, f"direction must be one of {sorted(valid_dirs)}")
+    try:
+        zoom = float(body.get("zoom_factor", 1.0))
+        speed = float(body.get("speed", 1.0))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "zoom_factor/speed must be numbers") from None
+    zoom = max(1.0, min(1.4, zoom))
+    speed = max(0.3, min(3.0, speed))
+    try:
+        proj = editor_api._get_project(session)
+    except FileNotFoundError:
+        raise HTTPException(404, "editor project not found") from None
+    if proj is None:
+        raise HTTPException(404, "editor project not found")
+    entry = next((e for e in proj.edited_timeline
+                  if e.get("panel_id") == panel_id), None)
+    if entry is None:
+        raise HTTPException(404, f"panel {panel_id} not in timeline")
+    pan = dict(entry.get("pan") or {})
+    pan["kind"] = direction
+    # zoom/speed are recorded on the entry; render_edited_project reads
+    # the pan spec (scaled_w/h, travel_px), so adjust them proportionally
+    if direction != "static":
+        try:
+            pan["scaled_w"] = int(pan.get("scaled_w", 1080) * zoom)
+            pan["scaled_h"] = int(pan.get("scaled_h", 1920) * zoom)
+            pan["travel_px"] = max(0, int(pan.get("travel_px", 0)
+                                          * zoom * speed))
+        except (TypeError, ValueError):
+            pass
+    entry["pan"] = pan
+    entry["needs_render"] = True
+    Editor(proj).save(OUTPUT_DIR / session / "editor.json")
+    return {"ok": True, "panel_id": panel_id, "pan": pan}
+
+
+@app.post("/api/editor/{session}/speed")
+async def editor_speed(session: str, body: dict):
+    """Playback speed / freeze-frame for one panel (recorded; the
+    duration is rescaled so faster playback shortens the clip)."""
+    panel_id = body.get("panel_id")
+    if not panel_id:
+        raise HTTPException(400, "panel_id required")
+    try:
+        speed = float(body.get("speed", 1.0))
+        freeze_dur = float(body.get("freeze_duration", 1.0))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "speed/freeze_duration must be numbers") from None
+    speed = max(0.25, min(3.0, speed))
+    freeze = bool(body.get("freeze", False))
+    try:
+        proj = editor_api._get_project(session)
+    except FileNotFoundError:
+        raise HTTPException(404, "editor project not found") from None
+    if proj is None:
+        raise HTTPException(404, "editor project not found")
+    entry = next((e for e in proj.edited_timeline
+                  if e.get("panel_id") == panel_id), None)
+    if entry is None:
+        raise HTTPException(404, f"panel {panel_id} not in timeline")
+    # apply speed by rescaling the entry duration (and subsequent starts)
+    try:
+        base_dur = float(entry.get("duration_seconds", 3.0))
+        new_dur = round(max(0.5, base_dur / speed + (freeze_dur if freeze else 0.0)), 3)
+    except (TypeError, ValueError):
+        new_dur = entry.get("duration_seconds", 3.0)
+    entry["duration_seconds"] = new_dur
+    entry["speed"] = speed
+    entry["freeze"] = freeze
+    if freeze:
+        entry["freeze_duration"] = freeze_dur
+    entry["needs_render"] = True
+    # reflow subsequent start_seconds so the timeline stays consistent
+    t = 0.0
+    for e in sorted(proj.edited_timeline, key=lambda x: x.get("order", 0)):
+        e["start_seconds"] = round(t, 3)
+        t += float(e.get("duration_seconds", 3.0))
+    Editor(proj).save(OUTPUT_DIR / session / "editor.json")
+    return {"ok": True, "panel_id": panel_id,
+            "duration_seconds": new_dur, "speed": speed, "freeze": freeze}
+
+
+# --------------------------------------------------------------------------- #
+# Cinematic Studio routes (see main_cinematic_routes.py / cinematic_api.py)
+# --------------------------------------------------------------------------- #
+from .main_cinematic_routes import attach_routes as _attach_cin  # noqa: E402
+
+_attach_cin(app)
