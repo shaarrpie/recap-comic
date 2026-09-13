@@ -254,13 +254,12 @@ def test_to_dict_omits_config_entirely():
 
 
 def test_job_store_disk_snapshot_redaction_contract(tmp_path):
-    """PENDING-FIX pin: with the NEW JobStore persistence, _save writes
-    job.config verbatim to disk. TODAY /api/run keeps api_key out of
-    job.config (kwargs-only), so nothing leaks — but the snapshot writer
-    has no redaction of its own. If any future change starts putting the
-    key (or another secret) into job.config, this pin fails and this
-    docstring tells the fixer what to do: redact secrets in _save before
-    the tmp.replace. Skipped on the old (pre-persistence) JobStore."""
+    """REDACTED (was PENDING-FIX pin): JobStore._write_snapshot now redacts
+    credential-shaped config keys (api_key, token, ...) before the
+    tmp.replace. The in-memory job keeps the real key; only the disk
+    snapshot is redacted, so a persisted/rehydrated job resumes with an
+    empty key (same as a restart with no key known). Skipped on the old
+    (pre-persistence) JobStore."""
     s = store.__class__(persist_dir=tmp_path) if "persist_dir" in (
         store.__class__.__init__.__code__.co_varnames) else None
     if s is None:
@@ -270,16 +269,11 @@ def test_job_store_disk_snapshot_redaction_contract(tmp_path):
     files = list(tmp_path.glob("*.json"))
     assert files, "snapshot not written"
     blob = files[0].read_text("utf-8")
-    if "disk-canary" in blob:
-        # Strict xfail: the snapshot writer has no secret redaction today.
-        # It is NOT currently exploitable because /api/run keeps api_key
-        # out of job.config (kwargs-only, main.py:282-300) — but any change
-        # that puts secrets into config makes them disk-visible. Flip this
-        # pin to a hard assert when _save redacts (then remove this branch).
-        pytest.xfail("JobStore._save writes job.config verbatim — secrets "
-                     "in config reach disk unredacted (fix pending: redact "
-                     "in _save)")
-    assert "disk-canary" not in blob
+    assert "disk-canary" not in blob, (
+        "JobStore snapshot wrote job.config secrets to disk unredacted")
+    # and the redacted snapshot keeps the key FIELD (empty) so rehydration
+    # does not resurrect a stale value or drop the setting
+    assert json.loads(blob)["config"]["api_key"] == ""
 
 
 # ---------------------------------------------------------------------------

@@ -280,6 +280,24 @@ class JobStore:
             j._persist_fp = None  # type: ignore[attr-defined]
             self._save(j)
 
+    # Keys in job.config whose persisted value must never be the real
+    # credential: snapshots land in .cache/jobs/<job_id>.json on disk.
+    _REDACTED_CONFIG_KEYS = frozenset({"api_key", "api_keys", "token",
+                                      "password", "secret"})
+
+    @classmethod
+    def _redact_config(cls, config: dict[str, Any]) -> dict[str, Any]:
+        """Copy of job.config with credential fields blanked. The in-memory
+        job keeps the real key (the worker needs it); only the persisted
+        snapshot is redacted. A rehydrated job therefore resumes with
+        key="" — same behavior as a restart after a server that never knew
+        the key; run steps read the key from settings/.env again."""
+        out = dict(config or {})
+        for k in list(out):
+            if k.lower() in cls._REDACTED_CONFIG_KEYS and out[k]:
+                out[k] = ""
+        return out
+
     def _write_snapshot(self, job: Job) -> None:
         # Serialize snapshots: concurrent log/touch/progress calls from
         # multiple threads must not interleave on the same .tmp file
@@ -289,7 +307,7 @@ class JobStore:
                 tmp = self._persist_dir / f"{job.id}.json.tmp"
                 tmp.write_text(json.dumps({
                     "job": job.to_dict(include_logs=True),
-                    "config": job.config,
+                    "config": self._redact_config(job.config),
                 }, indent=2), encoding="utf-8")
                 tmp.replace(self._persist_dir / f"{job.id}.json")
             except OSError as exc:
