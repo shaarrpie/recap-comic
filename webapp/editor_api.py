@@ -370,9 +370,38 @@ def update_narration(session: str, panel_id: str, text: str) -> dict[str, Any]:
     """Update narration text for a single panel via the Narration Studio overlay.
     Writes to narration_edit.json (never mutates panels.json)."""
     # Reuse narration_api.set_text: one implementation, consistent schema
-    # (epoch `at`, review state, TTS invalidation, editor.json sync).
+    # (epoch `at`, review state, TTS invalidation, step invalidation).
     from .narration_api import set_text
-    return set_text(session, panel_id, text)
+    result = set_text(session, panel_id, text)
+    # set_text does NOT touch editor.json; an existing editor project must
+    # see the new narration too or its renders produce stale captions.
+    # The rendered captions live in the `captions` array (keyed by
+    # panel_id); edited_timeline entries carry no narration field, so
+    # the sync targets captions.
+    d = _session_dir(session)
+    editor_json = d / "editor.json"
+    if editor_json.is_file():
+        try:
+            import json as _json
+            data = _json.loads(editor_json.read_text("utf-8"))
+            changed = False
+            clean = " ".join((text or "").split())
+            for cap in data.get("captions", []):
+                if (cap.get("panel_id") == panel_id
+                        and cap.get("text") != clean):
+                    cap["text"] = clean
+                    if "automated_text" in cap:
+                        cap["automated_text"] = clean
+                    changed = True
+            if changed:
+                data["needs_render"] = True
+                tmp = editor_json.with_suffix(".tmp")
+                tmp.write_text(_json.dumps(data, indent=2), "utf-8")
+                tmp.replace(editor_json)
+        except Exception:  # noqa: BLE001 - editor.json sync is best-effort
+            log.warning("editor.json narration sync failed for %s/%s",
+                        session, panel_id)
+    return result
 
 
 def get_ai_review_data(session: str) -> dict[str, Any]:

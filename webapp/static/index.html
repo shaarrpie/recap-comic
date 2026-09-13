@@ -567,13 +567,13 @@ async function vStudio(){
         <div class="stripmark" aria-hidden="true"></div>
         <div>
           <h3>Drop strips here</h3>
-          <p>PNG Â· JPG Â· WebP â€” add one or more full-height chapter strips. Nothing runs until you press Run.</p>
+          <p>PNG · JPG · WebP — add one or more full-height chapter strips. Nothing runs until you press Run.</p>
           <div class="fmts"><span class="chip">multiple strips</span><span class="chip">gemini narration</span><span class="chip">edge-tts</span><span class="chip">9:16 render</span></div>
-          <div class="modeToggle" id="modeToggle" title="Automation runs every stage end-to-end. Manual stops after upload â€” you crop, review, narrate and render step by step.">
-            <button class="mtBtn ${store.settings.mode!=="manual"?"on":""}" data-mode="automation" id="mtAuto">âš¡ Automation</button>
-            <button class="mtBtn ${store.settings.mode==="manual"?"on":""}" data-mode="manual" id="mtManual">âœ‚ Manual</button>
+          <div class="modeToggle" id="modeToggle" title="Automation runs every stage end-to-end. Manual stops after upload — you crop, review, narrate and render step by step.">
+            <button class="mtBtn ${store.settings.mode!=="manual"?"on":""}" data-mode="automation" id="mtAuto">⚡ Automation</button>
+            <button class="mtBtn ${store.settings.mode==="manual"?"on":""}" data-mode="manual" id="mtManual">✂ Manual</button>
           </div>
-          <p class="auto" id="modeHint">${store.settings.mode==="manual"?"Manual: uploads land in the queue cropped by YOU in Manual Crop â€” nothing runs until you continue.":"Automation: queued strips run end-to-end (segment â†' narrate â†' render) when you press Run."}</p>
+          <p class="auto" id="modeHint">${store.settings.mode==="manual"?"Manual: uploads land in the queue cropped by YOU in Manual Crop — nothing runs until you continue.":"Automation: queued strips run end-to-end (segment →' narrate →' render) when you press Run."}</p>
         </div>
       </div>
       </div>
@@ -581,7 +581,7 @@ async function vStudio(){
       ${store.queue.length?`
       <div class="panel lift reveal" style="--d:40ms;margin-top:18px">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
-          <div class="lbl">ready to ${store.settings.mode==="manual"?"crop":"run"} Â· ${store.queue.length} queued</div>
+          <div class="lbl">ready to ${store.settings.mode==="manual"?"crop":"run"} · ${store.queue.length} queued</div>
           ${store.settings.mode==="manual"
             ?`<button class="btn sm" id="runAll">Open Manual Crop (${store.queue.length})</button>`
             :`<button class="btn sm acc" id="runAll">Run all (${store.queue.length})</button>`}
@@ -591,13 +591,13 @@ async function vStudio(){
             <article class="rcard" data-q="${esc(q.session)}" style="cursor:default">
               <div style="min-width:0">
                 <div class="name">${esc(store.names?.[q.session]||q.session)}</div>
-                <div class="sub">${esc(q.session)} Â· <span style="color:var(--amber)">queued</span></div>
+                <div class="sub">${esc(q.session)} · <span style="color:var(--amber)">queued</span></div>
               </div>
               <span class="pill" data-status="idle"><span class="dot"></span>${store.settings.mode==="manual"?"manual":"queued"}</span>
               <div class="acts">
                 <button class="btn sm danger" data-qdel="${esc(q.session)}">Remove</button>
                 ${store.settings.mode==="manual"
-                  ?`<button class="btn sm" data-qcrop="${esc(q.session)}">Crop â†'</button>`
+                  ?`<button class="btn sm" data-qcrop="${esc(q.session)}">Crop →'</button>`
                   :`<button class="btn sm acc" data-qrun="${esc(q.session)}">Run</button>`}
               </div>
             </article>`).join("")}
@@ -655,7 +655,7 @@ async function vStudio(){
       const snap=[...store.queue];
       if(!snap.length){toast("Queue is empty","warn");return}
       nav("manual-crop",snap[0].session);
-      if(snap.length>1)toast(`${snap.length-1} more queued â€” they open in Manual Crop after this one`,"ok");
+      if(snap.length>1)toast(`${snap.length-1} more queued — they open in Manual Crop after this one`,"ok");
       return;
     }
     runAllQueued();
@@ -666,7 +666,7 @@ async function vStudio(){
     const mode=b.dataset.mode;
     if(store.settings.mode===mode)return;
     store.settings.mode=mode;save();
-    toast(mode==="manual"?"Manual mode: nothing auto-runs â€” crop strips yourself in Manual Crop":"Automation mode: queued strips run end-to-end","ok");
+    toast(mode==="manual"?"Manual mode: nothing auto-runs — crop strips yourself in Manual Crop":"Automation mode: queued strips run end-to-end","ok");
     render();
   });
   $$("[data-qrun]",viewEl).forEach(b=>b.onclick=e=>{e.stopPropagation();runQueued(b.dataset.qrun)});
@@ -1234,7 +1234,7 @@ async function vManualCrop(session){
         <span class="lbl" id="mcZoomLbl">100%</span>
         <button class="btn sm" id="mcZoomIn">+</button>
         <button class="btn sm" id="mcFit">Fit</button>
-        <button class="btn sm" id="mcAutoCrop" title="Run ONLY the AI panel segmentation (no narration, no render) and load its detected edges as editable boundaries">âš¡ Auto Crop</button>
+        <button class="btn sm" id="mcAutoCrop" title="Run ONLY the AI panel segmentation (no narration, no render) and load its detected edges as editable boundaries">⚡ Auto Crop</button>
         <button class="btn sm" id="mcLoadGuides" title="Load automatic boundaries as guides">Load Guides</button>
         <label class="lbl" style="display:flex;align-items:center;gap:6px;cursor:pointer" title="Snap boundaries to nearby gutters">
           <input type="checkbox" id="mcSnap"> Snap
@@ -1399,7 +1399,7 @@ async function vManualCrop(session){
   $("#mcAutoCrop").onclick=async()=>{
     if(!naturalH){toast("strip not loaded yet","warn");return}
     const btn=$("#mcAutoCrop"); btn.disabled=true;
-    status.textContent="Auto crop runningâ€¦";
+    status.textContent="Auto crop running…";
     try{
       const r=await req(`/api/manual-crop/${session}/auto-crop`,{method:"POST",body:JSON.stringify({
         backend:store.settings.backend==="none"?"none":store.settings.backend,
@@ -1427,7 +1427,7 @@ async function vManualCrop(session){
         boundaries=[...new Set(boundaries)].sort((a,b)=>a-b);
         selectedIdx=-1;
         pushHistory();render();saveDebounced();
-        toast(`Auto crop done â€” ${boundaries.length-1} panels detected; adjust freely`,"ok");
+        toast(`Auto crop done — ${boundaries.length-1} panels detected; adjust freely`,"ok");
       }
       status.textContent="Ready";
     }catch(e){
@@ -1632,13 +1632,13 @@ async function vVoice(session){
       <p class="auto" id="vsState" style="margin-top:10px"></p>
       <hr class="cutline">
       <div class="lbl">voice comparison</div>
-      <p style="font-size:12px;color:var(--txt3);margin:6px 0 10px">Preview the sample with other voices â€” only short clips are synthesized, cached by content.</p>
+      <p style="font-size:12px;color:var(--txt3);margin:6px 0 10px">Preview the sample with other voices — only short clips are synthesized, cached by content.</p>
       <div id="vsCompare" style="display:grid;gap:6px"></div>
     </section>
   </div>
   <div style="display:flex;justify-content:flex-end;gap:10px;margin-top:16px">
-    <button class="btn" id="vsBack">â† Back to Narration</button>
-    <button class="btn acc" id="vsNext" title="Click 'Use This Voice' first if you changed anything — then render the recap">Continue â†' Generate</button>
+    <button class="btn" id="vsBack">→ Back to Narration</button>
+    <button class="btn acc" id="vsNext" title="Click 'Use This Voice' first if you changed anything — then render the recap">Continue →' Generate</button>
   </div>`;
   VS={session,cfg:await api.voiceGet(session),voices:null,previewUrl:null};
   const $v=s=>$(s);
@@ -1782,9 +1782,9 @@ async function paint(jobP){
   $("#genBtns").innerHTML=
     running?`<button class="btn danger" id="bCancel">Cancel</button>`:
     failed ?`<button class="btn acc" id="bRun">Retry automation</button>${job.stage?`<button class="btn" id="bResume" title="Resume from the failed stage; earlier stages are skipped (cached outputs on disk are reused)">Retry from ${job.stage.replace(/_/g," ")}</button>`:""}`:
-    done&&!renderErr?`<button class="btn" id="bRerun">Re-run</button><button class="btn acc" id="bRev">Review â†’</button>`:
-    done&&renderErr?`<button class="btn acc" id="bResumeRender" title="Only re-runs the render stage">Retry render</button><button class="btn" id="bRev">Review â†’</button>`:
-            `<button class="btn acc" id="bRun">Run Automation</button><button class="btn" id="bStep" title="Run ONE stage at a time with checkpoints, inspection and retry per step">â–¡â–¡ Step-by-Step</button>`;
+    done&&!renderErr?`<button class="btn" id="bRerun">Re-run</button><button class="btn acc" id="bRev">Review →</button>`:
+    done&&renderErr?`<button class="btn acc" id="bResumeRender" title="Only re-runs the render stage">Retry render</button><button class="btn" id="bRev">Review →</button>`:
+            `<button class="btn acc" id="bRun">Run Automation</button><button class="btn" id="bStep" title="Run ONE stage at a time with checkpoints, inspection and retry per step">□□ Step-by-Step</button>`;
   const s=store.session;
   const run=async(startStage,continueFrom)=>{
     try{
@@ -1809,7 +1809,7 @@ async function paint(jobP){
        view (checkpoints + per-step Run/Retry/Reset). */
     try{
       const r=await api.pipeRunStep(s,"validate_config");
-      toast("Step 1 ran â€” continuing in the Pipeline view","ok");
+      toast("Step 1 ran — continuing in the Pipeline view","ok");
       nav("pipeline",s);
     }catch(e){toast(e.message,"err")}
   });
@@ -1841,9 +1841,9 @@ async function paint(jobP){
   }
 }
 /* ================================================================
-   VIEW â€” Pipeline (Step-by-Step + checkpoint debugger)
+   VIEW — Pipeline (Step-by-Step + checkpoint debugger)
    ================================================================ */
-const PIPE_ICONS={success:"âœ“",failed:"âœ—",stale:"â†»",pending:"â—‹",running:"â–¶"};
+const PIPE_ICONS={success:"✓",failed:"✗",stale:"↻",pending:"○",running:"▶"};
 let pipeTimer=null;
 async function vPipeline(session){
   session=await requireSession(session);if(!session)return studioEmpty("Pipeline");
@@ -1852,9 +1852,9 @@ async function vPipeline(session){
   <div class="pipe">
     <div class="pipe-head">
       <div>
-        <div class="lbl">step-by-step pipeline Â· checkpoints</div>
+        <div class="lbl">step-by-step pipeline · checkpoints</div>
         <h2 style="font-size:22px;margin:2px 0 4px">Pipeline Debugger</h2>
-        <p style="font-size:12.5px;color:var(--txt3)" id="pipeSub">loading ledgerâ€¦</p>
+        <p style="font-size:12.5px;color:var(--txt3)" id="pipeSub">loading ledger…</p>
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap" id="pipeBtns"></div>
     </div>
@@ -1864,7 +1864,7 @@ async function vPipeline(session){
     </div>
     <section class="panel" style="margin-top:16px">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
-        <div class="lbl">debug console Â· persistent (debug_events.jsonl)</div>
+        <div class="lbl">debug console · persistent (debug_events.jsonl)</div>
         <div style="display:flex;gap:8px;align-items:center">
           <select id="pipeEvSev" style="min-width:110px"><option value="">all severities</option><option>INFO</option><option>DEBUG</option><option>WARNING</option><option>ERROR</option></select>
           <label style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--txt3)"><input type="checkbox" id="pipeAutoScroll" checked>auto-scroll</label>
@@ -1907,8 +1907,8 @@ async function vPipeline(session){
     const st=d.state||{};
     const steps=d.steps||[];
     const running=d.running;
-    const sel=`step ${st.current_step||1}/${steps.length} Â· ${st.status||"idle"}`
-      +(st.mode?` Â· ${st.mode==="step"?"step-by-step":"automation"} mode`:"");
+    const sel=`step ${st.current_step||1}/${steps.length} · ${st.status||"idle"}`
+      +(st.mode?` · ${st.mode==="step"?"step-by-step":"automation"} mode`:"");
     $("#pipeSub").textContent=sel;
     /* step rows */
     const rows=steps.map(s=>{
@@ -1917,10 +1917,10 @@ async function vPipeline(session){
       if(running&&running.stage===s.pipeline_name)status="running";
       const stale=(d.stale||[]).includes(s.step);
       const dur=e?`${(e.duration_s||0).toFixed(1)}s`:"";
-      const warn=(e&&e.warnings&&e.warnings.length)?` âš  ${e.warnings.length}`:"";
-      const sub=[dur,status+(stale?" Â· stale":""),warn].filter(Boolean).join(" Â· ");
+      const warn=(e&&e.warnings&&e.warnings.length)?` ⚠ ${e.warnings.length}`:"";
+      const sub=[dur,status+(stale?" · stale":""),warn].filter(Boolean).join(" · ");
       return `<div class="pstep" data-st="${status}" data-step="${s.step}" data-stage="${s.pipeline_name}">
-        <div class="pico">${PIPE_ICONS[status]||"â—‹"}</div>
+        <div class="pico">${PIPE_ICONS[status]||"○"}</div>
         <div class="pmain"><div class="pname">${s.step}. ${esc(s.label)}</div>
         <div class="psub">${esc(sub)}</div></div>
         <div class="pacts">
@@ -1934,9 +1934,9 @@ async function vPipeline(session){
     const nextStep=steps.find(s=>s.step===(st.current_step||1));
     const btns=[];
     if(running){
-      btns.push(`<button class="btn sm" disabled>${running.status}â€¦ ${esc((running.stage||"").replace(/_/g," "))}</button>`);
+      btns.push(`<button class="btn sm" disabled>${running.status}… ${esc((running.stage||"").replace(/_/g," "))}</button>`);
     }else{
-      if(nextStep)btns.push(`<button class="btn sm acc" id="pRunNext">Run Step ${nextStep.step} Â· ${esc(nextStep.label)}</button>`);
+      if(nextStep)btns.push(`<button class="btn sm acc" id="pRunNext">Run Step ${nextStep.step} · ${esc(nextStep.label)}</button>`);
       btns.push(`<button class="btn sm" id="pRunAll">Run to End (Automation)</button>`);
     }
     $("#pipeBtns").innerHTML=btns.join("");
@@ -1964,7 +1964,7 @@ async function vPipeline(session){
 async function pipeRun(session,stage){
   try{
     const r=await api.pipeRunStep(session,stage);
-    toast(`Step running â€” ${stage.replace(/_/g," ")}`,"ok");
+    toast(`Step running — ${stage.replace(/_/g," ")}`,"ok");
     watch(r.job_id,()=>{});
   }catch(e){toast(e.message,"err")}
 }
@@ -1980,9 +1980,9 @@ async function pipeDetail(session,stepNo){
   try{d=await api.pipeStepDetail(session,stepNo)}catch(e){$("#pipeDetail").innerHTML=`<p style="color:var(--coral)">${esc(e.message)}</p>`;return}
   const e=d.entry;
   const el=$("#pipeDetail");
-  if(!e){el.innerHTML=`<div class="lbl">step ${d.step.step} Â· ${esc(d.step.label)}</div><p style="color:var(--txt3);margin-top:8px;font-size:13px">Not run yet. Consumes: ${esc(d.step.consumes.join(", ")||"â€“")}. Produces: ${esc(d.step.produces.join(", ")||"â€“")}.</p>`;return}
+  if(!e){el.innerHTML=`<div class="lbl">step ${d.step.step} · ${esc(d.step.label)}</div><p style="color:var(--txt3);margin-top:8px;font-size:13px">Not run yet. Consumes: ${esc(d.step.consumes.join(", ")||"–")}. Produces: ${esc(d.step.produces.join(", ")||"–")}.</p>`;return}
   const err=e.status==="failed"?`<div class="errcard">
-      <div class="lbl" style="color:var(--coral)">âœ— ${esc(e.label)} failed</div>
+      <div class="lbl" style="color:var(--coral)">✗ ${esc(e.label)} failed</div>
       <p style="margin-top:6px;font-size:13px">${esc(e.error||"")}</p>
       <div class="fn">duration: ${(e.duration_s||0).toFixed(1)}s</div>
       ${e.warnings&&e.warnings.length?`<div class="fn" style="color:var(--amber)">warnings: ${esc(e.warnings.join(" | "))}</div>`:""}
@@ -1993,11 +1993,11 @@ async function pipeDetail(session,stepNo){
       </div>
       <div class="tb" id="pdTbBox" style="display:none"></div>
     </div>`:"";
-  el.innerHTML=`<div class="lbl">step ${e.step} Â· ${esc(e.label)} Â· ${e.status}</div>
+  el.innerHTML=`<div class="lbl">step ${e.step} · ${esc(e.label)} · ${e.status}</div>
     ${err}
     <div style="margin-top:10px;display:grid;gap:4px;font-size:12.5px">
       <div><b>duration:</b> ${(e.duration_s||0).toFixed(1)}s</div>
-      <div><b>artifacts:</b> ${esc((e.artifacts||[]).join(", ")||"â€“")}</div>
+      <div><b>artifacts:</b> ${esc((e.artifacts||[]).join(", ")||"–")}</div>
       ${e.warnings&&e.warnings.length?`<div style="color:var(--amber)"><b>warnings:</b> ${esc(e.warnings.join(" | "))}</div>`:""}
     </div>
     <div class="lbl" style="margin-top:14px">step log</div>
@@ -2036,7 +2036,7 @@ async function pipeConsoleDraw(session){
   const sev=$("#pipeEvSev")?$("#pipeEvSev").value:null;
   try{d=await api.pipeEvents(session)}catch(_){el.innerHTML="";return}
   const evs=(d.events||[]).filter(ev=>!sev||ev.severity===sev);
-  el.innerHTML=evs.length?evs.slice(-200).map(ev=>`<div class="pev s-${esc(ev.severity)}"><span class="t">${fmtT(ev.t)}</span><span>${esc(ev.severity)}</span><span>${esc(ev.message)}${ev.duration_s!=null?` (${ev.duration_s.toFixed(1)}s)`:""}${ev.exception?` â€” ${esc(ev.exception)}`:""}</span></div>`).join(""):`<p style="color:var(--txt3)">no events yet â€” run a step</p>`;
+  el.innerHTML=evs.length?evs.slice(-200).map(ev=>`<div class="pev s-${esc(ev.severity)}"><span class="t">${fmtT(ev.t)}</span><span>${esc(ev.severity)}</span><span>${esc(ev.message)}${ev.duration_s!=null?` (${ev.duration_s.toFixed(1)}s)`:""}${ev.exception?` — ${esc(ev.exception)}`:""}</span></div>`).join(""):`<p style="color:var(--txt3)">no events yet — run a step</p>`;
   if($("#pipeAutoScroll")&&$("#pipeAutoScroll").checked)el.scrollTop=el.scrollHeight;
 }
 function fmtT(t){
@@ -2044,7 +2044,7 @@ function fmtT(t){
   return d.toTimeString().slice(0,8);
 }
 /* ================================================================
-   VIEW â€” Review (video + synced narration cues)
+   VIEW — Review (video + synced narration cues)
    ================================================================ */
 async function vReview(session){
   session=await requireSession(session);if(!session)return studioEmpty("Review");

@@ -51,13 +51,59 @@ def _session_dir(session: str) -> Path:
     return d
 
 
+def _coerce_voice_value(k: str, v) -> object:
+    """Validate/coerce one voice config value. A string rate/pitch/speed
+    in voice.json or a request body must not raise a raw 500 deep in
+    _rate_args — coerce valid numeric strings, 400 anything else."""
+    if k == "provider":
+        if v not in PROVIDERS:
+            raise HTTPException(400, f"unknown provider {v!r}")
+        return v
+    if k == "voice":
+        if not isinstance(v, str) or not v.strip():
+            raise HTTPException(400, "voice must be a non-empty string")
+        return v
+    if k == "style":
+        if not isinstance(v, str) or not v.strip():
+            raise HTTPException(400, "style must be a non-empty string")
+        return v
+    # numeric knobs
+    if isinstance(v, bool):
+        raise HTTPException(400, f"{k} must be a number")
+    if isinstance(v, (int, float)):
+        num = v
+    elif isinstance(v, str):
+        try:
+            num = float(v)
+        except ValueError:
+            raise HTTPException(
+                400, f"{k} must be a number, got {v!r}") from None
+    else:
+        raise HTTPException(400, f"{k} must be a number")
+    if k in ("rate", "pitch"):
+        if not (-100 <= num <= 100):
+            raise HTTPException(400, f"{k} must be within [-100, 100]")
+        return int(num)
+    if k == "speed":
+        if not (0.5 <= num <= 2.0):
+            raise HTTPException(400, "speed must be within [0.5, 2.0]")
+        return round(float(num), 2)
+    return v
+
+
 def get_voice(session: str) -> dict:
     p = _session_dir(session) / "voice.json"
     cfg = dict(DEFAULT_VOICE)
     if p.is_file():
         with contextlib.suppress(Exception):
-            cfg.update({k: v for k, v in json.loads(p.read_text("utf-8")).items()
-                        if k in cfg})
+            loaded = json.loads(p.read_text("utf-8"))
+            # tolerate legacy string values but never crash on them
+            for k in DEFAULT_VOICE:
+                if k in loaded:
+                    try:
+                        cfg[k] = _coerce_voice_value(k, loaded[k])
+                    except HTTPException:
+                        pass  # keep the default for this key
     return cfg
 
 
@@ -69,7 +115,7 @@ def put_voice(session: str, cfg: dict) -> dict:
             changed = True
     for k in DEFAULT_VOICE:
         if k in cfg:
-            cur[k] = cfg[k]
+            cur[k] = _coerce_voice_value(k, cfg[k])
     p = _session_dir(session) / "voice.json"
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(cur, indent=2), "utf-8")
@@ -103,14 +149,22 @@ async def list_voices(provider: str = "edge") -> dict:
 
 
 def _rate_args(cfg: dict) -> dict:
-    """Map the studio config onto edge-tts rate/pitch strings."""
-    rate = int(cfg.get("rate", 0) or 0)
-    speed = float(cfg.get("speed", 1.0) or 1.0)
+    """Map the studio config onto edge-tts rate/pitch strings. Values come
+    from put_voice-validated storage, but preview bodies pass cfg directly
+    — coerce here too so a bad type can never raise a raw 500."""
+    try:
+        rate = int(float(cfg.get("rate", 0) or 0))
+        speed = float(cfg.get("speed", 1.0) or 1.0)
+        pitch = int(float(cfg.get("pitch", 0) or 0))
+    except (TypeError, ValueError):
+        raise HTTPException(400, "rate/pitch/speed must be numbers") from None
+    rate = max(-100, min(100, rate))
+    speed = max(0.5, min(2.0, speed))
+    pitch = max(-100, min(100, pitch))
     # edge has a single speech-rate control; fold the speed multiplier in
     # as a percentage offset so speed=1.0 is neutral (rate*speed would be
     # stuck at 0% whenever rate is 0).
     combined = rate + round((speed - 1.0) * 100)
-    pitch = int(cfg.get("pitch", 0) or 0)
     return {"rate": f"+{combined}%" if combined >= 0 else f"{combined}%",
             "pitch": f"+{pitch}Hz" if pitch >= 0 else f"{pitch}Hz"}
 

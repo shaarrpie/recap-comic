@@ -21,6 +21,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
@@ -71,6 +72,22 @@ def load_overrides(session: str) -> dict:
             if (o.get("text") or "").strip()}
 
 
+_NS_PREFIX_RE = re.compile(r"^s[0-9a-f]{8}_")
+
+
+def _override_for(ov: dict, pid: str) -> str | None:
+    """Override text for a panel id, matching BOTH the raw id and the
+    continuation-namespaced form (merge_continuation rewrites ids to
+    `s<session8>_<raw>`; overrides saved against raw ids before a merge
+    must still apply to the namespaced panel)."""
+    if pid in ov:
+        return ov[pid]
+    raw = _NS_PREFIX_RE.sub("", pid, count=1)
+    if raw != pid and raw in ov:
+        return ov[raw]
+    return None
+
+
 def apply_overrides_to_cut(session: str, panels: list) -> int:
     """Apply narration overrides onto CutArtifact-style panels (objects with
     a `narration` attr). Returns how many panels were changed."""
@@ -80,8 +97,9 @@ def apply_overrides_to_cut(session: str, panels: list) -> int:
     n = 0
     for p in panels:
         pid = getattr(p, "id", None)
-        if pid in ov:
-            p.narration = ov[pid]
+        text = _override_for(ov, pid) if pid else None
+        if text is not None:
+            p.narration = text
             n += 1
     return n
 
@@ -93,8 +111,9 @@ def apply_overrides_to_dicts(session: str, panels: list[dict]) -> int:
         return 0
     n = 0
     for p in panels:
-        if p.get("id") in ov:
-            p["narration"] = ov[p["id"]]
+        text = _override_for(ov, p.get("id"))
+        if text is not None:
+            p["narration"] = text
             n += 1
     return n
 

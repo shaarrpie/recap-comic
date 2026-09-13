@@ -48,6 +48,10 @@ STAGE_TIMEOUT_S = {
     "create_editor_project": 30,
 }
 JOB_TIMEOUT_S = 5400
+# Per-chunk ffmpeg budget: the whole render stage has 3600s, so a single
+# hung chunk must never be allowed to eat the entire stage with no cancel
+# path (/render-cancel cannot reach chunked subprocesses).
+CHUNK_TIMEOUT_S = 1200
 
 
 class StageTimeoutError(RuntimeError):
@@ -285,6 +289,16 @@ def _write_confirmed_artifact(job: Job, panels: list[CutPanelLike] | None = None
     """
     from guided_cutter import CutArtifact
     session_dir = OUTPUT_DIR / job.config["session"]
+    if not job.config.get("continue_from"):
+        # A fresh (non-continuation) run must not render a stale
+        # panels_merged.json left by an earlier chained run — it would
+        # silently ignore the fresh segmentation/confirmed panels.
+        stale = session_dir / "panels_merged.json"
+        if stale.is_file():
+            stale.unlink()
+            job.log("INFO", "removed stale panels_merged.json "
+                            "(fresh run without continuation)",
+                    "apply_confirmed")
     src = session_dir / "panels.json"
     artifact = CutArtifact.model_validate_json(src.read_text("utf-8"))
     by_id = {p.id: p for p in artifact.panels}
@@ -692,13 +706,16 @@ def _render_video(job: Job, **kwargs: Any) -> None:
     # never existed for webapp sessions. Dry-run renders no video, so no
     # partial file is produced at this path.
     try:
-        make_recap_video(panels_json, out_mp4, cfg, force=True, dry_run=True)
+        make_recap_video(panels_json, out_mp4, cfg, force=False, dry_run=True)
     except Exception as exc:  # noqa: BLE001 - degrade to silent timeline
         job.log("WARNING", f"TTS/timeline build failed ({exc}); retrying "
                           "with tts=none so the session stays usable",
                 "render_video")
         cfg = cfg.model_copy(update={"tts": "none"})
-        make_recap_video(panels_json, out_mp4, cfg, force=True, dry_run=True)
+        # tts=none changes the config hash, so the cached clips from the
+        # failed attempt cannot be reused anyway — force is irrelevant
+        # here, but keep it False for consistency: the cache is hash-keyed.
+        make_recap_video(panels_json, out_mp4, cfg, force=False, dry_run=True)
     # Resolve ffmpeg ONCE (PATH, then the bundled imageio-ffmpeg binary)
     # and reuse the resolved absolute path for every subprocess. Without
     # this, Popen("ffmpeg") on Windows dies with WinError 2 after all
@@ -733,10 +750,13 @@ def _render_video(job: Job, **kwargs: Any) -> None:
                     raise _RenderSoftError(
                         "chunked render did not produce output")
         except _RenderSoftError:
+            _cleanup_partial_render(out_tmp)
             raise
         except CancelledError:
+            _cleanup_partial_render(out_tmp)
             raise
         except Exception as exc:
+            _cleanup_partial_render(out_tmp)
             raise _RenderSoftError(f"chunked render failed: {exc}") from exc
     else:
         from adapters.render_ffmpeg import build_command
@@ -842,10 +862,30 @@ def _chunk_commands(ta, out_tmp, ffmpeg_exe, prof):
     yield _concat
 
 
+def _cleanup_partial_render(out_tmp: Path) -> None:
+    """Best-effort removal of failed/cancelled chunked-render leftovers:
+    the .partial.mp4 and its recap.partial_parts/ segment directory
+    (chunked renders regenerate all of them on retry)."""
+    import shutil as _shutil
+    with contextlib.suppress(OSError):
+        if out_tmp.is_file():
+            out_tmp.unlink()
+    parts = out_tmp.parent / (out_tmp.stem + "_parts")
+    with contextlib.suppress(OSError):
+        if parts.is_dir():
+            _shutil.rmtree(parts)
+
+
 def _run_render_subprocess(job_id: str, cmd: list[str]) -> None:
-    """Run one ffmpeg chunk command; raise with stderr tail on failure."""
+    """Run one ffmpeg chunk command; raise with stderr tail on failure.
+
+    Bounded by a per-chunk timeout: an unbounded subprocess.run blocks
+    the stage thread forever on a hung ffmpeg (the /render-cancel path
+    cannot reach chunked renders — _ACTIVE only tracks RenderWorkers).
+    """
     proc = subprocess.run(cmd, capture_output=True, text=True,
-                           shell=False, check=False)
+                           shell=False, check=False,
+                           timeout=CHUNK_TIMEOUT_S)
     if proc.returncode != 0:
         tail = "\n".join((proc.stderr or "").splitlines()[-20:])
         raise RuntimeError(f"ffmpeg chunk failed (exit {proc.returncode}):\n{tail}")
@@ -1091,11 +1131,15 @@ def run_steps_job(job_id: str, first_stage: str,
                     f"last={last_stage}")
     try:
         _run_steps(job, first_stage, last_stage, **kwargs)
-        job.status = JobStatus.COMPLETED
-        job.finished_at = time.time()
-        job.stage = "done"
-        job.touch()
-        job.log("INFO", "step run completed (paused after checkpoint)")
+        # _run_steps early-returns (job.fail already recorded) on bad
+        # stage names / inverted ranges: only mark COMPLETED when the
+        # steps actually ran to their end without failing.
+        if job.status not in (JobStatus.FAILED, JobStatus.CANCELLED):
+            job.status = JobStatus.COMPLETED
+            job.finished_at = time.time()
+            job.stage = "done"
+            job.touch()
+            job.log("INFO", "step run completed (paused after checkpoint)")
     except CancelledError:
         pass
     except Exception:
