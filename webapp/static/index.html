@@ -619,9 +619,12 @@ const api={
 /* ---------------- store (persisted) ---------------- */
 const store=Object.assign({
   session:null, recent:[], order:{}, genJob:{}, names:{}, queue:[],
-  settings:{backend:"gemini",model:"",tts:"edge",voice:"en-US-AriaNeural",style:"recap",
+  settings:{backend:"xkiro",model:"",tts:"edge",voice:"en-US-AriaNeural",style:"recap",
             api_key:"",endpoint:"",cf_account_id:"",mode:"automation"}
 }, JSON.parse(localStorage.getItem("rc.studio.v1")||"{}"));
+// CLI parity: older browsers may have persisted backend=gemini from before
+// xkiro became the default. Migrate once so automation uses the working key.
+if(store.settings.backend==="gemini"){store.settings.backend="xkiro";save();}
 const save=()=>localStorage.setItem("rc.studio.v1",JSON.stringify(store));
 /* pipeline stages — the real spine from webapp/pipeline.py (generate) */
 const STAGES=[
@@ -629,7 +632,7 @@ const STAGES=[
   ["segment_panels","Segment panels"],["panel_validation","Validate panels"],
   ["apply_confirmed","Apply review"],["merge_continuation","Merge sequence"],
   ["apply_order","Apply order"],
-  ["gemini_narration","Gemini narration"],["build_script","Build script"],
+  ["gemini_narration","AI narration"],["build_script","Build script"],
   ["render_video","Render video"],["save_outputs","Save outputs"],
   ["create_editor_project","Editor project"]
 ];
@@ -2720,8 +2723,8 @@ async function vSettings(){
   <h2 class="h-disp" style="font-size:28px;margin:4px 0 18px">Automation config</h2>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;max-width:980px">
     <label class="field"><span class="lbl">backend</span>
-      <select id="sBackend">${["gemini","openai","anthropic","ollama","cloudflare","none"].map(b=>`<option ${b===s.backend?"selected":""}>${b}</option>`).join("")}</select></label>
-    <label class="field"><span class="lbl">model</span><input id="sModel" value="${esc(s.model)}" placeholder="e.g. gemini-2.5-flash"></label>
+      <select id="sBackend">${["xkiro","qwen","mistral","gemini","openai","anthropic","ollama","cloudflare","none"].map(b=>`<option ${b===s.backend?"selected":""}>${b}</option>`).join("")}</select></label>
+    <label class="field"><span class="lbl">model</span><input id="sModel" value="${esc(s.model)}" placeholder="e.g. qwen/qwen3.5-397b-a17b:free"></label>
     <label class="field"><span class="lbl">api key (saved server-side)</span><input id="sKey" type="password" value="${esc(s.api_key)}" autocomplete="off"></label>
     <label class="field"><span class="lbl">endpoint / base url</span><input id="sEp" value="${esc(s.endpoint)}" placeholder="http://localhost:11434"></label>
     <label class="field"><span class="lbl">cloudflare account id</span><input id="sCf" value="${esc(s.cf_account_id)}"></label>
@@ -3006,7 +3009,7 @@ async function cinRunStage(stageId) {
     tts: settings.tts || 'edge',
     voice: settings.voice || 'en-US-AriaNeural',
     style: settings.style || 'recap',
-    backend: settings.backend || 'none',
+    backend: settings.backend || 'xkiro',
   };
 
   try {
@@ -3061,7 +3064,7 @@ async function cinRunFull() {
       tts: settings.tts || 'edge',
       voice: settings.voice || 'en-US-AriaNeural',
       style: settings.style || 'recap',
-      backend: settings.backend || 'none',
+      backend: settings.backend || 'xkiro',
     }),
   }).catch(() => null);
   if (!r || !r.ok) { toast('Pipeline start failed', true); return; }

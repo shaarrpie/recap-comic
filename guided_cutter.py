@@ -176,13 +176,23 @@ def normalize_panel_image(piece: Image.Image, *,
                           output_width: int = 390,
                           min_output_height: int = 760,
                           max_output_height: int = 800) -> Image.Image:
-    """Deterministically normalize one source crop to 390x[760,800].
+    """Normalize one source crop to 390x[760,800] — or keep it FULL-RES
+    when it is a continuous-art mega-panel.
 
     Step 1: aspect-preserving resize so the width is exactly `output_width`
     (LANCZOS; height rounded to the nearest int, minimum 1px). Step 2: if
-    the resized height exceeds `max_output_height`, center-crop to the max;
-    if it is below `min_output_height`, center-pad with black to the min.
-    Otherwise the resized image is returned unchanged.
+    the resized height is below `min_output_height`, center-pad with black
+    to the min. Otherwise the resized image is returned unchanged.
+
+    NEVER center-crops — and returns the ORIGINAL full-resolution piece
+    when the resize would exceed `max_output_height`. Such panels are
+    mega-groups that `_split_panel` kept whole on purpose (no structurally
+    valid internal gutter — continuous action art). The video stage pans
+    tall panels top-to-bottom (see recap_video.compute_pan: "Never
+    centre-crops away content"), so the PNG must keep the full art at full
+    resolution; the old center-crop showed only the middle ~10-30% of the
+    page. Full-res also renders crisper (800 -> 1080 upscale instead of
+    390 -> 1080).
 
     Never touches source geometry or AI boundaries — it only reshapes the
     already-cropped PNG that is written to disk.
@@ -195,10 +205,11 @@ def normalize_panel_image(piece: Image.Image, *,
         raise ValueError("max_output_height must be >= min_output_height")
     scale = output_width / float(piece.width)
     scaled_h = max(1, int(round(piece.height * scale)))
-    resized = piece.resize((output_width, scaled_h), Image.Resampling.LANCZOS)
     if scaled_h > max_output_height:
-        top = (scaled_h - max_output_height) // 2
-        return resized.crop((0, top, output_width, top + max_output_height))
+        # Mega-panel: the resize would center-crop away art. Keep the
+        # full-resolution crop so the render pans through all of it.
+        return piece
+    resized = piece.resize((output_width, scaled_h), Image.Resampling.LANCZOS)
     if scaled_h < min_output_height:
         canvas = Image.new("RGB", (output_width, min_output_height), (0, 0, 0))
         canvas.paste(resized, (0, (min_output_height - scaled_h) // 2))

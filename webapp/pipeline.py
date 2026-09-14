@@ -181,12 +181,30 @@ def _segment_panels(job: Job, **kwargs: Any) -> None:
     model = kwargs.get("model") or job.config.get("model", "") or None
     base_url = kwargs.get("base_url") or job.config.get("endpoint", "") or None
     cf_account_id = kwargs.get("cf_account_id") or job.config.get("cf_account_id", "") or None
-    _plan, artifact, _used = gp.run_guided(
+    plan, artifact, used_fallback = gp.run_guided(
         strip, session_dir, backend_name=backend_name,
         cache_dir=cache, force=False, fallback=True,
         api_key=api_key or None, model=model,
         base_url=base_url, cf_account_id=cf_account_id,
         validate=True)
+    # CLI parity logging: surface provenance so silent fallback is never
+    # mistaken for a narrated run.
+    try:
+        prov = getattr(plan, "provenance", "unknown")
+        n_empty = sum(1 for e in getattr(plan, "entries", []) if not (e.narration or "").strip())
+        job.log("INFO",
+                f"segmentation backend={backend_name} provenance={prov} "
+                f"fallback={used_fallback} panels={len(artifact.panels if artifact else [])} "
+                f"empty_narration={n_empty}",
+                "segment_panels")
+        if prov == "fallback" or used_fallback:
+            job.log("WARNING",
+                    "AI pre-read unavailable (no key/quota/low confidence) — "
+                    "used deterministic gutter detector; narration will be empty. "
+                    "Re-run with backend=xkiro and a valid key for narration.",
+                    "segment_panels")
+    except Exception:
+        pass
     assert artifact is not None
     # Phase 2.5: deterministic panel-content filter (blank removal +
     # text-only demotion to context_only). Runs on EVERY build, inside the
@@ -379,10 +397,27 @@ def _continuation_link(session: str) -> str | None:
         return None
 
 
-def _panel_from_dict(p: dict, strip_width: int | None) -> Any:
-    """Build a CutPanel from a live Panel-Review dict (AI or custom)."""
+def _panel_from_dict(p: dict, strip_width: int | None,
+                     session_dir: Path | None = None) -> Any:
+    """Build a CutPanel from a live Panel-Review dict (AI or custom).
+
+    Carries the PNG geometry (output_width/output_height) through: without
+    them the render's build_timeline falls back to source-strip geometry
+    (strip_width x y-range) while the PNG on disk is the normalized crop —
+    ffmpeg then stretches a 390x800 image over a 1080x7561 frame. Custom
+    panels (duplicate/split/merge) never carry output dims, so the real PNG
+    size is read from disk as the authoritative fallback.
+    """
     from guided_cutter import CutPanel
     try:
+        ow = p.get("output_width")
+        oh = p.get("output_height")
+        if (ow is None or oh is None) and session_dir is not None:
+            img = session_dir / p.get("image_file", "")
+            if img.is_file():
+                from PIL import Image as _Image
+                with _Image.open(img) as im:
+                    ow, oh = im.size
         return CutPanel(
             id=p["id"], panel_index=p.get("panel_index", 0),
             y_start=p.get("y_start", 0), y_end=p.get("y_end", 0),
@@ -390,10 +425,32 @@ def _panel_from_dict(p: dict, strip_width: int | None) -> Any:
             panel_type=p.get("panel_type", "panel"),
             confidence=p.get("confidence", 1.0),
             image_file=p.get("image_file", ""),
+            output_width=ow if ow else None,
+            output_height=oh if oh else None,
+            blank_score=float(p.get("blank_score", 0.0) or 0.0),
+            blank_flag=p.get("blank_flag", "normal") or "normal",
             context_only=bool(p.get("context_only", False)),
             strip_width=strip_width)
     except Exception:
         return None
+
+
+def _fill_output_dims(q: Any, img_path: Path) -> Any:
+    """Ensure q.output_width/output_height match the PNG on disk.
+
+    Baseline artifacts (or hand-written test fixtures) can carry None
+    output dims; build_timeline would then assume source-strip geometry
+    (strip_width x y-range) for a normalized PNG and ffmpeg would stretch
+    it — so the real PNG size is the authoritative fallback.
+    """
+    if q.output_width is None or q.output_height is None:
+        try:
+            from PIL import Image as _Image
+            with _Image.open(img_path) as im:
+                q.output_width, q.output_height = im.size
+        except Exception:
+            pass
+    return q
 
 
 def _merge_continuation(job: Job, **kwargs: Any) -> None:
@@ -497,7 +554,8 @@ def _merge_continuation(job: Job, **kwargs: Any) -> None:
         merged_count = 0
         for p in (live_panels or [None] * 0) if live_panels is not None else []:
             # live dict panels (AI + custom), in the user's confirmed order
-            q = _panel_from_dict(p, strip_width=src_width)
+            q = _panel_from_dict(p, strip_width=src_width,
+                                 session_dir=src_dir)
             if q is None:
                 continue
             q.id = f"s{src_session[:8]}_{p['id']}"
@@ -506,6 +564,7 @@ def _merge_continuation(job: Job, **kwargs: Any) -> None:
             dst_img = session_dir / q.image_file
             if src_img.is_file() and not dst_img.is_file():
                 shutil.copyfile(src_img, dst_img)
+            _fill_output_dims(q, dst_img if dst_img.is_file() else src_img)
             for ext in (".mp3", ".wav"):
                 src_audio = src_dir / "audio" / f"{p['id']}{ext}"
                 if src_audio.is_file():
@@ -526,6 +585,7 @@ def _merge_continuation(job: Job, **kwargs: Any) -> None:
                 dst_img = session_dir / q.image_file
                 if src_img.is_file() and not dst_img.is_file():
                     shutil.copyfile(src_img, dst_img)
+                _fill_output_dims(q, src_img if src_img.is_file() else dst_img)
                 for ext in (".mp3", ".wav"):
                     src_audio = src_dir / "audio" / f"{p.id}{ext}"
                     if src_audio.is_file():
@@ -554,6 +614,7 @@ def _merge_continuation(job: Job, **kwargs: Any) -> None:
             dst_img = session_dir / q.image_file
             if not dst_img.is_file():
                 shutil.copyfile(src_img, dst_img)
+            _fill_output_dims(q, dst_img if dst_img.is_file() else src_img)
         for ext in (".mp3", ".wav"):
             src_audio = session_dir / "audio" / f"{p.id}{ext}"
             if src_audio.is_file():
@@ -645,6 +706,12 @@ def _build_script(job: Job, **kwargs: Any) -> None:
                 f"narration overrides applied to script panels={n_ov}",
                 "build_script")
     job.log("INFO", f"narration script chars={len(script)}", "build_script")
+    if not script.strip():
+        job.log("WARNING",
+                "narration script is empty (offline fallback or no AI text). "
+                "Video will be silent; re-run segmentation with backend=xkiro "
+                "and a valid key, or add narration in Narration Studio.",
+                "build_script")
 
 
 def _tts_audio(job: Job, **kwargs: Any) -> None:
@@ -1175,6 +1242,41 @@ def _tb_tail() -> str:
     return traceback.format_exc()[-300:]
 
 
+def _record_automation_step(session: str, pipeline_name: str,
+                              duration_s: float = 0.0,
+                              warnings: list[str] | None = None) -> None:
+    """Best-effort checkpoint ledger write for automation runs.
+
+    Automation (`run_job`) previously never touched pipeline_state.json, so
+    the Pipeline view stayed idle after a successful Generate run. Step mode
+    already records via _run_steps; this mirrors that (success path only).
+    Never raises.
+    """
+    try:
+        from . import checkpoint as cp
+        step_no = cp.BY_PIPELINE_NAME.get(pipeline_name, {}).get("step")
+        if step_no is None:
+            return  # e.g. merge_continuation has no user-facing step
+        artifacts = cp.BY_STEP[step_no].get("produces", [])
+        problems, soft = cp.validate_artifacts(session, step_no)
+        if problems:
+            # Don't mark broken output as success; leave ledger untouched
+            # (the job log already carries the failure).
+            return
+        cp.record_step(session, step_no, status="success",
+                       artifacts=artifacts, duration_s=duration_s,
+                       warnings=(warnings or []) + (soft or []))
+        # Mark ledger mode so the Pipeline view shows "automation".
+        try:
+            state = cp.load_state(session)
+            if state.get("mode") != "automation":
+                cp.save_state(session, {**state, "mode": "automation"})
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
 def run_job(job_id: str, **kwargs: Any) -> None:
     job = store.get(job_id)
     if job is None:
@@ -1193,6 +1295,24 @@ def run_job(job_id: str, **kwargs: Any) -> None:
         job.log("INFO", f"resuming from stage {start_stage!r} "
                         "(earlier stages skipped; cached outputs on disk "
                         "are reused)", start_stage)
+        # Resume parity with step mode: a fresh job has empty job.panels.
+        # Later stages (apply_order/gemini_narration/...) depend on it, so
+        # rehydrate from the durable panels artifact on disk.
+        try:
+            session = job.config.get("session", "")
+            if session:
+                order_idx = names.index("apply_order") if "apply_order" in names else 999
+                start_idx = names.index(start_stage)
+                if start_idx > names.index("segment_panels"):
+                    _rehydrate_panels(job, session)
+                    # apply_confirmed may have a confirmed review on disk
+                    if start_idx > order_idx or start_idx > names.index("apply_confirmed"):
+                        try:
+                            _apply_confirmed(job, **kwargs)
+                        except Exception:
+                            pass
+        except Exception as exc:
+            job.log("WARNING", f"resume rehydration failed: {exc}", start_stage)
     try:
         started = start_stage is None
         for name, fn in PIPELINES[job.kind]:
@@ -1206,16 +1326,31 @@ def run_job(job_id: str, **kwargs: Any) -> None:
             if time.time() - t0 > JOB_TIMEOUT_S:
                 raise StageTimeoutError(
                     f"job exceeded {JOB_TIMEOUT_S}s total budget")
+            t_stage = time.time()
             if name == "render_video":
                 _stage_continue_on_fail(job, name,
                                        lambda fn=fn: fn(job, **kwargs))
             else:
                 _stage(job, name, lambda fn=fn: fn(job, **kwargs))
-        job.status = JobStatus.COMPLETED
-        job.stage = "done"
-        job.finished_at = time.time()
-        job.touch()
-        job.log("INFO", "generation completed")
+            # If the stage failed/cancelled, _stage already marked the job;
+            # stop recording further automation checkpoints.
+            if job.status in (JobStatus.FAILED, JobStatus.CANCELLED):
+                break
+            try:
+                warnings: list[str] = []
+                if name == "render_video" and job.outputs.get("render_error"):
+                    warnings.append(job.outputs["render_error"][:200])
+                _record_automation_step(job.config.get("session", ""),
+                                        name, duration_s=time.time() - t_stage,
+                                        warnings=warnings)
+            except Exception:
+                pass
+        if job.status not in (JobStatus.FAILED, JobStatus.CANCELLED):
+            job.status = JobStatus.COMPLETED
+            job.stage = "done"
+            job.finished_at = time.time()
+            job.touch()
+            job.log("INFO", "generation completed")
     except CancelledError:
         pass
     except Exception:

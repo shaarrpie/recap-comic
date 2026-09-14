@@ -113,7 +113,7 @@ async def index():
 SETTINGS_FIELDS = ("backend", "model", "api_key", "endpoint", "cf_account_id",
                    "tts", "voice", "style", "mode")
 _SETTINGS_DEFAULTS = {
-    "backend": "gemini", "model": "", "api_key": "", "endpoint": "",
+    "backend": "xkiro", "model": "", "api_key": "", "endpoint": "",
     "cf_account_id": "", "tts": "edge", "voice": "en-US-AriaNeural",
     "style": "recap", "mode": "automation",
 }
@@ -155,7 +155,7 @@ def _settings_api_key() -> str:
 
 
 class SettingsBody(BaseModel):
-    backend: str = "gemini"
+    backend: str = "xkiro"
     model: str = ""
     api_key: str = ""
     endpoint: str = ""
@@ -349,7 +349,9 @@ class RunRequest(BaseModel):
     rate: int = 0    # edge-tts rate offset in %
     pitch: int = 0   # edge-tts pitch offset in Hz
     style: str = "recap"
-    backend: str = "none"
+    # CLI parity: guided run defaults to xkiro (Qwen+Mistral). "none" is
+    # offline deterministic CV only. Empty string means "use saved settings".
+    backend: str = "xkiro"
     api_key: str = ""
     model: str = ""
     endpoint: str = ""
@@ -411,24 +413,47 @@ async def run(body: RunRequest):
                 and j.status.value in ("queued", "running")):
             raise HTTPException(409, "a job is already running for this "
                                      "session; cancel it or wait for it")
+    # CLI parity: empty backend means "use saved Settings, else env default".
+    # Persist non-secret backend/model/endpoint so retries/resumes reuse
+    # the same config even when the frontend omits them. api_key itself is
+    # never stored (jobs.py redacts it); workers re-resolve via
+    # settings.json -> env on every stage (see pipeline._validate_config).
+    saved = _read_settings()
+    backend = (body.backend or "").strip() or saved.get("backend", "") or _default_backend()
+    backend = backend.lower()
+    if backend == "local":
+        backend = "ollama"
+    model = (body.model or "").strip() or saved.get("model", "")
+    endpoint = (body.endpoint or "").strip() or saved.get("endpoint", "")
+    cf_account_id = (body.cf_account_id or "").strip() or saved.get("cf_account_id", "")
+    # Frontend may still send legacy "gemini" default with no key while the
+    # server has an xkiro key configured (CLI .env flow). Prefer the working
+    # backend over a guaranteed validate_config failure.
+    if backend == "gemini" and not (body.api_key or saved.get("api_key", "").strip()):
+        from adapters import ai_models as _ai
+        if _ai.api_key_from_env():
+            backend = _default_backend()
     job = store.create("generate", {
         "session": body.session,
         "strip_file": strip_file,
         "order": body.order,
         "tts": body.tts, "voice": body.voice, "style": body.style,
         "rate": body.rate, "pitch": body.pitch,
-        "backend": body.backend,
+        "backend": backend,
+        "model": model,
+        "endpoint": endpoint,
+        "cf_account_id": cf_account_id,
         "start_stage": body.start_stage,
         "continue_from": body.continue_from,
     })
-    log.info("job=%s created kind=generate session=%s order=%s",
+    log.info("job=%s created kind=generate session=%s order=%s backend=%s",
              job.id, body.session,
-             "user" if body.order else "default")
+             "user" if body.order else "default", backend)
     kwargs = {
         "api_key": body.api_key or None,
-        "model": body.model or None,
-        "base_url": body.endpoint or None,
-        "cf_account_id": body.cf_account_id or None,
+        "model": model or None,
+        "base_url": endpoint or None,
+        "cf_account_id": cf_account_id or None,
     }
     threading.Thread(target=pipeline.run_job, args=(job.id,),
                      kwargs=kwargs, daemon=True).start()
@@ -906,7 +931,7 @@ class StepRunRequest(BaseModel):
     tts: str = "edge"
     voice: str = "en-US-AriaNeural"
     style: str = "recap"
-    backend: str = "none"
+    backend: str = "xkiro"
     api_key: str = ""
     model: str = ""
     endpoint: str = ""

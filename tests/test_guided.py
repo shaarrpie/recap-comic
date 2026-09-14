@@ -295,12 +295,18 @@ def test_panel_output_size_is_normalized(tmp_path: Path) -> None:
 
 
 def test_panel_output_size_clamps_tall_and_short(tmp_path: Path) -> None:
-    """One panel outside the bounds on each side: tall crops to 800, short pads to 760."""
+    """Short pads to 760; tall panels NEVER center-crop (full-res passthrough).
+
+    A tall panel is a continuous-art mega-group the splitter kept whole;
+    center-cropping it to 800px would discard most of the art, so the
+    normalization keeps the FULL-resolution crop and the video stage pans
+    top-to-bottom through it (recap_video.compute_pan contract).
+    """
     strip = tmp_path / "strip.png"
     # Tall panel: 800px-wide crop, 1600px tall -> scaled to 390x780 (in bounds,
     # so the direct unit check below covers the true out-of-bounds paths).
     make_strip(2000, panels=[(0, 1600), (1620, 1720)],
-               gutters=[(1600, 1620)]).save(strip)
+                gutters=[(1600, 1620)]).save(strip)
     out = tmp_path / "panels"
     plan = plan_from([(0, 1600), (1620, 1720)], height=2000)
     artifact = gc.guided_cut(
@@ -313,21 +319,24 @@ def test_panel_output_size_clamps_tall_and_short(tmp_path: Path) -> None:
         assert 760 <= h <= 800
 
     # True out-of-bounds paths on the pure helper (deterministic, no I/O):
+    # tall (4000px -> resized 1950px > 800) keeps the FULL-RES crop —
+    # never a center crop, never art loss.
     tall = Image.new("RGB", (800, 4000), (120, 30, 30))
-    assert gc.normalize_panel_image(tall).size == (390, 800)
+    assert gc.normalize_panel_image(tall).size == (800, 4000)
     short = Image.new("RGB", (800, 100), (30, 120, 30))
     assert gc.normalize_panel_image(short).size == (390, 760)
-    # Legacy opt-out keeps the raw crop size.
+    # A tall panel under a high max_output_height still resizes (no crop
+    # needed): 800x4000 -> 390x1950 at width 390.
     raw = gc.normalize_panel_image(tall, max_output_height=5000,
                                    min_output_height=1)
-    assert raw.size[0] == 390
+    assert raw.size == (390, 1950)
 
 
 def test_panel_output_normalize_opt_out_keeps_fullres(tmp_path: Path) -> None:
     """normalize_output=False restores legacy full-resolution crops."""
     strip = tmp_path / "strip.png"
     make_strip(1700, panels=[(0, 800), (820, 1620)],
-               gutters=[(800, 820)]).save(strip)
+                gutters=[(800, 820)]).save(strip)
     out = tmp_path / "panels"
     plan = plan_from([(0, 800), (820, 1620)], height=1700)
     artifact = gc.guided_cut(
@@ -339,6 +348,47 @@ def test_panel_output_normalize_opt_out_keeps_fullres(tmp_path: Path) -> None:
         assert (w, h) == (800, p.y_end - p.y_start)
         assert p.output_width is None
         assert p.output_height is None
+
+
+def test_mega_panel_keeps_full_art_for_video_pan(tmp_path: Path) -> None:
+    """A continuous-art mega-group the splitter keeps whole must NOT be
+    center-cropped: the panel PNG keeps the full art so the video stage
+    pans top-to-bottom (recap_video.compute_pan: "Never centre-crops away
+    content"). Regression for the webapp recap videos that showed only the
+    middle ~10-30% of full-bleed action pages.
+
+    Fixture: one 4000px continuous art region (no gutters inside), a
+    normal panel below it, and a real gutter between them so the plan's
+    two entries survive the merge step (continuous art between the two
+    entries does not exist there).
+    """
+    strip = tmp_path / "strip.png"
+    make_strip(4700, panels=[(0, 4000), (4120, 4600)],
+                gutters=[(4000, 4120)]).save(strip)
+    out = tmp_path / "panels"
+    plan = plan_from([(0, 4000), (4120, 4600)], height=4700)
+    artifact = gc.guided_cut(strip, plan, out_dir=out)
+    mega = next(p for p in artifact.panels if p.y_end - p.y_start > 3000)
+    # PNG on disk keeps the full-resolution crop: 800px wide, ALL of the
+    # 4000px art (the boundary may snap into the adjacent gutter midpoint,
+    # hence >=), not a 390x800 center crop.
+    w, h = _panel_png_size(out, mega.image_file)
+    assert w == 800
+    assert h >= 4000
+    # Recorded geometry matches the PNG bytes actually written.
+    assert mega.output_width == 800
+    assert mega.output_height == h
+    # compute_pan gives a top-to-bottom pan over the whole art.
+    from recap_video import compute_pan
+    pan = compute_pan(mega.output_width, mega.output_height)
+    assert pan.kind == "pan_down"
+    assert pan.travel_px > 3000
+    # The normal panel below still normalizes to 390x[760,800].
+    normal = next(p for p in artifact.panels
+                  if 3000 >= p.y_end - p.y_start > 100)
+    nw, nh = _panel_png_size(out, normal.image_file)
+    assert nw == 390
+    assert 760 <= nh <= 800
 
 
 def test_phase1_cache_avoids_recall(tmp_path: Path) -> None:

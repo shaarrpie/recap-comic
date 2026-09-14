@@ -153,6 +153,16 @@ def test_continuation_merges_sequence(client, monkeypatch):
     # ids namespaced (no collisions across strips)
     ids = [p["id"] for p in merged["panels"]]
     assert len(ids) == len(set(ids))
+    # PNG geometry carried through the merge: output_width/output_height
+    # must match the image bytes on disk, else the render stretches the
+    # panel to source-strip geometry (390x800 png drawn as 800xY frame).
+    from PIL import Image as _Img
+    for p in merged["panels"]:
+        f = OUTPUT_DIR / s2 / p["image_file"]
+        with _Img.open(f) as im:
+            w, h = im.size
+        assert p["output_width"] == w, (p["id"], p["output_width"], w)
+        assert p["output_height"] == h, (p["id"], p["output_height"], h)
 
     # Strip 3: run with continuation on strip 2 -> merged with 1+2
     s3 = _upload(client, seed=3)
