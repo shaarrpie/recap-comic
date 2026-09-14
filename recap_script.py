@@ -85,12 +85,15 @@ literal alt-text by a vision model) and its dialogue. The descriptions are
 clipped and repetitive — your job is to see THROUGH them to the story.
 
 STRUCTURE (mandatory):
-1. hook — open on the most dramatic moment with a question or a bang ("How
-   did it come to this?"). Do NOT start at panel 1.
-2. setup — rewind; establish who/where/why in 1-3 sentences.
+1. hook — assigned to the FIRST panel: open with the dramatic question or
+   cold-open stakes over the chapter's opening image ("Jinwoo was an
+   ordinary office worker... until THIS happened."). Do not start by
+   describing panel 1 literally.
+2. setup — the next 1-3 lines: establish who/where/why.
 3. escalation — the bulk: causality ("because X, Y"), stakes, names,
    reactions. Connect panels; never describe backgrounds.
-4. cliffhanger — end on the chapter's final beat, unresolved.
+4. cliffhanger — assigned to the LAST panel you use: end on the chapter's
+   final beat, unresolved.
 
 RULES:
 - Use character NAMES from the dialogue/memory, not "a person" or "a man".
@@ -113,8 +116,10 @@ Return STRICT JSON, exactly:
               "part": "hook|setup|escalation|cliffhanger",
               "quote": "<one verbatim dialogue line to voice as a "
                        "character, or null>"}}]}}
-Every panel_index MUST come from the list. Lines MUST be in non-decreasing
-panel_index order. 3-12 lines total, never one per panel.
+Every panel_index MUST come from the list. Lines MUST be listed in
+non-decreasing panel_index order (the narrator speaks in panel order;
+hook/setup/escalation/cliffhanger are TONES, not a reordering of the
+video). 3-12 lines total, never one per panel.
 """
 
 MAX_PANEL_CHARS = 4_000     # per-panel description cap in the prompt
@@ -215,7 +220,6 @@ def _parse_response(raw: str, panels: list[dict]) -> dict | None:
         return None
     idx_by_index = {p["panel_index"]: p for p in panels}
     parsed: list[dict] = []
-    last_idx = -1
     for ln in lines:
         if not isinstance(ln, dict):
             continue
@@ -225,9 +229,9 @@ def _parse_response(raw: str, panels: list[dict]) -> dict | None:
             continue
         if not isinstance(text, str) or is_non_lexical(text):
             continue
-        if idx < last_idx:      # enforce non-decreasing order
-            continue
-        last_idx = idx
+        text = " ".join(text.split())
+        if text[-1:] not in ".!?…\"'”’":
+            text += "."                    # TTS-ready lines in script.json
         part = ln.get("part")
         if part not in STRUCTURE:
             part = "escalation"
@@ -241,6 +245,9 @@ def _parse_response(raw: str, panels: list[dict]) -> dict | None:
             "part": part,
             "quote": quote,
         })
+    # The narrator speaks in panel order (one TTS clip per panel). A model
+    # that lists lines out of order is corrected by sorting, not rejected.
+    parsed.sort(key=lambda ln: ln["panel_index"])
     return {"lines": parsed} if len(parsed) >= 2 else None
 
 
