@@ -939,9 +939,11 @@ class StepRunRequest(BaseModel):
 
 
 def _step_credentials(body: StepRunRequest) -> dict:
-    return {"api_key": body.api_key or None, "model": body.model or None,
-            "base_url": body.endpoint or None,
-            "cf_account_id": body.cf_account_id or None}
+    saved = _read_settings()
+    return {"api_key": body.api_key or None,
+            "model": (body.model or "").strip() or saved.get("model", "") or None,
+            "base_url": (body.endpoint or "").strip() or saved.get("endpoint", "") or None,
+            "cf_account_id": (body.cf_account_id or "").strip() or saved.get("cf_account_id", "") or None}
 
 
 def _validate_step_stage(stage: str | None, allow_none: bool = False
@@ -1022,6 +1024,26 @@ async def pipeline_step_detail(session: str, step_no: int):
     return {"step": _cp.BY_STEP[step_no], "entry": entry, "events": events}
 
 
+def _resolve_step_config(body: StepRunRequest) -> dict:
+    """Merge step request with saved Settings (CLI parity).
+
+    Empty backend/model/endpoint fall back to server settings.json, then to
+    the xkiro default. The frontend always sends explicit values, but direct
+    API calls and older browsers may omit them.
+    """
+    saved = _read_settings()
+    backend = (body.backend or "").strip() or saved.get("backend", "") or _default_backend()
+    backend = backend.lower()
+    if backend == "local":
+        backend = "ollama"
+    return {
+        "backend": backend,
+        "model": (body.model or "").strip() or saved.get("model", ""),
+        "endpoint": (body.endpoint or "").strip() or saved.get("endpoint", ""),
+        "cf_account_id": (body.cf_account_id or "").strip() or saved.get("cf_account_id", ""),
+    }
+
+
 @app.post("/api/pipeline/{session}/run-step")
 async def pipeline_run_step(session: str, body: StepRunRequest):
     """Run ONE stage (Step-by-Step): worker executes it, checkpoints,
@@ -1036,9 +1058,12 @@ async def pipeline_run_step(session: str, body: StepRunRequest):
         raise HTTPException(400, "no runnable next step (ledger empty?)")
     _validate_step_stage(stage)
     step_no = _cp.BY_PIPELINE_NAME[stage]["step"]
+    resolved = _resolve_step_config(body)
     cfg = {"session": session, "strip_file": _strip_file_for(session),
            "stage": stage, "tts": body.tts, "voice": body.voice,
-           "style": body.style, "backend": body.backend,
+           "style": body.style, "backend": resolved["backend"],
+           "model": resolved["model"], "endpoint": resolved["endpoint"],
+           "cf_account_id": resolved["cf_account_id"],
            "start_stage": stage, "end_stage": stage}
     job = store.create("pipeline_step", cfg)
     # persist mode on the ledger
@@ -1065,10 +1090,13 @@ async def pipeline_run_until(session: str, body: StepRunRequest):
         "step") or cur
     from_stage = _cp.BY_STEP[from_step]["pipeline_name"]
     _guard_no_active_step_job(session)
+    resolved = _resolve_step_config(body)
     cfg = {"session": session, "strip_file": _strip_file_for(session),
            "start_stage": from_stage, "end_stage": until or "create_editor_project",
            "tts": body.tts, "voice": body.voice, "style": body.style,
-           "backend": body.backend}
+           "backend": resolved["backend"], "model": resolved["model"],
+           "endpoint": resolved["endpoint"],
+           "cf_account_id": resolved["cf_account_id"]}
     job = store.create("pipeline_until", cfg)
     _cp.save_state(session, {**state, "mode": "automation"})
     _cp.log_event(session, step=from_step, event_type="user_action",

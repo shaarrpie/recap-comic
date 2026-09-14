@@ -910,13 +910,13 @@ async function vStudio(){
     <div>
       <div class="lbl">manhwa recap studio</div>
       <h1 class="h-disp">One tall strip in.<br><span class="go">One narrated recap out.</span></h1>
-      <p class="lede">Automation segments the strip, Gemini narrates it, TTS voices it, FFmpeg renders a 9:16 recap — then you fix only what you don't like in the editor.</p>
+      <p class="lede">Automation segments the strip, AI narrates it, TTS voices it, FFmpeg renders a 9:16 recap — then you fix only what you don't like in the editor.</p>
       <div class="dropzone reveal" id="dz" role="button" tabindex="0" aria-label="Drop strip images or click to choose">
         <div class="stripmark" aria-hidden="true"></div>
         <div>
           <h3>Drop strips here</h3>
           <p>PNG · JPG · WebP — add one or more full-height chapter strips. Nothing runs until you press Run.</p>
-          <div class="fmts"><span class="chip">multiple strips</span><span class="chip">gemini narration</span><span class="chip">edge-tts</span><span class="chip">9:16 render</span></div>
+          <div class="fmts"><span class="chip">multiple strips</span><span class="chip">AI narration</span><span class="chip">edge-tts</span><span class="chip">9:16 render</span></div>
           <div class="modeToggle" id="modeToggle" title="Automation runs every stage end-to-end. Manual stops after upload — you crop, review, narrate and render step by step.">
             <button class="mtBtn ${store.settings.mode!=="manual"?"on":""}" data-mode="automation" id="mtAuto">⚡ Automation</button>
             <button class="mtBtn ${store.settings.mode==="manual"?"on":""}" data-mode="manual" id="mtManual">✂ Manual</button>
@@ -957,7 +957,7 @@ async function vStudio(){
         <div class="lbl">System</div>
         <div class="statrow" style="margin-top:12px" id="sysStats">
           <div class="stat"><div class="num grn" id="stSess">${projects.length?projects.length:store.recent.length}</div><div class="lbl" style="margin-top:4px">sessions</div></div>
-          <div class="stat"><div class="num" id="stG">…</div><div class="lbl" style="margin-top:4px">gemini</div></div>
+          <div class="stat"><div class="num" id="stG">…</div><div class="lbl" style="margin-top:4px">AI</div></div>
         </div>
         <p style="margin-top:12px;font-size:12.5px;color:var(--txt3)" id="sysModel"></p>
       </div>
@@ -984,10 +984,11 @@ async function vStudio(){
   </section>`;
   /* system status from the real /api/config */
   api.config().then(c=>{
-    $("#stG").textContent=c.gemini_configured?"✓":"—";
-    $("#stG").style.color=c.gemini_configured?"var(--acc)":"var(--coral)";
-    $("#sysModel").textContent=c.gemini_configured?`Active model: ${c.model}`:"No Gemini key configured — add one in Settings or .env.";
-    const b=$("#gBadge");b.textContent=`gemini: ${c.gemini_configured?c.model:"not set"}`;b.classList.toggle("ok",!!c.gemini_configured);
+    const ok=c.ai_configured||c.gemini_configured;
+    $("#stG").textContent=ok?"✓":"—";
+    $("#stG").style.color=ok?"var(--acc)":"var(--coral)";
+    $("#sysModel").textContent=ok?`Active backend: ${c.backend||"xkiro"}`:"No AI key configured — add one in Settings or .env.";
+    const b=$("#gBadge");b.textContent=`AI: ${ok?(c.backend||c.model):"not set"}`;b.classList.toggle("ok",!!ok);
   }).catch(()=>{});
   /* dropzone wiring */
   const dz=$("#dz"),fi=$("#fileIn");
@@ -2734,7 +2735,7 @@ async function vSettings(){
   </div>
   <div style="display:flex;gap:10px;margin-top:20px">
     <button class="btn acc" id="sSave">Save settings</button>
-    <span class="gbadge" id="sG">checking gemini…</span>
+    <span class="gbadge" id="sG">checking AI…</span>
   </div>
   <p style="margin-top:14px;font-size:12px;color:var(--txt3)">Keys are persisted in webapp_output/settings.json server-side AND in this browser's localStorage, and are never written into job logs.</p>`;
   /* pre-fill the key field from the server (survives browser cache clears);
@@ -2752,7 +2753,7 @@ async function vSettings(){
       toast("Settings saved in browser only — server save failed: "+e.message,"warn");
     }
   };
-  api.config().then(c=>{const b=$("#sG");b.textContent=c.gemini_configured?`gemini ready · ${c.model}`:"gemini not configured";b.classList.toggle("ok",c.gemini_configured)});
+  api.config().then(c=>{const ok=c.ai_configured||c.gemini_configured;const b=$("#sG");b.textContent=ok?`AI ready · ${c.backend||c.model}`:"AI not configured";b.classList.toggle("ok",ok)});
 }
 /* ---------------- boot ---------------- */
 if(store.session)$("#projBtn").textContent=store.names?.[store.session]||store.session;
@@ -2807,7 +2808,7 @@ const CIN = {
 
 const CIN_STAGES = [
   { id: 'segment_panels',    name: 'Panel Detection',  desc: 'AI segments the strip into panels', emoji: '🔍' },
-  { id: 'gemini_narration',  name: 'AI Narration',     desc: 'Gemini writes narration scripts',  emoji: '✍️' },
+  { id: 'gemini_narration',  name: 'AI Narration',     desc: 'AI writes narration scripts',  emoji: '✍️' },
   { id: 'tts_audio',         name: 'TTS Voice',        desc: 'Edge/Google TTS renders audio',    emoji: '🎤' },
   { id: 'render_video',      name: 'Base Render',      desc: 'FFmpeg assembles the base video',  emoji: '🖥' },
   { id: 'cinematic_render',  name: 'Cinematic Pass',   desc: 'Adds effects, grade, transitions', emoji: '🎬' },
