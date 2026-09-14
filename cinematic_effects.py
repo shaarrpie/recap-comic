@@ -32,6 +32,7 @@ import math
 import re
 import subprocess
 import sys
+import traceback
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -540,10 +541,11 @@ def make_cinematic_video(
     else:
         raise ValueError(f"Unexpected panels.json format in {panels_json}")
 
-    # Filter blanks, sort by panel_index
+    # Filter blanks and context-only (text-bubble) panels, sort by panel_index
     panels = [
         p for p in panels
         if p.get("blank_flag", "normal") != "blank"
+        and not p.get("context_only", False)
         and (p.get("output_height") or (p.get("y_end", 1) - p.get("y_start", 0))) > 0
     ]
     panels.sort(key=lambda p: (p.get("panel_index", 0), p.get("y_start", 0)))
@@ -820,7 +822,6 @@ def _cli() -> None:
     except Exception as exc:
         print(f"\nERROR: {exc}", file=sys.stderr)
         if args.verbose:
-            import traceback
             traceback.print_exc()
         sys.exit(1)
 

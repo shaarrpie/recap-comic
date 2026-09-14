@@ -258,6 +258,7 @@ def run_guided(
     min_output_height: int = 760,
     max_output_height: int = 800,
     normalize_output: bool = True,
+    filter_panels: bool = False,
     fallback: bool = True,
     force: bool = False,
     dry_run: bool = False,
@@ -275,6 +276,10 @@ def run_guided(
     [`min_output_height`, `max_output_height`] (see
     guided_cutter.normalize_panel_image); source coordinates are untouched.
     Pass normalize_output=False for legacy full-resolution crops.
+    filter_panels=True runs panel_filter on the fresh panels.json right
+    after the cut (Phase 2.5): blank panels are removed and text-only
+    panels are demoted to context_only=True (kept for story context, no
+    frame/narration). Deterministic; never re-runs the AI.
     """
     strip = Path(strip)
     if not strip.is_file():
@@ -362,4 +367,19 @@ def run_guided(
     log.info("Phase-2 starting guided_cut")
     artifact = guided_cut(strip, plan, out_dir, config=config, force=force, validate=validate)
     log.info("Phase-2 complete panels=%d", len(artifact.panels))
+    if filter_panels and artifact.panels:
+        # Phase 2.5: deterministic panel-content filter. In-place on the
+        # fresh artifact; failures never kill the run (panels pass through
+        # unfiltered — the safe direction).
+        try:
+            from panel_filter import filter_panels_inplace
+            fres = filter_panels_inplace(out)
+            log.info("Phase-2.5 panel filter: kept=%d context_only=%d "
+                     "removed_blank=%d [%s]",
+                     fres["kept"], fres["context_only"],
+                     fres["removed_blank"], fres["thresholds"]["method"])
+            artifact = CutArtifact.model_validate_json(
+                (Path(out) / "panels.json").read_text("utf-8"))
+        except Exception as exc:  # noqa: BLE001
+            log.warning("panel filter failed (continuing unfiltered): %s", exc)
     return plan, artifact, used_fallback

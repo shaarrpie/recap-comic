@@ -9,7 +9,10 @@ Commands (group `guided`):
   guided cut   STRIP PLAN.json                 Phase 2 only: cut with an
                        existing plan JSON.
   guided run   STRIP                           Phase 1 + Phase 2;
-                       --dry-run stops after Phase 1.
+                        --dry-run stops after Phase 1.
+  guided filter OUT_DIR                        Phase 2.5: remove blank
+                        panels, demote text-only panels to context
+                        (--apply overwrites panels.json).
 
 STRIP may be a PNG/JPG/WebP image or a CBZ/ZIP archive containing
 panel images in reading order. Archives are extracted and stitched
@@ -391,6 +394,10 @@ def guided_run(
     no_normalize: bool = typer.Option(
         False, "--no-normalize-output",
         help="write legacy full-resolution panel crops instead of 390x[760,800]"),
+    filter_panels: bool = typer.Option(
+        False, "--filter/--no-filter",
+        help="run the deterministic panel filter after the cut: blank panels "
+             "removed, text-only panels kept as context (no frame/narration)"),
     dry_run: bool = typer.Option(
         False, "--dry-run",
         help="Phase 1 only: print the plan, do not cut anything"),
@@ -423,6 +430,7 @@ def guided_run(
             min_output_height=min_output_height,
             max_output_height=max_output_height,
             normalize_output=not no_normalize,
+            filter_panels=filter_panels,
             force=force, dry_run=dry_run)
     except (gp.VisionAnalysisError, FileNotFoundError, ValueError) as exc:
         if log.isEnabledFor(logging.DEBUG):
@@ -442,6 +450,74 @@ def guided_run(
     log.info("guided_run complete panels=%d fallback=%s", len(artifact.panels), used)
     typer.echo(f"cut {len(artifact.panels)} panels into {out_dir}")
     typer.echo(f"sidecar: {Path(out_dir) / 'panels.json'}")
+
+
+@guided_app.command("filter")
+def guided_filter(
+    panels_dir: Path = typer.Argument(..., exists=True, file_okay=False,
+        help="out dir from 'guided run/cut' (panels.json + panel_*.png)"),
+    apply: bool = typer.Option(
+        False, "--apply",
+        help="overwrite panels.json in place (backup kept as "
+             "panels_original.json); default writes panels_filtered.json"),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="print decisions only, write nothing"),
+    quarantine: bool = typer.Option(
+        False, "--quarantine",
+        help="move removed-blank panel PNGs to _filtered_panels/ "
+             "(apply mode only)"),
+    strict: bool = typer.Option(
+        False, "--strict", help="IQR fence k=1.0 (catches more text panels)"),
+    loose: bool = typer.Option(
+        False, "--loose", help="IQR fence k=2.5 (catches fewer)"),
+    fixed: bool = typer.Option(
+        False, "--fixed", help="skip adaptive calibration; fixed thresholds"),
+    log_level: str = typer.Option("INFO", "--log-level"),
+) -> None:
+    """Phase 2.5: drop blank panels; demote text-only panels to context.
+
+    Blank panels (blank_flag from the deterministic blank detector) are
+    removed from panels.json. Text-bubble-only panels are kept with
+    context_only=True: their dialogue stays for story context, but the
+    narrator, TTS and video timeline skip them. Thresholds adapt to the
+    session's own panels; deterministic, no AI.
+    """
+    _configure_logging(log_level)
+    from panel_filter import FilterConfig, filter_panels, filter_panels_inplace
+    ov: dict[str, object] = {}
+    if strict and loose:
+        raise typer.BadParameter("--strict and --loose are mutually exclusive")
+    if strict:
+        ov["iqr_k"] = 1.0
+    elif loose:
+        ov["iqr_k"] = 2.5
+    if fixed:
+        ov["min_panels_for_adaptive"] = 999_999
+    cfg = FilterConfig().with_overrides(**ov) if ov else FilterConfig()
+    try:
+        if apply:
+            if dry_run:
+                raise typer.BadParameter(
+                    "--apply and --dry-run are mutually exclusive")
+            result = filter_panels_inplace(str(panels_dir), config=cfg,
+                                            quarantine_pngs=quarantine)
+            out_label = "panels.json (overwritten; backup at panels_original.json)"
+        else:
+            result = filter_panels(str(panels_dir), config=cfg,
+                                   dry_run=dry_run)
+            out_label = "(dry-run)" if dry_run else "panels_filtered.json"
+    except FileNotFoundError as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    th = result["thresholds"]
+    typer.echo(f"calibration: {th['method']} (n={th['n_panels']})")
+    typer.echo(f"panels: {result['total']} total")
+    typer.echo(f"kept: {result['kept']} scene, "
+               f"{result['context_only']} context-only (no frame), "
+               f"{result['removed_blank']} blank removed")
+    if result.get("rescued"):
+        typer.echo(f"rescued: {result['rescued']} (empty-output guard)")
+    typer.echo(f"output: {out_label}")
 
 
 @guided_app.command("narrate")

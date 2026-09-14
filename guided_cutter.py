@@ -143,6 +143,10 @@ class CutPanel(BaseModel):
     blank_score: float = Field(0.0, ge=0.0, le=1.0)
     blank_flag: str = Field("normal")  # normal | suspicious | blank
     blank_reasons: list[str] = Field(default_factory=list)
+    # panel_filter (Phase 2.5) sets this on text-bubble-only panels: their
+    # dialogue stays available for story context, but narration, TTS and
+    # the video timeline skip them (no audio, no video frame).
+    context_only: bool = False
 
 
 class CutArtifact(BaseModel):

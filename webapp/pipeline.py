@@ -188,12 +188,31 @@ def _segment_panels(job: Job, **kwargs: Any) -> None:
         base_url=base_url, cf_account_id=cf_account_id,
         validate=True)
     assert artifact is not None
+    # Phase 2.5: deterministic panel-content filter (blank removal +
+    # text-only demotion to context_only). Runs on EVERY build, inside the
+    # segmentation stage (no checkpoint STEP_SEQUENCE change), and never
+    # kills the run — a failure leaves the panels unfiltered (safe side).
+    try:
+        from guided_cutter import CutArtifact
+        from panel_filter import filter_panels_inplace
+        fres = filter_panels_inplace(session_dir)
+        job.log("INFO",
+                f"panel filter [{fres['thresholds']['method']}]: "
+                f"kept {fres['kept']} scene, "
+                f"{fres['context_only']} context-only, "
+                f"removed {fres['removed_blank']} blank "
+                f"(of {fres['total']} total)", "segment_panels")
+        artifact = CutArtifact.model_validate_json(
+            (session_dir / "panels.json").read_text("utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        job.log("WARNING", f"panel filter skipped ({exc})", "segment_panels")
     job.panels = [{
         "id": p.id, "panel_index": p.panel_index,
         "y_start": p.y_start, "y_end": p.y_end,
         "narration": p.narration, "dialogue": p.dialogue,
         "panel_type": p.panel_type, "confidence": p.confidence,
         "image_file": p.image_file,
+        "context_only": p.context_only,
     } for p in artifact.panels]
     job.log("INFO", f"panels detected count={len(job.panels)}",
             "segment_panels")
@@ -371,6 +390,7 @@ def _panel_from_dict(p: dict, strip_width: int | None) -> Any:
             panel_type=p.get("panel_type", "panel"),
             confidence=p.get("confidence", 1.0),
             image_file=p.get("image_file", ""),
+            context_only=bool(p.get("context_only", False)),
             strip_width=strip_width)
     except Exception:
         return None
@@ -1111,6 +1131,7 @@ def _rehydrate_panels(job: Job, session: str) -> None:
             "narration": q.narration, "dialogue": q.dialogue,
             "panel_type": q.panel_type, "confidence": q.confidence,
             "image_file": q.image_file,
+            "context_only": q.context_only,
         } for q in artifact.panels]
         job.log("INFO", f"panels rehydrated from {p.name} "
                         f"count={len(job.panels)}", "checkpoint")

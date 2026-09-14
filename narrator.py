@@ -64,12 +64,16 @@ def make_script_from_cut(artifact: CutArtifact, style: str = "recap") -> str:
     """Produce a script string from a CutArtifact (panels.json).
 
     Uses the post-cut panel order and narrations so the script maps 1:1 to
-    the output PNGs.
+    the output PNGs. Panels demoted by panel_filter (context_only=True)
+    contribute no spoken line — they are text-bubble-only context panels,
+    already captured by the plan's dialogue on neighbouring panels.
     """
     panels = sorted(artifact.panels, key=lambda p: p.y_start)
     parts = []
     _prev = None
     for p in panels:
+        if getattr(p, "context_only", False):
+            continue
         txt = p.narration.strip()
         if not txt or txt == _prev:
             continue

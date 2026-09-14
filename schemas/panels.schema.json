@@ -183,6 +183,11 @@
             "type": "string"
           },
           "default": []
+        },
+        "context_only": {
+          "type": "boolean",
+          "default": false,
+          "description": "Text-bubble-only panel set by panel_filter: dialogue kept for story context, but skipped by narration, TTS and the video timeline (no audio, no frame)."
         }
       }
     }

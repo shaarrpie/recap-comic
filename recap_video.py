@@ -258,6 +258,11 @@ def build_narration(artifact: CutArtifact, cfg: VideoConfig,
         if getattr(p, "blank_flag", "normal") == "blank":
             # blank crops are never narrated or spoken
             continue
+        if getattr(p, "context_only", False):
+            # text-bubble-only panel (panel_filter): its dialogue is
+            # context for the story reader, but it is never narrated or
+            # spoken — it would produce a redundant TTS line with no scene.
+            continue
         text = script_text(p, include_dialogue=cfg.include_dialogue)
         quotes = [q.strip() for q in re.findall(r"[\"“]([^\"”]+)[\"”]",
                                                 p.dialogue or "")]
@@ -437,6 +442,11 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
             # not reach narration/TTS/render unless the user kept it.
             log.info("skipping panel %s in timeline: blank_flag=blank "
                      "(score %.2f)", p.id, getattr(p, "blank_score", 0.0))
+            continue
+        if getattr(p, "context_only", False):
+            # panel_filter demoted this text-only panel: no video frame.
+            # Its dialogue remains in panels.json for story context.
+            log.info("skipping panel %s in timeline: context_only", p.id)
             continue
         img = (panels_dir / p.image_file).resolve()
         if not img.is_file():
