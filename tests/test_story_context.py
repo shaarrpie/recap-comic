@@ -384,10 +384,12 @@ def test_key_events_capped_newest_kept():
     assert ctx["key_events"][0]["summary"] == f"event {60 - sc._MAX_KEY_EVENTS}"
 
 
-def test_scrub_fences_strips_fences():
-    assert sc.scrub_fences("line\n```json\n{...}\n```\nend") == "line\nend"
+def test_scrub_fences_strips_fence_marker_lines():
+    # only fence-marker lines are removed; content lines survive
+    assert sc.scrub_fences("line\n```json\n{...}\n```\nend") == "line\n{...}\nend"
     assert sc.scrub_fences("clean text") == "clean text"
     assert sc.scrub_fences(None) == ""
+    assert sc.scrub_fences("```entity_update\n{}\n```") == "{}"
 
 
 def test_sanitize_truncates_and_flattens():
