@@ -622,10 +622,10 @@ const store=Object.assign({
   settings:{backend:"xkiro",model:"",tts:"edge",voice:"en-US-AriaNeural",style:"recap",
             api_key:"",endpoint:"",cf_account_id:"",mode:"automation"}
 }, JSON.parse(localStorage.getItem("rc.studio.v1")||"{}"));
+const save=()=>localStorage.setItem("rc.studio.v1",JSON.stringify(store));
 // CLI parity: older browsers may have persisted backend=gemini from before
 // xkiro became the default. Migrate once so automation uses the working key.
-if(store.settings.backend==="gemini"){store.settings.backend="xkiro";save();}
-const save=()=>localStorage.setItem("rc.studio.v1",JSON.stringify(store));
+if(store.settings&&store.settings.backend==="gemini"){store.settings.backend="xkiro";save();}
 /* pipeline stages — the real spine from webapp/pipeline.py (generate) */
 const STAGES=[
   ["validate_config","Check config"],["load_images","Load images"],
