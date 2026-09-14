@@ -3,16 +3,22 @@
 
 Two styles:
   recap   — a single flowing recap script (paragraph form), joining the
-            per-panel narrations in reading order. Suitable for TTS.
+             per-panel narrations in reading order. Suitable for TTS.
   literal — the per-panel narrations concatenated verbatim, separated by
-            blank lines. Useful for subtitles or debugging.
+             blank lines. Useful for subtitles or debugging.
 
 Offline: no API call, no model load. Pure string joining.
+
+Non-lexical strings ("...", "—", "*") the vision model emits for
+blank/silent panels are filtered before joining — a literal "..." was
+being spoken by TTS. For the whole-chapter script pass (real recap
+structure), see recap_script.py; this module is the fallback join.
 """
 from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 
 import strip_analyzer as sa
@@ -20,13 +26,20 @@ from guided_cutter import CutArtifact
 
 log = logging.getLogger(__name__)
 
+_NON_LEXICAL = re.compile(r"^[\s.·•—–\-_*~…!?]*$")
+
+
+def is_non_lexical(text: str | None) -> bool:
+    """True when text carries no speakable words ("...", "—", "", "*")."""
+    return bool(_NON_LEXICAL.match(text or ""))
+
 
 def _flow_join(parts: list[str]) -> str:
     """Join narration fragments into one flowing paragraph."""
     cleaned: list[str] = []
     for p in parts:
         s = p.strip()
-        if not s:
+        if not s or is_non_lexical(s):
             continue
         # Ensure each fragment ends with sentence punctuation so the recap
         # reads naturally when fed to TTS.
@@ -47,7 +60,8 @@ def make_script_from_plan(plan: sa.PanelPlan, style: str = "recap") -> str:
                        lines.
     """
     entries = sorted(plan.entries, key=lambda e: e.panel_index)
-    parts = [e.narration for e in entries if e.narration.strip()]
+    parts = [e.narration for e in entries
+             if e.narration.strip() and not is_non_lexical(e.narration)]
     if not parts:
         return ""
     if style == "literal":
@@ -75,7 +89,7 @@ def make_script_from_cut(artifact: CutArtifact, style: str = "recap") -> str:
         if getattr(p, "context_only", False):
             continue
         txt = p.narration.strip()
-        if not txt or txt == _prev:
+        if not txt or is_non_lexical(txt) or txt == _prev:
             continue
         parts.append(txt)
         _prev = txt

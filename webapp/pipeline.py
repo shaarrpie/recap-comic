@@ -640,6 +640,22 @@ def _merge_continuation(job: Job, **kwargs: Any) -> None:
     (session_dir / "continuation.json").write_text(
         json.dumps({"continue_from": cont_from, "chain": chain}, indent=2),
         "utf-8")
+    # Chapter chaining for story memory: carry the previous chapter's
+    # entity roster / open threads into THIS session (per-chapter counters
+    # reset; the new chapter re-seeds from its own text). Best effort — a
+    # failure never blocks the merge.
+    try:
+        from story_context import carry_forward
+        prev_dir = OUTPUT_DIR / chain[-1] if chain else None
+        if prev_dir is not None and (prev_dir / "story_context.json").is_file():
+            carried = carry_forward(prev_dir, session_dir, chapter=None)
+            job.log("INFO",
+                    f"story memory carried forward: {len(carried['characters'])} "
+                    f"characters, {sum(1 for t in carried['story_threads'] if t.get('status') == 'active')} "
+                    f"active threads", "merge_continuation")
+    except Exception as exc:  # noqa: BLE001
+        job.log("WARNING", f"story memory carry-forward skipped ({exc})",
+                "merge_continuation")
     # expose the own-strip id translation so _apply_order can map a raw
     # user-supplied order onto the namespaced merged ids
     job.config["_own_id_map"] = id_map
@@ -698,13 +714,36 @@ def _build_script(job: Job, **kwargs: Any) -> None:
         _panels_source(session_dir).read_text("utf-8"))
     from .narration_api import apply_overrides_to_cut
     n_ov = apply_overrides_to_cut(job.config["session"], artifact.panels)
-    script = make_script_from_cut(artifact,
-                                  style=job.config.get("style", "recap"))
+
+    # Phase 2.5: prefer the whole-chapter script pass (hook -> setup ->
+    # escalation -> cliffhanger over ALL panel captions+dialogue, with
+    # story memory). Falls back to the joined captions offline / on
+    # model failure / when the user edited per-panel narration (their
+    # overrides ARE the script then — don't let a model rewrite them).
+    script = None
+    if not n_ov:
+        try:
+            from recap_script import build_chapter_script
+            res = build_chapter_script(
+                session_dir, style=job.config.get("style", "recap"),
+                force=False, artifact=artifact)
+            if res and not res.get("used_fallback") and res.get("text"):
+                script = res["text"]
+                job.log("INFO",
+                        f"chapter script pass lines={len(res.get('lines') or [])} "
+                        f"model={res.get('model_used', '?')} chars={len(res['text'])}",
+                        "build_script")
+        except Exception as exc:  # noqa: BLE001 - script pass is best-effort
+            job.log("WARNING", f"chapter script pass skipped ({exc}); "
+                              "using joined captions", "build_script")
+    if script is None:
+        script = make_script_from_cut(artifact,
+                                      style=job.config.get("style", "recap"))
+        if n_ov:
+            job.log("INFO", "per-panel narration edits present; script is "
+                            "the user's edited captions (not re-generated)",
+                    "build_script")
     (session_dir / "narration.txt").write_text(script, "utf-8")
-    if n_ov:
-        job.log("INFO",
-                f"narration overrides applied to script panels={n_ov}",
-                "build_script")
     job.log("INFO", f"narration script chars={len(script)}", "build_script")
     if not script.strip():
         job.log("WARNING",

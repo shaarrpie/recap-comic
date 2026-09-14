@@ -128,3 +128,6 @@ class TimelineArtifact(BaseModel):
     gap_seconds: float  # default 0.35 (see report)
     min_display_seconds: float  # default 2.0 (see report)
     entries: list[TimelineEntry]
+    # Panels deliberately excluded from the timeline (dead-air drops,
+    # blanks, context_only) with the reason, so skips are auditable.
+    skipped_panels: list[dict] = []

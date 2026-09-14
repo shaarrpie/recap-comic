@@ -157,6 +157,19 @@ def _invalidate_tts(session: str, panel_id: str) -> None:
         mp3.unlink(missing_ok=True)
 
 
+def _invalidate_chapter_script(session: str) -> None:
+    """Drop script.json so a user narration edit is never shadowed by a
+    stale whole-chapter script (Phase 2.5).
+
+    The render's build_narration prefers script.json lines; after an edit
+    the per-panel captions (which carry the override via
+    panels_confirmed.json) must be the text source. _build_script only
+    regenerates script.json when NO overrides exist, so this file stays
+    absent until the user restores all AI texts."""
+    with contextlib.suppress(OSError):
+        (_session_dir(session) / "script.json").unlink(missing_ok=True)
+
+
 def _invalidate_pipeline_steps(session: str,
                                changed: str = "narration_edit.json") -> None:
     """Step-by-Step ledger: narration edits invalidate build_script+."""
@@ -195,6 +208,7 @@ def set_text(session: str, panel_id: str, text: str) -> dict:
     review.setdefault("review", {})[panel_id] = "edited"
     _write_edit(session, review)
     _invalidate_tts(session, panel_id)
+    _invalidate_chapter_script(session)
     _invalidate_pipeline_steps(session)
     return get_narration(session)
 
@@ -205,6 +219,7 @@ def reset_text(session: str, panel_id: str) -> dict:
     edit.get("overrides", {}).pop(panel_id, None)
     _write_narr_edit(session, edit)
     _invalidate_tts(session, panel_id)
+    _invalidate_chapter_script(session)
     _invalidate_pipeline_steps(session)
     return get_narration(session)
 

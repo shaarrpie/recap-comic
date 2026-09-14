@@ -1,0 +1,17 @@
+{
+  "001": {
+    "model_used": "mistralai/mistral-medium-3.5",
+    "fallback_used": true,
+    "cached": false
+  },
+  "002": {
+    "model_used": "mistralai/mistral-medium-3.5",
+    "fallback_used": true,
+    "cached": false
+  },
+  "003": {
+    "model_used": "mistralai/mistral-medium-3.5",
+    "fallback_used": true,
+    "cached": false
+  }
+}

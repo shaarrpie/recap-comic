@@ -1,0 +1,42 @@
+{
+  "001": {
+    "model_used": "mistralai/mistral-medium-3.5",
+    "fallback_used": true,
+    "cached": false
+  },
+  "002": {
+    "model_used": "mistralai/mistral-medium-3.5",
+    "fallback_used": true,
+    "cached": false
+  },
+  "003": {
+    "model_used": "mistralai/mistral-medium-3.5",
+    "fallback_used": true,
+    "cached": false
+  },
+  "004": {
+    "model_used": "mistralai/mistral-medium-3.5",
+    "fallback_used": true,
+    "cached": false
+  },
+  "005": {
+    "model_used": "mistralai/mistral-medium-3.5",
+    "fallback_used": true,
+    "cached": false
+  },
+  "006": {
+    "model_used": "mistralai/mistral-medium-3.5",
+    "fallback_used": true,
+    "cached": false
+  },
+  "007": {
+    "model_used": "mistralai/mistral-medium-3.5",
+    "fallback_used": true,
+    "cached": false
+  },
+  "008": {
+    "model_used": "mistralai/mistral-medium-3.5",
+    "fallback_used": true,
+    "cached": false
+  }
+}

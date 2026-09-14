@@ -119,7 +119,10 @@ def test_timeline_is_contiguous_and_silent_mode(cut_dir):
     aud = rv.synthesize_audio(nar, d / "audio", cfg)
     assert aud.entries == [] and aud.voice == "none"
     tl = rv.build_timeline(art, d, nar, aud, d / "audio", cfg, panels_hash="h")
-    assert [e.panel_id for e in tl.entries] == ["001", "002", "003"]
+    # Panel 003 has empty narration + no audio: dead-air drop (it used to
+    # get a silent min_display hold — silent empty frames over nothing).
+    assert [e.panel_id for e in tl.entries] == ["001", "002"]
+    assert {"panel_id": "003", "reason": "no_text_no_audio"} in tl.skipped_panels
     t = 0.0
     for e in tl.entries:
         assert e.start_seconds == pytest.approx(t, abs=1e-3)
@@ -128,11 +131,6 @@ def test_timeline_is_contiguous_and_silent_mode(cut_dir):
         t += e.duration_seconds
     assert rv.total_seconds(tl) == pytest.approx(t, abs=1e-3)
     assert tl.entries[1].pan.kind == "pan_down"       # 800x3600 panel
-    # empty panel: min display, unless its pan needs longer to stay readable
-    p3 = tl.entries[2]
-    assert p3.duration_seconds == pytest.approx(
-        max(cfg.min_display_seconds, p3.pan.travel_px / cfg.max_pan_px_per_sec),
-        abs=1e-3)
 
 
 def test_timeline_uses_measured_audio(cut_dir):
@@ -208,7 +206,8 @@ def test_render_command_builds_without_ffmpeg(cut_dir):
     cmd = build_command(tl, d / "recap.mp4")
     assert cmd[0] == "ffmpeg" and "-filter_complex" in cmd
     fc = cmd[cmd.index("-filter_complex") + 1]
-    assert "concat=n=3:v=1:a=0" in fc
+    # panel 3 is a dead-air drop -> only 2 entries concat
+    assert "concat=n=2:v=1:a=0" in fc
     assert "anullsrc" in " ".join(cmd)          # silent panels get silence
     assert "loudnorm" not in fc                 # no audio -> no loudnorm
 
@@ -219,10 +218,12 @@ def test_make_recap_video_dry_run_writes_sidecars(cut_dir):
     summary = rv.make_recap_video(d / "panels.json", d / "recap.mp4",
                                   rv.VideoConfig(tts="none"), dry_run=True)
     assert summary["video"] is None
-    assert summary["panels"] == 3
+    # panel 3 (empty narration, no audio) is a dead-air drop
+    assert summary["panels"] == 2
     assert (d / "timeline.json").is_file()
     assert (d / "narration.json").is_file()
     assert (d / "recap.srt").is_file()
     tl = json.loads((d / "timeline.json").read_text("utf-8"))
     assert tl["width"] == 1080 and tl["height"] == 1920
-    assert len(tl["entries"]) == 3
+    assert len(tl["entries"]) == 2
+    assert {"panel_id": "003", "reason": "no_text_no_audio"} in tl["skipped_panels"]

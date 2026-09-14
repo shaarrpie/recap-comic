@@ -92,11 +92,25 @@ class VideoConfig:
     max_display_seconds: float = 12.0   # cap for SILENT panels only
     silent_wpm: int = 160        # reading speed used ONLY when tts == "none"
     max_pan_px_per_sec: int = 450  # slow, readable Ken-Burns pan
+    # Per-class pacing (Fix: flat TTS-length pacing reads as monotone).
+    # Multipliers apply AFTER floors; action may also drop below
+    # min_display_seconds down to action_floor_seconds.
+    action_floor_seconds: float = 0.8
+    class_duration_multiplier: dict[str, float] = None  # set in __post_init__
     fps: int = 30
     ffmpeg_exe: str = "ffmpeg"
     ffprobe_exe: str = "ffprobe"
     kokoro_model_path: Path | None = None
     kokoro_voices_path: Path | None = None
+
+    def __post_init__(self) -> None:
+        if not self.class_duration_multiplier:
+            self.class_duration_multiplier = {
+                "action": 1.0,
+                "reveal": 1.35,   # hold the beat so the moment lands
+                "dialogue": 1.0,
+                "calm": 1.0,
+            }
 
     def hash(self) -> str:
         return _sha256_text(json.dumps(asdict(self), sort_keys=True))
@@ -135,6 +149,18 @@ def _normalise(text: str) -> str:
     if s and s[-1] not in ".!?…\"'”’":
         s += "."
     return s
+
+
+_NON_LEXICAL_RE = re.compile(r"^[\s.·•—–\-_*~…!?]*$")
+
+
+def is_non_lexical(text: str | None) -> bool:
+    """True when text carries no speakable words ("...", "—", "", "*").
+
+    The vision model emits these for blank/silent panels; they must never
+    reach TTS (a literal "..." was being spoken in narration.txt).
+    """
+    return bool(_NON_LEXICAL_RE.match(text or ""))
 
 
 _WORD_RE = re.compile(r"[A-Za-z0-9']+")
@@ -228,8 +254,10 @@ def script_text(panel: CutPanel, *, include_dialogue: bool = True) -> str:
 
     narration first; dialogue appended only when it adds information
     (i.e. the narration does not already contain the same words).
+    Non-lexical strings ("...", "—") are dropped entirely.
     """
-    narration = _normalise(panel.narration) if panel.narration.strip() else ""
+    raw_narration = panel.narration if panel.narration else ""
+    narration = _normalise(raw_narration) if not is_non_lexical(raw_narration) else ""
     dialogue = _normalise(panel.dialogue) if panel.dialogue.strip() else ""
     if not include_dialogue or not dialogue:
         return narration
@@ -247,13 +275,55 @@ def _token_overlap_ratio(a: str, b: str) -> float:
     return len(tokens_a & tokens_b) / len(tokens_a)
 
 
+def _load_chapter_script(work_dir: Path) -> dict | None:
+    """Load script.json (Phase 2.5 whole-chapter pass) when it holds lines."""
+    path = work_dir / "script.json"
+    if not path.is_file():
+        return None
+    try:
+        import json as _json
+        data = _json.loads(path.read_text("utf-8"))
+    except (OSError, ValueError):
+        return None
+    if isinstance(data, dict) and isinstance(data.get("lines"), list) \
+            and data["lines"]:
+        return data
+    return None
+
+
 def build_narration(artifact: CutArtifact, cfg: VideoConfig,
-                    *, panels_hash: str) -> NarrationArtifact:
+                    *, panels_hash: str, work_dir: Path | None = None) -> NarrationArtifact:
+    """Build narration entries for the video.
+
+    Text source priority:
+      1. script.json (Phase 2.5 whole-chapter script pass) — real recap
+         lines mapped onto panels; consecutive lines may skip panels.
+      2. Per-panel captions (script_text) — legacy/offline path.
+
+    Either way:
+      * blank / context_only panels never get entries;
+      * non-lexical text ("...") never gets an entry;
+      * a panel whose text is identical to the PREVIOUS spoken line gets
+        no entry (the voice repeats nothing; the panel can still appear
+        as a visual if it has audio-independent screen value — but with no
+        text it is dropped from the timeline as dead air).
+    """
     # Order by panel_index: panels_confirmed.json renumbers panel_index to
     # the user's confirmed order (Panel Review reordering must survive).
     # y_start is only a tiebreak for legacy artifacts with duplicate indices.
     panels = sorted(artifact.panels, key=lambda p: (p.panel_index, p.y_start))
+    script = _load_chapter_script(work_dir) if work_dir is not None else None
+    by_id_line: dict[str, dict] = {}
+    if script is not None:
+        for ln in script.get("lines", []):
+            pid = ln.get("panel_id")
+            if isinstance(pid, str) and pid not in by_id_line:
+                by_id_line[pid] = ln
+        log.info("build_narration using script.json (%d lines over %d panels)",
+                 len(script.get("lines", [])), len(panels))
+
     entries: list[NarrationEntry] = []
+    prev_text = ""
     for order, p in enumerate(panels, start=1):
         if getattr(p, "blank_flag", "normal") == "blank":
             # blank crops are never narrated or spoken
@@ -263,15 +333,35 @@ def build_narration(artifact: CutArtifact, cfg: VideoConfig,
             # context for the story reader, but it is never narrated or
             # spoken — it would produce a redundant TTS line with no scene.
             continue
-        text = script_text(p, include_dialogue=cfg.include_dialogue)
-        quotes = [q.strip() for q in re.findall(r"[\"“]([^\"”]+)[\"”]",
-                                                p.dialogue or "")]
+        if script is not None:
+            # Phase 2.5 mapping: only panels the scriptwriter assigned a
+            # line to get narration. Panels without a line stay silent
+            # visuals — or get dropped by build_timeline when silent.
+            ln = by_id_line.get(p.id)
+            text = (ln or {}).get("text", "") or ""
+            text = _normalise(text) if text.strip() else ""
+            if is_non_lexical(text):
+                text = ""
+            if text and text == prev_text:
+                text = ""            # never speak the same line twice
+            if text:
+                prev_text = text
+            quotes = [((ln or {}).get("quote") or "").strip()] if \
+                (ln or {}).get("quote") else []
+        else:
+            text = script_text(p, include_dialogue=cfg.include_dialogue)
+            if text == prev_text:
+                continue             # duplicate caption: no entry at all
+            prev_text = text
+            quotes = [q.strip() for q in re.findall(r"[\"“]([^\"”]+)[\"”]",
+                                                    p.dialogue or "")]
         entries.append(NarrationEntry(id=p.id, panel_id=p.id, order=order,
-                                      speaker=None, text=text, quotes=quotes))
+                                       speaker=None, text=text, quotes=quotes))
     result = NarrationArtifact(
         meta=_meta(cfg.hash(), {"panels.json": panels_hash}),
         mode="narrator", entries=entries)
-    log.info("build_narration entries=%d", len(entries))
+    log.info("build_narration entries=%d spoken=%d",
+             len(entries), sum(1 for e in entries if e.text.strip()))
     return result
 
 
@@ -408,18 +498,53 @@ def compute_pan(width: int, height: int) -> PanSpec:
 
 
 def display_seconds(*, audio_seconds: float | None, words: int,
-                    travel_px: int, cfg: VideoConfig) -> float:
-    """How long a panel stays on screen (INCLUDING its trailing gap)."""
+                    travel_px: int, cfg: VideoConfig,
+                    panel_class: str = "calm") -> float:
+    """How long a panel stays on screen (INCLUDING its trailing gap).
+
+    panel_class (action/reveal/dialogue/calm from cinematic_effects)
+    modulates pacing the way recap channels do:
+      * action   — fast cuts; may go BELOW min_display (0.8s floor), so
+                   rapid panels keep energy even when narration is short;
+      * reveal   — held beats: +35% over the audio floor for the moment
+                   to land;
+      * dialogue — neutral (the voice already sets the pace);
+      * calm     — the base behaviour (audio/gap/min floor).
+    Pan floor always applies (a pan must stay readable at any class).
+    """
     pan_floor = travel_px / cfg.max_pan_px_per_sec if travel_px else 0.0
+    mult = cfg.class_duration_multiplier.get(
+        panel_class, cfg.class_duration_multiplier.get("calm", 1.0))
     if audio_seconds is not None:
         # spoken panel: narration must finish; never capped
-        return round(max(audio_seconds + cfg.gap_seconds,
-                         cfg.min_display_seconds, pan_floor), 3)
+        base = audio_seconds + cfg.gap_seconds
+        if panel_class == "action":
+            # action floor is lower: fast cuts read as energy, not as
+            # truncation, once the voice has finished
+            floor = min(cfg.min_display_seconds,
+                        cfg.action_floor_seconds)
+        else:
+            floor = cfg.min_display_seconds
+        return round(max(base, floor, pan_floor) * mult, 3)
     # silent panel: reading-speed heuristic (no audio => no drift possible)
     read = (words / cfg.silent_wpm) * 60.0 if words else 0.0
     dur = min(max(read + cfg.gap_seconds, cfg.min_display_seconds),
               cfg.max_display_seconds)
-    return round(max(dur, pan_floor), 3)
+    return round(max(dur, pan_floor) * mult, 3)
+
+
+def _classify(p: CutPanel) -> str:
+    """Panel class for pacing (action/reveal/dialogue/calm).
+
+    cinematic_effects.classify_panel reads narration+dialogue text with
+    pure regex — deterministic, no AI, no new dependency in the render.
+    """
+    try:
+        from cinematic_effects import classify_panel
+        return classify_panel({"narration": p.narration or "",
+                               "dialogue": p.dialogue or ""})
+    except Exception:  # noqa: BLE001 - pacing hint must never kill render
+        return "calm"
 
 
 def build_timeline(artifact: CutArtifact, panels_dir: Path,
@@ -429,6 +554,7 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
     by_audio = {a.entry_id: a for a in audio.entries}
     by_text = {n.id: n for n in narration.entries}
     entries: list[TimelineEntry] = []
+    skipped: list[dict] = []
     t = 0.0
     skipped_missing = 0
     for order, p in enumerate(sorted(artifact.panels,
@@ -436,17 +562,20 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
         h = p.y_end - p.y_start
         if h <= 0:
             log.warning("skipping zero-height panel %s", p.id)
+            skipped.append({"panel_id": p.id, "reason": "zero_height"})
             continue
         if getattr(p, "blank_flag", "normal") == "blank":
             # deterministic blank detector marked this crop empty; it must
             # not reach narration/TTS/render unless the user kept it.
             log.info("skipping panel %s in timeline: blank_flag=blank "
                      "(score %.2f)", p.id, getattr(p, "blank_score", 0.0))
+            skipped.append({"panel_id": p.id, "reason": "blank"})
             continue
         if getattr(p, "context_only", False):
             # panel_filter demoted this text-only panel: no video frame.
             # Its dialogue remains in panels.json for story context.
             log.info("skipping panel %s in timeline: context_only", p.id)
+            skipped.append({"panel_id": p.id, "reason": "context_only"})
             continue
         img = (panels_dir / p.image_file).resolve()
         if not img.is_file():
@@ -460,6 +589,19 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
                 "re-run 'guided cut' / 'guided run' to regenerate)",
                 p.id, img)
             skipped_missing += 1
+            skipped.append({"panel_id": p.id, "reason": "image_missing"})
+            continue
+        a = by_audio.get(p.id)
+        text = by_text[p.id].text if p.id in by_text else ""
+        if not text.strip() and a is None:
+            # Dead-air drop (Fix): a panel with no narration line, no
+            # audio and no quotes is either a filler crop or one whose
+            # caption was deduplicated away. Holding it on screen for
+            # min_display_seconds produces silent empty frames — drop it
+            # and record the decision so the skip is auditable.
+            log.info("skipping panel %s in timeline: no narration, no "
+                     "audio (dead-air drop)", p.id)
+            skipped.append({"panel_id": p.id, "reason": "no_text_no_audio"})
             continue
         # Pan geometry must match the PNG on disk, NOT the source-strip
         # geometry: the cutter may normalize panel PNGs (390x[760,800]
@@ -475,11 +617,10 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
             png_w = p.strip_width or artifact.width
             png_h = h
         pan = compute_pan(png_w, png_h)
-        a = by_audio.get(p.id)
-        text = by_text[p.id].text if p.id in by_text else ""
         dur = display_seconds(
             audio_seconds=a.duration_seconds if a else None,
-            words=_word_count(text), travel_px=pan.travel_px, cfg=cfg)
+            words=_word_count(text), travel_px=pan.travel_px, cfg=cfg,
+            panel_class=_classify(p))
         entries.append(TimelineEntry(
             panel_id=p.id, order=order, source_image=str(img),
             bbox=BBox(x=0, y=p.y_start, w=png_w, h=png_h),
@@ -496,9 +637,10 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
             "audio.json": _sha256_text(audio.model_dump_json())}),
         width=WIDTH, height=HEIGHT, fps=cfg.fps,
         gap_seconds=cfg.gap_seconds,
-        min_display_seconds=cfg.min_display_seconds, entries=entries)
-    log.info("build_timeline entries=%d total_duration=%.2fs",
-             len(entries), total_seconds(result))
+        min_display_seconds=cfg.min_display_seconds, entries=entries,
+        skipped_panels=skipped)
+    log.info("build_timeline entries=%d skipped=%d total_duration=%.2fs",
+             len(entries), len(skipped), total_seconds(result))
     return result
 
 
@@ -627,7 +769,8 @@ def make_recap_video(panels_json: Path, out_path: Path,
              len(artifact.panels), cfg.tts, cfg.voice)
 
     # 1. narration
-    narration = build_narration(artifact, cfg, panels_hash=panels_hash)
+    narration = build_narration(artifact, cfg, panels_hash=panels_hash,
+                                work_dir=work)
     _write_atomic(work / "narration.json",
                   narration.model_dump_json(indent=2) + "\n")
     spoken = sum(1 for e in narration.entries if e.text.strip())
