@@ -511,6 +511,7 @@ def update_context(ctx: dict, entities: dict, panel_index: int) -> None:
             _add_thread(threads, summary)
 
     def _events() -> None:
+        nonlocal events  # rebind below; without this the append raises
         for ev in _as_list(entities.get("new_events"), str):
             ev = _sanitize(ev)
             if ev:
