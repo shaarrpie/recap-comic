@@ -717,14 +717,16 @@ def _capture_usage(resp: object) -> dict | None:
     return out or None
 
 
-def _chunk_prompt(height: int, previous_context: str = "",
+def _chunk_prompt(height: int, width: int | None = None, previous_context: str = "",
                   retry_feedback: str = "") -> str:
     """Strict per-chunk dissection instructions (the prompt template).
 
-    Coordinates are NORMALIZED: y_start/y_end and bubble-box corners are
+    Coordinates are NORMALIZED: y_start/y_end and bubble-box Y corners are
     integers in 0..1000 proportional to THIS image's height (top = 0,
-    bottom = 1000), never raw pixels. Optionally includes compact narrative
-    context from earlier chunks so narration stays coherent across the strip.
+    bottom = 1000); bubble-box X corners are integers in 0..1000 proportional
+    to THIS image's width (left = 0, right = 1000). Never raw pixels.
+    Optionally includes compact narrative context from earlier chunks so
+    narration stays coherent across the strip.
     `retry_feedback` carries the parse/validation error from the previous
     attempt so the model can correct its output format.
     """
@@ -751,13 +753,17 @@ def _chunk_prompt(height: int, previous_context: str = "",
         '{"panels":[],"characters":[]}.\n\n'
         "You are dissecting a vertical manhwa (webtoon) strip image into its "
         "logical panels for a narrated recap video. The image you are viewing "
-        f"is a SLICE of a taller strip and is {height} pixels tall.\n\n"
-        "COORDINATES ARE NORMALIZED 0..1000: every y_start, y_end and every "
-        "bubble-box corner is an integer in [0, 1000] measured PROPORTIONALLY "
-        "to this image's height (top = 0, bottom = 1000), NEVER raw pixels. "
-        "For example, a panel occupying the top quarter of the image is "
-        "y_start=0, y_end=250; a bubble around the vertical middle is "
-        "bubble_boxes: [[420, 480, 580, 540]]."
+        f"is a SLICE of a taller strip and is {height} pixels tall"
+        + (f" and {width} pixels wide" if width else "")
+        + ".\n\n"
+        "COORDINATES ARE NORMALIZED 0..1000: y_start/y_end and every bubble-box "
+        "Y corner are integers in [0, 1000] measured PROPORTIONALLY to this "
+        "image's HEIGHT (top = 0, bottom = 1000). Bubble-box X corners are "
+        "integers in [0, 1000] measured PROPORTIONALLY to this image's WIDTH "
+        "(left = 0, right = 1000). NEVER raw pixels. For example, a panel "
+        "occupying the top quarter of the image is y_start=0, y_end=250; a "
+        "bubble centered horizontally at the vertical middle is "
+        "bubble_boxes: [[420, 480, 580, 540]] (x0=420, y0=480, x1=580, y1=540)."
         f"{context_block}{feedback_block}\n\n"
         "Return STRICT JSON only. Every entry is exactly one logical panel. "
         "The JSON must match this exact shape:\n\n"
@@ -777,8 +783,9 @@ def _chunk_prompt(height: int, previous_context: str = "",
         "- panel_type is exactly one of: single, tall_scenic, "
         "transition_gutter, multi_sub_panel.\n"
         "- confidence (0..1) estimates how reliable the boundary estimate is.\n"
-        "- bubble_boxes: normalized boxes around each speech bubble (integers "
-        "in 0..1000), or an empty list.\n"
+        "- bubble_boxes: normalized boxes around each speech bubble "
+        "(x0, y0, x1, y1 as integers in 0..1000 proportional to width/height), "
+        "or an empty list.\n"
         "- characters: names positively identifiable in THIS image, or an "
         "empty list. Never invent names.\n"
     )
@@ -852,7 +859,7 @@ class GeminiVisionBackend:
 
         buf = io.BytesIO()
         image.save(buf, format="PNG")
-        prompt = _chunk_prompt(image.size[1], previous_context,
+        prompt = _chunk_prompt(image.size[1], image.size[0], previous_context,
                                retry_feedback=retry_feedback)
         log.info("gemini request start model=%s image=%dx%d prompt_len=%d keys=%d",
                  self.model, image.width, image.height, len(prompt),

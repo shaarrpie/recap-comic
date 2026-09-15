@@ -61,25 +61,43 @@ def _vision_response(narration: str, dialogue: str,
 
 
 class Harness:
-    """Fake transport + recorder for narrate_cropped_panels runs."""
+    """Fake transport + recorder for narrate_cropped_panels runs.
 
-    def __init__(self, vision_texts: list[str], seed_text: str = SEED_JSON):
+    Routing is by CONTENT, not position: ai_models passes
+    (model, prompt, b64_png) for vision calls and (model, system, user)
+    for text calls — positionally identical, so the second argument's
+    text decides: vision prompts narrate a panel, the seed system
+    pre-reads the chapter. The user body distinguishes seed vs the
+    Phase 2.5 script pass (both use _SEED_SYSTEM as system).
+    """
+
+    VISION_MARK = "You are narrating ONE cropped comic/manhwa panel"
+    SEED_USER_MARK = "Panel text in order:"
+    SCRIPT_USER_MARK = "Write the recap narration for this chapter"
+
+    def __init__(self, vision_texts: list[str], seed_text: str = SEED_JSON,
+                 script_text: str = "not-a-lines-response"):
         self.vision_texts = list(vision_texts)
         self.seed_text = seed_text
+        self.script_text = script_text
         self.vision_calls: list[dict] = []
-        self.text_calls: list[tuple[str, str]] = []
+        self.seed_calls: list[str] = []
+        self.script_calls: list[str] = []
 
-    def request_fn(self, model: str, prompt: str, b64: str = "",
-                   system: str = "") -> str:
-        # vision calls carry a b64 image; text (seed) calls carry system+user
-        if b64:
+    def request_fn(self, model: str, prompt: str, third: str = "") -> str:
+        if self.VISION_MARK in prompt:
             self.vision_calls.append({"model": model, "prompt": prompt,
-                                      "b64": b64[:16]})
+                                      "b64": third[:16]})
             if not self.vision_texts:
                 raise RuntimeError("no scripted vision response")
             return self.vision_texts.pop(0)
-        self.text_calls.append((system, prompt))
-        return self.seed_text
+        if self.SEED_USER_MARK in third:
+            self.seed_calls.append(third)
+            return self.seed_text
+        if self.SCRIPT_USER_MARK in third:
+            self.script_calls.append(third)
+            return self.script_text
+        raise RuntimeError(f"unrouted call: {prompt[:60]!r} / {third[:60]!r}")
 
 
 def test_seed_runs_before_panel_prompts(session):
@@ -89,10 +107,10 @@ def test_seed_runs_before_panel_prompts(session):
         session, api_key="k", request_fn=h.request_fn, gap_s=0)
 
     assert summary["narrated"] == 2
-    # exactly ONE text call (the seed) for two panels
-    assert len(h.text_calls) == 1
+    # exactly ONE seed text call for two panels
+    assert len(h.seed_calls) == 1
     # seed prompt contains BOTH panels' dialogue
-    seed_prompt = h.text_calls[0][1]
+    seed_prompt = h.seed_calls[0]
     assert "Where am I?" in seed_prompt and "Bam, hurry!" in seed_prompt
     # the vision prompt on the SECOND panel carries the seeded memory
     assert len(h.vision_calls) == 2
