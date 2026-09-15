@@ -111,18 +111,30 @@ def api_key_from_env(explicit: str | None = None) -> str | None:
       4. XKIRO_API_KEYS (comma-separated pool; first entry)
       5. GEMINI_API_KEYS pool (first entry)
       6. GEMINI_API_KEY
+
+    WARNING: If only GEMINI_API_KEY is set, it will be used against the
+    XKIRO endpoint (api.xkiro.com), which is a third-party proxy. Set
+    XKIRO_API_KEY explicitly to avoid this.
     """
     if explicit and explicit.strip():
         return explicit.strip()
     manual = manual_key()
     if manual:
         return manual
-    for var in ("XKIRO_API_KEY", "XKIRO_API_KEYS",
-                "GEMINI_API_KEYS", "GEMINI_API_KEY"):
+    # Check XKIRO keys first
+    for var in ("XKIRO_API_KEY", "XKIRO_API_KEYS"):
         val = os.environ.get(var, "").strip()
         if val:
-            # XKIRO_API_KEYS / GEMINI_API_KEYS may be comma-separated;
-            # take the first.
+            return val.split(",")[0].strip()
+    # Fall back to Gemini keys with loud warning
+    for var in ("GEMINI_API_KEYS", "GEMINI_API_KEY"):
+        val = os.environ.get(var, "").strip()
+        if val:
+            import logging
+            log = logging.getLogger(__name__)
+            log.warning("Using GEMINI_API_KEY against XKIRO endpoint (api.xkiro.com). "
+                        "This sends your Google credential to a third-party proxy. "
+                        "Set XKIRO_API_KEY explicitly to avoid this.")
             return val.split(",")[0].strip()
     return None
 
