@@ -21,6 +21,7 @@ API keys, no AI. These tests enforce the two-tier contract:
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -577,7 +578,7 @@ def test_png_scoring_falls_back_when_strip_absent(tmp_path):
     d = build_session(tmp_path, blocks, panels, source="gone.png")
     (d / "gone.png").unlink()  # the strip really is gone
     # PNGs written like guided_cutter would: 390 wide, padded to >=760
-    for p, block in zip(panels, blocks):
+    for p, block in zip(panels, blocks, strict=True):
         img = Image.fromarray(block).resize(
             (390, max(1, round(block.shape[0] * 390 / W))),
             Image.Resampling.LANCZOS)
@@ -660,8 +661,7 @@ def test_cut_panel_context_only_survives_json_roundtrip():
 # --------------------------------------------------------------------------- #
 # CLI (_install_cli / standalone panel_filter.py)
 # --------------------------------------------------------------------------- #
-def _run_cli(d: Path, *flags: str) -> "subprocess.CompletedProcess":
-    import subprocess
+def _run_cli(d: Path, *flags: str) -> subprocess.CompletedProcess:
     import sys
     return subprocess.run(
         [sys.executable, str(Path(pf.__file__).resolve()), str(d), *flags],

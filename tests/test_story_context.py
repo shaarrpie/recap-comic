@@ -134,7 +134,7 @@ def test_seed_failure_retries_next_run(tmp_path):
 
 
 def test_seed_skips_when_already_built(tmp_path):
-    ctx = seeded_ctx(tmp_path)
+    _ = seeded_ctx(tmp_path)
     model = FakeModel([])  # would raise if called: proves the skip
     ctx2 = sc.build_seed_context(
         [{"panel_index": 1, "dialogue": "x"}], tmp_path, model_call=model)
@@ -357,7 +357,6 @@ def test_inject_tiny_cap_keeps_thread_and_footer():
 ])
 def test_update_context_never_crashes_on_bad_shapes(tmp_path, entities, panel):
     ctx = seeded_ctx(tmp_path)
-    before = json.dumps(ctx, sort_keys=True, default=str)
     sc.update_context(ctx, entities, panel)   # must not raise
     # nothing structurally destroyed
     assert set(ctx["characters"]) >= {"Bam", "Khun"}

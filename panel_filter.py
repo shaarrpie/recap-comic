@@ -102,7 +102,7 @@ class FilterConfig:
     dark_pixel_threshold: int = 25     # used only to trim black padding
     color_sat_gap: int = 25            # max-min channel gap for "colour"
 
-    def with_overrides(self, **ov: Any) -> "FilterConfig":
+    def with_overrides(self, **ov: Any) -> FilterConfig:
         valid = set(self.__dataclass_fields__)
         bad = set(ov) - valid
         if bad:
@@ -185,7 +185,7 @@ def _score_panel(panel: dict[str, Any], strip_path: Path | None,
     y_start = panel.get("y_start")
     y_end = panel.get("y_end")
     if strip_path is not None and y_start is not None and y_end is not None \
-            and 0 < int(y_end) - int(y_start):
+            and int(y_end) - int(y_start) > 0:
         try:
             if image_cache is not None and str(strip_path) in image_cache:
                 arr = image_cache[str(strip_path)]
@@ -234,7 +234,6 @@ def _calibrate(scores: list[dict[str, float]],
 
     col = np.array([s["color_ratio"] for s in scores], dtype=np.float64)
     whi = np.array([s["white_of_content"] for s in scores], dtype=np.float64)
-    edg = np.array([s["edge_density"] for s in scores], dtype=np.float64)
 
     is_bw = float(np.median(col)) < cfg.bw_color_median_threshold
     if is_bw:
@@ -606,7 +605,6 @@ def filter_panels_inplace(
 # --------------------------------------------------------------------------- #
 def _install_cli() -> None:
     import argparse
-    import sys
 
     ap = argparse.ArgumentParser(
         description="Filter blank/text-only panels from a panels.json "

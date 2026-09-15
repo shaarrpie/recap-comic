@@ -1346,10 +1346,8 @@ def run_job(job_id: str, **kwargs: Any) -> None:
                     _rehydrate_panels(job, session)
                     # apply_confirmed may have a confirmed review on disk
                     if start_idx > order_idx or start_idx > names.index("apply_confirmed"):
-                        try:
+                        with contextlib.suppress(Exception):
                             _apply_confirmed(job, **kwargs)
-                        except Exception:
-                            pass
         except Exception as exc:
             job.log("WARNING", f"resume rehydration failed: {exc}", start_stage)
     try:

@@ -17,7 +17,6 @@ import json
 from pathlib import Path
 
 import pytest
-from PIL import Image
 
 import recap_script as rs
 from guided_cutter import CutArtifact, CutPanel
@@ -201,8 +200,6 @@ def test_changed_panels_invalidate_cache(tmp_path):
     art = CutArtifact(source="s.png", width=800, height=800,
                       plan_hash="x", config={}, panels=panels)
     (tmp_path / "panels.json").write_text(art.model_dump_json(), "utf-8")
-    line = json.dumps({"lines": [
-        {"panel_index": 1, "text": "Line one.", "part": "setup"}]})
     # need 2+ lines to be valid: use two panels
     panels = [_panel(1, 0, 400, "First caption."),
               _panel(2, 400, 800, "Second caption.")]

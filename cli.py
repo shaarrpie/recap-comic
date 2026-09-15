@@ -20,12 +20,10 @@ into a single tall strip before processing.
 """
 from __future__ import annotations
 
-import contextlib
 import logging
 import os
 import re
 import tempfile
-import uuid
 import zipfile
 from pathlib import Path
 
@@ -74,39 +72,37 @@ def _resolve_strip_path(strip: Path) -> Path:
         if not names:
             raise typer.BadParameter(
                 f"no images found in archive {strip.name}")
-        
+
         # First pass: get dimensions without fully decoding
         dimensions = []
         for name in names:
-            with archive.open(name) as fh:
-                with Image.open(fh) as img:
-                    img.load()  # verify it's a valid image
-                    dimensions.append((name, img.width, img.height))
-        
+            with archive.open(name) as fh, Image.open(fh) as img:
+                img.load()  # verify it's a valid image
+                dimensions.append((name, img.width, img.height))
+
         total_h = sum(h for _, _, h in dimensions)
         max_w = max(w for _, w, _ in dimensions)
         stitched = Image.new("RGB", (max_w, total_h))
         y = 0
-        
+
         # Second pass: decode and paste each image
         for name, w, h in dimensions:
-            with archive.open(name) as fh:
-                with Image.open(fh) as img:
-                    img.load()
-                    img_rgb = img.convert("RGB")
-                    if w < max_w:
-                        border = int(np.median(np.array(np.concatenate([
-                            np.array(img_rgb)[:8].ravel(), np.array(img_rgb)[-8:].ravel(),
-                            np.array(img_rgb)[:, :8].ravel(), np.array(img_rgb)[:, -8:].ravel()
-                        ]))))
-                        pad_img = Image.new("RGB", (max_w - w, h),
-                                            (border, border, border))
-                        stitched.paste(img_rgb, (0, y))
-                        stitched.paste(pad_img, (w, y))
-                    else:
-                        stitched.paste(img_rgb, (0, y))
+            with archive.open(name) as fh, Image.open(fh) as img:
+                img.load()
+                img_rgb = img.convert("RGB")
+                if w < max_w:
+                    border = int(np.median(np.array(np.concatenate([
+                        np.array(img_rgb)[:8].ravel(), np.array(img_rgb)[-8:].ravel(),
+                        np.array(img_rgb)[:, :8].ravel(), np.array(img_rgb)[:, -8:].ravel()
+                    ]))))
+                    pad_img = Image.new("RGB", (max_w - w, h),
+                                        (border, border, border))
+                    stitched.paste(img_rgb, (0, y))
+                    stitched.paste(pad_img, (w, y))
+                else:
+                    stitched.paste(img_rgb, (0, y))
             y += h
-    
+
     # Create temp file with cleanup registration
     import atexit
     tmp_fd, tmp_path = tempfile.mkstemp(
@@ -117,10 +113,13 @@ def _resolve_strip_path(strip: Path) -> Path:
     os.close(tmp_fd)
     stitched.save(tmp_path, "PNG")
     log.info("archive stitched images=%d out=%s", len(dimensions), tmp_path)
-    
+
     # Register cleanup - best effort, won't run on hard kill
-    atexit.register(lambda p=tmp_path: Path(p).unlink(missing_ok=True))
-    
+    def _cleanup(path: Path = Path(tmp_path)) -> None:
+        path.unlink(missing_ok=True)
+
+    atexit.register(_cleanup)
+
     return Path(tmp_path)
 
 

@@ -43,8 +43,8 @@ import numpy as np
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from strip_analyzer import PanelPlan, PanelPlanEntry
 from adapters.schemas import BBox
+from strip_analyzer import PanelPlan, PanelPlanEntry
 
 try:
     from blank_detector import (

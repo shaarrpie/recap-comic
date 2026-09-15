@@ -13,7 +13,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile, Request
+from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
@@ -242,23 +242,22 @@ async def config():
 @app.get("/api/projects")
 async def projects(limit: int = 50, offset: int = 0):
     """List sessions with derived status for the Library/Dashboard view.
-    
     Supports pagination with limit and offset parameters.
     """
     import json
     # Collect all session directories first
     session_dirs = [d for d in sorted(OUTPUT_DIR.iterdir()) if d.is_dir()]
     total = len(session_dirs)
-    
+
     # Apply pagination
     paginated_dirs = session_dirs[offset:offset + limit]
-    
+
     jobs_by_session: dict[str, list] = {}
     for j in store._jobs.values():
         s = j.config.get("session")
         if s:
             jobs_by_session.setdefault(s, []).append(j)
-    
+
     result = []
     for session_dir in paginated_dirs:
         sid = session_dir.name

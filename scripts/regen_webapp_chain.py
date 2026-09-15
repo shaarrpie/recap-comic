@@ -95,9 +95,9 @@ def main() -> None:
             _recut_session(s)
 
     # 2. replay the webapp generate job for the latest session
-    from webapp.main import OUTPUT_DIR
     from webapp import pipeline as pl
     from webapp.jobs import store
+    from webapp.main import OUTPUT_DIR
 
     d = OUTPUT_DIR / session
     cfg = {

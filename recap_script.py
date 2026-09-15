@@ -52,8 +52,9 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from guided_cutter import CutArtifact
 
@@ -137,9 +138,7 @@ def _usable(panel) -> bool:
         return False
     # context_only panels: dialogue is story context (visible to the model
     # as context), but they get no frame — exclude from line mapping.
-    if getattr(panel, "context_only", False):
-        return False
-    return True
+    return not getattr(panel, "context_only", False)
 
 
 def _panel_list_block(artifact: CutArtifact) -> list[dict]:
@@ -202,7 +201,7 @@ def _input_hash(artifact: CutArtifact, style: str, ctx: dict | None) -> str:
     h.update(("\n".join(parts) + f"\nstyle={style}").encode("utf-8"))
     if ctx:
         h.update(f"\nmem={len(ctx.get('characters') or {})}:"
-                 f"{len(ctx.get('story_threads') or {})}".encode("utf-8"))
+                 f"{len(ctx.get('story_threads') or {})}".encode())
     return h.hexdigest()[:32]
 
 

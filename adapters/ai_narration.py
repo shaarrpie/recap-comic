@@ -36,8 +36,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger(__name__)
-
 from story_context import (
     ENTITIES_RULE,
     ENTITIES_SCHEMA_FRAGMENT,
@@ -49,6 +47,8 @@ from story_context import (
     scrub_fences,
     update_context,
 )
+
+log = logging.getLogger(__name__)
 
 PANEL_NARRATION_PROMPT = """\
 You are narrating ONE cropped comic/manhwa panel for a recap video.

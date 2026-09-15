@@ -38,7 +38,7 @@ import time
 import wave
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from adapters.schemas import (
     SCHEMA_VERSION,
@@ -96,7 +96,7 @@ class VideoConfig:
     # Multipliers apply AFTER floors; action may also drop below
     # min_display_seconds down to action_floor_seconds.
     action_floor_seconds: float = 0.8
-    class_duration_multiplier: dict[str, float] = None  # set in __post_init__
+    class_duration_multiplier: dict[str, float] | None = None  # set in __post_init__
     fps: int = 30
     ffmpeg_exe: str = "ffmpeg"
     ffprobe_exe: str = "ffprobe"
@@ -519,8 +519,8 @@ def display_seconds(*, audio_seconds: float | None, words: int,
     Pan floor always applies (a pan must stay readable at any class).
     """
     pan_floor = travel_px / cfg.max_pan_px_per_sec if travel_px else 0.0
-    mult = cfg.class_duration_multiplier.get(
-        panel_class, cfg.class_duration_multiplier.get("calm", 1.0))
+    mult = cast(dict[str, float], cfg.class_duration_multiplier).get(
+        panel_class, cast(dict[str, float], cfg.class_duration_multiplier).get("calm", 1.0))
     if audio_seconds is not None:
         # spoken panel: narration must finish; never capped
         base = audio_seconds + cfg.gap_seconds
