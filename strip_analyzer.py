@@ -301,7 +301,8 @@ def parse_entries_from_json(text: str, chunk_height: int, *,
         characters = [str(c).strip() for c in raw_chars if str(c).strip()]
 
     max_unit = 1000 if normalized else chunk_height
-    scale = chunk_height / 1000.0 if normalized else 1.0
+    scale_y = chunk_height / 1000.0 if normalized else 1.0
+    scale_x = chunk_width / 1000.0 if normalized else 1.0
     cw = chunk_width if chunk_width is not None else chunk_height
     entries: list[PanelPlanEntry] = []
     for raw in panels:
@@ -326,13 +327,13 @@ def parse_entries_from_json(text: str, chunk_height: int, *,
             except ValidationError as exc:
                 raise ValueError(f"invalid panel entry after clamping: {exc}") from exc
         entry = entry.model_copy(update={
-            "y_start": min(chunk_height, round(entry.y_start * scale)),
-            "y_end": min(chunk_height, round(entry.y_end * scale)),
+            "y_start": min(chunk_height, round(entry.y_start * scale_y)),
+            "y_end": min(chunk_height, round(entry.y_end * scale_y)),
             "bubble_boxes": [
-                BBox(x=min(cw, round(b.x * scale)),
-                     y=min(chunk_height, round(b.y * scale)),
-                     w=round(b.w * scale),
-                     h=round(b.h * scale))
+                BBox(x=min(cw, round(b.x * scale_x)),
+                     y=min(chunk_height, round(b.y * scale_y)),
+                     w=round(b.w * scale_x),
+                     h=round(b.h * scale_y))
                 for b in entry.bubble_boxes
             ],
         })
@@ -374,7 +375,12 @@ def stitch_chunk_results(results: list[list[PanelPlanEntry]],
                 log.warning("chunk-local panel [%d,%d] maps to an empty "
                             "range; dropping", e.y_start, e.y_end)
                 continue
-            moved = e.model_copy(update={"y_start": y0, "y_end": y1})
+            # Offset bubble_boxes to strip coordinates
+            moved_bubbles = [
+                BBox(x=b.x, y=b.y + base, w=b.w, h=b.h)
+                for b in e.bubble_boxes
+            ]
+            moved = e.model_copy(update={"y_start": y0, "y_end": y1, "bubble_boxes": moved_bubbles})
             abs_entries.append((moved, y1 - y0))
     abs_entries.sort(key=lambda t: (t[0].y_start, t[0].y_end))
 
@@ -383,9 +389,12 @@ def stitch_chunk_results(results: list[list[PanelPlanEntry]],
         if merged and _dup_of(merged[-1][0], e):
             prev, prev_len = merged[-1]
             winner = e if length > prev_len else prev
+            # Union bubble_boxes from both entries
+            union_bubbles = list(prev.bubble_boxes) + list(e.bubble_boxes)
             merged[-1] = (winner.model_copy(update={
                 "y_start": min(prev.y_start, e.y_start),
                 "y_end": max(prev.y_end, e.y_end),
+                "bubble_boxes": union_bubbles,
             }), max(prev_len, length))
         else:
             merged.append((e, length))

@@ -113,7 +113,12 @@ class VideoConfig:
             }
 
     def hash(self) -> str:
-        return _sha256_text(json.dumps(asdict(self), sort_keys=True))
+        # Path objects are not JSON serializable; convert to strings
+        def _default(o):
+            if isinstance(o, Path):
+                return str(o)
+            raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+        return _sha256_text(json.dumps(asdict(self), sort_keys=True, default=_default))
 
 
 # --------------------------------------------------------------------------- #
