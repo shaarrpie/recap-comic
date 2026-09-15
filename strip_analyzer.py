@@ -1311,12 +1311,8 @@ class CloudflareWorkersAIBackend:
         }
         last_err = retry_feedback  # seed with the outer retry loop's error
         for attempt in range(1, 4):
-            prompt = _chunk_prompt(image.size[1], previous_context)
-            if last_err:
-                prompt += (
-                    "\n\nPrevious attempt failed with: "
-                    f"{last_err}\nFix the JSON and return only the required shape."
-                )
+            prompt = _chunk_prompt(image.size[1], image.size[0], previous_context,
+                                   retry_feedback=last_err)
             if not self._agreed_to_license:
                 agree_payload = {"prompt": "agree"}
                 data = self._post(url, agree_payload, headers)
