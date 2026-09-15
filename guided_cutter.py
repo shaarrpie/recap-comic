@@ -285,7 +285,8 @@ def find_valley_cuts(
     """
     h = gray.shape[0]
     if h < 3 * min_panel_height:
-        return []
+        # Too short for multi-panel detection; treat as single panel
+        return [0, h]
 
     # --- background colour estimate ---------------------------------------
     # Real webtoon strips vary: clean strips have flat page margins
@@ -936,6 +937,15 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
         dest = out / c.image_file
         if dest.exists() and not force:
             log.info("panel file already exists, skipping: %s", dest)
+            # Recover output dimensions from existing PNG to avoid corrupting
+            # pan geometry in build_timeline (which uses output_width/height)
+            try:
+                with Image.open(dest) as existing:
+                    c = c.model_copy(update={
+                        "output_width": existing.width,
+                        "output_height": existing.height})
+            except Exception as exc:  # noqa: BLE001
+                log.warning("could not read existing panel %s dimensions: %s", dest, exc)
             saved.append(c)
             continue
         # Output-size policy: keep the full-resolution source crop for

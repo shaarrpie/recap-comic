@@ -320,21 +320,28 @@ def run_guided(
         log.warning("AI plan confidence too low (%.0f%% of panels < %.1f); "
                     "falling back to gutter detector for geometry, "
                     "keeping AI narrations", bad, LOW_CONF_THRESHOLD)
-        gutter_plan = fallback_plan_from_gutter_detector(
-            strip, variance_threshold=variance_threshold,
-            edge_threshold=edge_threshold, max_panel_height=max_panel_height)
-        plan = _merge_narration_into_fallback(plan, gutter_plan)
-        plan.provenance = "fallback"
-        used_fallback = True
+        try:
+            gutter_plan = fallback_plan_from_gutter_detector(
+                strip, variance_threshold=variance_threshold,
+                edge_threshold=edge_threshold, max_panel_height=max_panel_height)
+            plan = _merge_narration_into_fallback(plan, gutter_plan)
+            plan.provenance = "fallback"
+            used_fallback = True
+        except sa.VisionAnalysisError as exc:
+            log.warning("Gutter detector fallback failed (%s); keeping AI plan despite low confidence", exc)
     if plan is None:
         if not fallback:
             raise sa.VisionAnalysisError(
                 "no AI plan and fallback is disabled (--no-fallback)")
-        plan = fallback_plan_from_gutter_detector(
-            strip, variance_threshold=variance_threshold,
-            edge_threshold=edge_threshold, max_panel_height=max_panel_height)
-        used_fallback = True
-        log.warning("using gutter-detector fallback (no AI narration)")
+        try:
+            plan = fallback_plan_from_gutter_detector(
+                strip, variance_threshold=variance_threshold,
+                edge_threshold=edge_threshold, max_panel_height=max_panel_height)
+            used_fallback = True
+            log.warning("using gutter-detector fallback (no AI narration)")
+        except sa.VisionAnalysisError as exc:
+            raise sa.VisionAnalysisError(
+                f"both AI analysis and gutter detector fallback failed: {exc}") from exc
 
     if plan is None:
         raise RuntimeError("internal: plan is None after fallback resolution")
