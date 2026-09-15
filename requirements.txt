@@ -1,1 +1,24 @@
--e .[guided]
+# Requirements for recap-comic
+# 
+# For development (editable install with all extras):
+#   pip install -e .[guided]
+#
+# For production/minimal install (core dependencies only):
+#   pip install -e .
+#
+# For specific features:
+#   pip install -e .[gemini]      # Gemini vision backend
+#   pip install -e .[openai]      # OpenAI vision backend
+#   pip install -e .[anthropic]   # Anthropic vision backend
+#   pip install -e .[web]         # FastAPI web server
+#   pip install -e .[render]      # Video rendering (moviepy, ffmpeg)
+#   pip install -e .[ocr]         # OCR support (tesseract)
+#   pip install -e .[dev]         # Development tools (pytest, ruff, mypy)
+
+# Core dependencies (from pyproject.toml [project.dependencies])
+python-dotenv>=1.0
+opencv-python-headless==5.0.0.93
+numpy==2.4.6
+pillow==11.3.0
+pydantic==2.13.5
+typer==0.27.2

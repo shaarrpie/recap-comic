@@ -74,31 +74,54 @@ def _resolve_strip_path(strip: Path) -> Path:
         if not names:
             raise typer.BadParameter(
                 f"no images found in archive {strip.name}")
-        images = []
+        
+        # First pass: get dimensions without fully decoding
+        dimensions = []
         for name in names:
             with archive.open(name) as fh:
-                images.append(Image.open(fh).convert("RGB"))
-    total_h = sum(img.height for img in images)
-    max_w = max(img.width for img in images)
-    stitched = Image.new("RGB", (max_w, total_h))
-    y = 0
-    for img in images:
-        if img.width < max_w:
-            border = int(np.median(np.array(np.concatenate([
-                np.array(img)[:8].ravel(), np.array(img)[-8:].ravel(),
-                np.array(img)[:, :8].ravel(), np.array(img)[:, -8:].ravel()
-            ]))))
-            pad_img = Image.new("RGB", (max_w - img.width, img.height),
-                                (border, border, border))
-            stitched.paste(img, (0, y))
-            stitched.paste(pad_img, (img.width, y))
-        else:
-            stitched.paste(img, (0, y))
-        y += img.height
-    tmp = Path(tempfile.gettempdir()) / f"recap-comic-{strip.stem}-{uuid.uuid4().hex[:8]}-stitched.png"
-    stitched.save(tmp, "PNG")
-    log.info("archive stitched images=%d out=%s", len(images), tmp)
-    return tmp
+                with Image.open(fh) as img:
+                    img.load()  # verify it's a valid image
+                    dimensions.append((name, img.width, img.height))
+        
+        total_h = sum(h for _, _, h in dimensions)
+        max_w = max(w for _, w, _ in dimensions)
+        stitched = Image.new("RGB", (max_w, total_h))
+        y = 0
+        
+        # Second pass: decode and paste each image
+        for name, w, h in dimensions:
+            with archive.open(name) as fh:
+                with Image.open(fh) as img:
+                    img.load()
+                    img_rgb = img.convert("RGB")
+                    if w < max_w:
+                        border = int(np.median(np.array(np.concatenate([
+                            np.array(img_rgb)[:8].ravel(), np.array(img_rgb)[-8:].ravel(),
+                            np.array(img_rgb)[:, :8].ravel(), np.array(img_rgb)[:, -8:].ravel()
+                        ]))))
+                        pad_img = Image.new("RGB", (max_w - w, h),
+                                            (border, border, border))
+                        stitched.paste(img_rgb, (0, y))
+                        stitched.paste(pad_img, (w, y))
+                    else:
+                        stitched.paste(img_rgb, (0, y))
+            y += h
+    
+    # Create temp file with cleanup registration
+    import atexit
+    tmp_fd, tmp_path = tempfile.mkstemp(
+        suffix=".png",
+        prefix=f"recap-comic-{strip.stem}-",
+        dir=tempfile.gettempdir()
+    )
+    os.close(tmp_fd)
+    stitched.save(tmp_path, "PNG")
+    log.info("archive stitched images=%d out=%s", len(dimensions), tmp_path)
+    
+    # Register cleanup - best effort, won't run on hard kill
+    atexit.register(lambda p=tmp_path: Path(p).unlink(missing_ok=True))
+    
+    return Path(tmp_path)
 
 
 app = typer.Typer(
@@ -770,11 +793,16 @@ def manual(
                    f"{p.y_end - p.y_start}px  {p.image_file}")
 
 
+# Cinematic effects subcommand (cinematic_effects.py). Registered at module
+# scope so the console script `recap-comic guided cinematic` works. Silently
+# skipped if the module is missing so cli.py stays usable without the
+# cinematic feature.
+try:
+    from cli_cinematic_patch import add_cinematic_command
+    add_cinematic_command(guided_app)
+except ImportError:
+    pass
+
+
 if __name__ == "__main__":
-    # Cinematic effects subcommand (cinematic_effects.py). Registered
-    # before app() runs; silently skipped if the module is missing so
-    # cli.py stays usable without the cinematic feature.
-    with contextlib.suppress(ImportError):
-        from cli_cinematic_patch import add_cinematic_command
-        add_cinematic_command(guided_app)
     app()

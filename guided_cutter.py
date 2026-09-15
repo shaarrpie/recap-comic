@@ -44,6 +44,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 from strip_analyzer import PanelPlan, PanelPlanEntry
+from adapters.schemas import BBox
 
 try:
     from blank_detector import (
@@ -603,15 +604,17 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
     groups: list[list[PanelPlanEntry]] = [[entries[0]]]
     cut_rows: list[int] = []
     snap_distances: list[int] = []
-    for a, b in pairwise(entries):
+    # We need to track modified entries since we can't mutate Pydantic models in-place
+    modified_entries = list(entries)
+    for i, (a, b) in enumerate(pairwise(modified_entries)):
         if a.y_end > b.y_start:
             merge_pt = (a.y_end + b.y_start) // 2
             log.warning("build_cuts: overlapping panels %d(y_end=%d) and %d(y_start=%d) "
                         "-> repairing to midpoint y=%d", a.panel_index, a.y_end,
                         b.panel_index, b.y_start, merge_pt)
-            a.y_end = merge_pt
-            b.y_start = merge_pt
-        center = (a.y_end + b.y_start) // 2
+            modified_entries[i] = a.model_copy(update={"y_end": merge_pt})
+            modified_entries[i + 1] = b.model_copy(update={"y_start": merge_pt})
+        center = (modified_entries[i].y_end + modified_entries[i + 1].y_start) // 2
         row = find_gutter_row(
             gray, center, tolerance=config.tolerance,
             threshold=config.variance_threshold,
@@ -846,15 +849,19 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
                     "scaling panel coordinates by (%.3f, %.3f)",
                     plan.width, plan.height, width, height, sx, sy)
         plan = plan.model_copy(deep=True)
+        new_entries = []
         for e in plan.entries:
-            e.y_start = round(e.y_start * sy)
-            e.y_end = round(e.y_end * sy)
-            for b in e.bubble_boxes:
-                b.x = round(b.x * sx)
-                b.y = round(b.y * sy)
-                b.w = round(b.w * sx)
-                b.h = round(b.h * sy)
-        plan.width, plan.height = width, height
+            new_bubbles = [
+                BBox(x=round(b.x * sx), y=round(b.y * sy),
+                     w=round(b.w * sx), h=round(b.h * sy))
+                for b in e.bubble_boxes
+            ]
+            new_entries.append(e.model_copy(update={
+                "y_start": round(e.y_start * sy),
+                "y_end": round(e.y_end * sy),
+                "bubble_boxes": new_bubbles
+            }))
+        plan = plan.model_copy(update={"entries": new_entries, "width": width, "height": height})
 
     cuts = build_cuts(gray_arr, plan, config=config)
 

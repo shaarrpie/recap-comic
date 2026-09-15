@@ -230,11 +230,6 @@ def write_atomic(path: Path, content: str) -> None:
     tmp.replace(path)
 
 
-def _write_atomic(path: Path, content: str) -> None:
-    """Backwards-compatible alias for write_atomic."""
-    write_atomic(path, content)
-
-
 def extract_json(text: str) -> object:
     """Extract the JSON object/array from a model response that may wrap it
     inside fenced code blocks. Raises ValueError on prose (no JSON at all)."""
@@ -260,12 +255,15 @@ def _normalize_bbox(raw: object) -> BBox:
         return raw
     if isinstance(raw, dict):
         if all(k in raw for k in ("x", "y", "w", "h")):
-            return BBox(x=int(raw["x"]), y=int(raw["y"]),
-                        w=int(raw["w"]), h=int(raw["h"]))
+            x, y, w, h = int(raw["x"]), int(raw["y"]), int(raw["w"]), int(raw["h"])
+            if w <= 0 or h <= 0:
+                raise ValueError(f"degenerate bubble box {raw!r}: non-positive width/height")
+            return BBox(x=x, y=y, w=w, h=h)
         if all(k in raw for k in ("x0", "y0", "x1", "y1")):
-            return BBox(x=int(raw["x0"]), y=int(raw["y0"]),
-                        w=int(raw["x1"]) - int(raw["x0"]),
-                        h=int(raw["y1"]) - int(raw["y0"]))
+            x0, y0, x1, y1 = int(raw["x0"]), int(raw["y0"]), int(raw["x1"]), int(raw["y1"])
+            if x1 <= x0 or y1 <= y0:
+                raise ValueError(f"degenerate bubble box {raw!r}: x1<=x0 or y1<=y0")
+            return BBox(x=x0, y=y0, w=x1 - x0, h=y1 - y0)
         raise TypeError(f"cannot interpret bubble box {raw!r}")
     if isinstance(raw, (list, tuple)) and len(raw) == 4:
         x0, y0, x1, y1 = (int(v) for v in raw)
@@ -400,8 +398,8 @@ def stitch_chunk_results(results: list[list[PanelPlanEntry]],
             merged.append((e, length))
 
     entries = [e for e, _length in merged]
-    for i, e in enumerate(entries, start=1):
-        e.panel_index = i  # renumber in reading order after merging
+    # Renumber panel_index using model_copy to avoid mutating Pydantic models
+    entries = [e.model_copy(update={"panel_index": i}) for i, e in enumerate(entries, start=1)]
     return entries
 
 
@@ -548,10 +546,10 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
     with Image.open(path) as img:
         img.load()
         width, height = img.size
+        chunks = make_chunks(img, chunk_height=chunk_height, overlap=overlap)
         log.info("strip loaded file=%s size=%dx%d backend=%s model=%s chunks=%d",
                  path.name, width, height, cfg["backend"], cfg["model"],
-                 len(list(make_chunks(img, chunk_height=chunk_height, overlap=overlap))))
-        chunks = make_chunks(img, chunk_height=chunk_height, overlap=overlap)
+                 len(chunks))
         results: list[list[PanelPlanEntry]] = []
         bases: list[int] = []
         prev_entries: list[PanelPlanEntry] = []
@@ -796,6 +794,9 @@ _GEMINI_RESPONSE_SCHEMA = None  # lazily built in analyze_chunk
 def _build_gemini_response_schema():
     """Build a strict JSON schema for Gemini's response_schema to enforce
     valid JSON output (response_mime_type alone is insufficient)."""
+    global _GEMINI_RESPONSE_SCHEMA
+    if _GEMINI_RESPONSE_SCHEMA is not None:
+        return _GEMINI_RESPONSE_SCHEMA
     from google.genai import types
     panel_entry = types.Schema(
         type="object",
@@ -816,13 +817,14 @@ def _build_gemini_response_schema():
             ),
         },
     )
-    return types.Schema(
+    _GEMINI_RESPONSE_SCHEMA = types.Schema(
         type="object",
         properties={
             "panels": types.Schema(type="array", items=panel_entry),
             "characters": types.Schema(type="array", items=types.Schema(type="string")),
         },
     )
+    return _GEMINI_RESPONSE_SCHEMA
 
 
 class GeminiVisionBackend:
@@ -879,12 +881,12 @@ class GeminiVisionBackend:
                         types.Part.from_bytes(
                             data=buf.getvalue(), mime_type="image/png"),
                     ],
-                     config=types.GenerateContentConfig(
-                          temperature=0.0,
-                          response_mime_type="application/json",
-                          response_schema=_build_gemini_response_schema(),
-                          max_output_tokens=1024,
-                      ),
+config=types.GenerateContentConfig(
+                           temperature=0.0,
+                           response_mime_type="application/json",
+                           response_schema=_build_gemini_response_schema(),
+                           max_output_tokens=4096,
+                       ),
                 )
                 elapsed = time.time() - t0
                 raw = resp.text
@@ -952,7 +954,7 @@ class OpenAIVisionBackend:
         image.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         client = openai.OpenAI(api_key=self._api_key)
-        prompt = _chunk_prompt(image.size[1], previous_context,
+        prompt = _chunk_prompt(image.size[1], image.size[0], previous_context,
                                retry_feedback=retry_feedback)
         resp = client.chat.completions.create(
             model=self.model,
@@ -1089,7 +1091,7 @@ class XkiroVisionBackend:
         buf = io.BytesIO()
         image.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        prompt = _chunk_prompt(image.size[1], previous_context,
+        prompt = _chunk_prompt(image.size[1], image.size[0], previous_context,
                                retry_feedback=retry_feedback)
         operation = f"xkiro-analyze-chunk:{image.size[0]}x{image.size[1]}"
         try:
@@ -1149,7 +1151,7 @@ class AnthropicVisionBackend:
         image.save(buf, format="PNG")
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         client = anthropic.Anthropic(api_key=self._api_key)
-        prompt = _chunk_prompt(image.size[1], previous_context,
+        prompt = _chunk_prompt(image.size[1], image.size[0], previous_context,
                                retry_feedback=retry_feedback)
         resp = client.messages.create(
             model=self.model,
@@ -1215,7 +1217,7 @@ class OllamaVisionBackend:
                       ) -> tuple[list[PanelPlanEntry], list[str]]:
         import urllib.request
 
-        prompt = _chunk_prompt(image.size[1], previous_context,
+        prompt = _chunk_prompt(image.size[1], image.size[0], previous_context,
                                retry_feedback=retry_feedback)
         payload = self._build_payload(image, prompt)
         req = urllib.request.Request(

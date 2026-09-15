@@ -349,9 +349,9 @@ def run_guided(
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     plan_json_path = out / "plan.json"
-    sa.write_atomic(plan_json_path, plan.model_dump_json(indent=2) + "\n")
-    if out_plan is not None:
-        sa.write_atomic(Path(out_plan), plan.model_dump_json(indent=2) + "\n")
+    # Only write to out_dir/plan.json if out_plan is different
+    if out_plan is None or Path(out_plan).resolve() != plan_json_path.resolve():
+        sa.write_atomic(plan_json_path, plan.model_dump_json(indent=2) + "\n")
 
     config = CutterConfig(tolerance=tolerance,
                           max_panel_height=max_panel_height,

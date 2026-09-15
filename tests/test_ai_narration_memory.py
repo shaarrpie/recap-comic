@@ -52,6 +52,19 @@ def session(tmp_path: Path) -> Path:
     return tmp_path
 
 
+def _narrate(session: Path, harness, **kw):
+    """narrate_cropped_panels with an ISOLATED cache dir per call site.
+
+    Tests share identical white panel PNGs; without isolation the repo
+    .cache/ai-narration leaks captions between tests (and between runs).
+    """
+    cache = session / "_test_cache" / f"call_{kw.pop('call_id', id(harness))}"
+    cache.mkdir(parents=True, exist_ok=True)
+    return ain.narrate_cropped_panels(
+        session, api_key="k", request_fn=harness.request_fn, gap_s=0,
+        cache_dir=cache, **kw)
+
+
 def _vision_response(narration: str, dialogue: str,
                      entities: dict | None = None) -> str:
     obj = {"narration": narration, "dialogue": dialogue}
@@ -103,8 +116,7 @@ class Harness:
 def test_seed_runs_before_panel_prompts(session):
     h = Harness([_vision_response("Bam stands at the gate.", '"Bam!"'),
                  _vision_response("Bam runs.", "")])
-    summary = ain.narrate_cropped_panels(
-        session, api_key="k", request_fn=h.request_fn, gap_s=0)
+    summary = _narrate(session, h, call_id="seed_first")
 
     assert summary["narrated"] == 2
     # exactly ONE seed text call for two panels
@@ -121,18 +133,19 @@ def test_seed_runs_before_panel_prompts(session):
 def test_memory_changes_cache_key(session, tmp_path):
     """The cache key must include the memory-augmented prompt: after the
     roster grows, the same image must NOT reuse the cached caption."""
-    cache = tmp_path / "cache"
+    cache = session / "_test_cache" / "memory_key"
+    cache.mkdir(parents=True, exist_ok=True)
 
     h1 = Harness([_vision_response("A person stands.", "")])
     ain.narrate_cropped_panels(session, api_key="k",
                                request_fn=h1.request_fn, gap_s=0,
                                cache_dir=cache)
     cache_files_1 = list(cache.glob("panel_001_*.json"))
+    assert len(cache_files_1) == 1
 
     # memory evolves (Bam now last_seen=1): the seed is skipped (already
     # built) but inject_into_prompt now has panel-1 freshness info ->
     # different final prompt -> different cache key -> fresh call.
-    # Simulate by giving the vision model a response that updates Bam.
     h2 = Harness([
         _vision_response("Bam stands at the gate.", "",
                          entities={"characters_seen": ["Bam"]}),
@@ -167,8 +180,7 @@ def test_entities_update_persists_and_grows_roster(session):
                               "description": "pink hair"}]}),
         _vision_response("Endorsi smiles.", ""),
     ])
-    ain.narrate_cropped_panels(session, api_key="k",
-                               request_fn=h.request_fn, gap_s=0)
+    _narrate(session, h, call_id="entities")
     ctx = json.loads((session / "story_context.json").read_text("utf-8"))
     assert "Endorsi" in ctx["characters"]
     # second panel's prompt saw her in memory
@@ -184,8 +196,7 @@ def test_seed_failure_is_non_fatal(session):
 
     h = Boom([_vision_response("No memory narration.", ""),
               _vision_response("Still narrates.", "")])
-    summary = ain.narrate_cropped_panels(
-        session, api_key="k", request_fn=h.request_fn, gap_s=0)
+    summary = _narrate(session, h, call_id="boom")
     assert summary["narrated"] == 2
     # memory field present (seed failed -> False)
     assert "story_memory" in summary
@@ -195,8 +206,7 @@ def test_scrub_fences_applied_to_narration(session):
     fenced = ("```json\nBam leaps.\n```")
     h = Harness([_vision_response(fenced, ""),
                  _vision_response("Bam runs.", "")])
-    ain.narrate_cropped_panels(session, api_key="k",
-                              request_fn=h.request_fn, gap_s=0)
+    _narrate(session, h, call_id="scrub")
     art = CutArtifact.model_validate_json(
         (session / "panels.json").read_text("utf-8"))
     assert art.panels[0].narration == "Bam leaps."   # fences scrubbed
@@ -207,8 +217,7 @@ def test_geometry_lock_holds(session):
         (session / "panels.json").read_text("utf-8"))
     geo = {p.id: (p.y_start, p.y_end, p.image_file) for p in before.panels}
     h = Harness([_vision_response("x", ""), _vision_response("y", "")])
-    ain.narrate_cropped_panels(session, api_key="k",
-                               request_fn=h.request_fn, gap_s=0)
+    _narrate(session, h, call_id="geom")
     after = CutArtifact.model_validate_json(
         (session / "panels.json").read_text("utf-8"))
     for p in after.panels:
@@ -232,8 +241,7 @@ def test_chapter_script_pass_runs_after_narration(session, monkeypatch):
     monkeypatch.setattr(rsc, "build_chapter_script", fake_build)
     h = Harness([_vision_response("Bam stands.", ""),
                  _vision_response("Bam runs.", "")])
-    summary = ain.narrate_cropped_panels(session, api_key="k",
-                                         request_fn=h.request_fn, gap_s=0)
+    summary = _narrate(session, h, call_id="scriptpass")
     assert calls["n"] == 1
     assert summary["script_pass"]["status"] == "built"
     # narration.txt comes from the script pass

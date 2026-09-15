@@ -8,11 +8,13 @@ import os
 import re
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, UploadFile, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -44,6 +46,14 @@ load_dotenv(BASE_DIR / ".env", override=False)
 setup_logging(level=os.environ.get("LOG_LEVEL", "INFO"),
               log_dir=BASE_DIR / "logs")
 log = get_logger(__name__)
+
+# Thread pool for background jobs - replaces daemon threads
+# Max workers can be configured via env var
+_max_workers = int(os.environ.get("RECAP_WORKERS", "4"))
+_job_executor = ThreadPoolExecutor(max_workers=_max_workers, thread_name_prefix="recap-job")
+
+# Lock for settings file read/write to prevent race conditions
+_settings_lock = threading.Lock()
 
 
 def _silence_win_connection_reset(loop: object) -> None:
@@ -77,6 +87,17 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="recap-comic webapp", lifespan=lifespan)
+
+# CORS middleware - restrict to localhost for security
+# In production, replace with specific frontend origin
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+
 # RECAP_OUTPUT_DIR: test/CI redirection (see conftest.py at the repo
 # root); default is the real per-project webapp_output directory.
 OUTPUT_DIR = Path(os.environ.get("RECAP_OUTPUT_DIR")
@@ -125,23 +146,25 @@ def _settings_path() -> Path:
 
 def _read_settings() -> dict:
     """Saved settings, or defaults when never saved / unreadable."""
-    try:
-        data = json.loads(_settings_path().read_text("utf-8"))
-    except (OSError, ValueError):
-        return dict(_SETTINGS_DEFAULTS)
-    if not isinstance(data, dict):
-        return dict(_SETTINGS_DEFAULTS)
-    return {k: (data[k] if isinstance(data.get(k), str) else v)
-            for k, v in _SETTINGS_DEFAULTS.items()}
+    with _settings_lock:
+        try:
+            data = json.loads(_settings_path().read_text("utf-8"))
+        except (OSError, ValueError):
+            return dict(_SETTINGS_DEFAULTS)
+        if not isinstance(data, dict):
+            return dict(_SETTINGS_DEFAULTS)
+        return {k: (data[k] if isinstance(data.get(k), str) else v)
+                for k, v in _SETTINGS_DEFAULTS.items()}
 
 
 def _write_settings(data: dict) -> None:
     """Atomic tmp+replace (same pattern as manual_crop_api._write_manual)."""
-    p = _settings_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=2), "utf-8")
-    tmp.replace(p)
+    with _settings_lock:
+        p = _settings_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2), "utf-8")
+        tmp.replace(p)
 
 
 def _settings_api_key() -> str:
@@ -173,16 +196,6 @@ async def settings_get():
     s = _read_settings()
     return {**{k: s[k] for k in SETTINGS_FIELDS if k != "api_key"},
             "api_key_set": bool(s.get("api_key", "").strip())}
-
-
-@app.get("/api/settings/key")
-async def settings_key():
-    """Raw api_key, ONLY for pre-filling the Settings view input.
-
-    Local single-user tool: the key is the requesting user's own. Not
-    used by any status/log surface.
-    """
-    return {"api_key": _settings_api_key()}
 
 
 @app.post("/api/settings")
@@ -227,18 +240,27 @@ async def config():
 
 
 @app.get("/api/projects")
-async def projects():
-    """List sessions with derived status for the Library/Dashboard view."""
+async def projects(limit: int = 50, offset: int = 0):
+    """List sessions with derived status for the Library/Dashboard view.
+    
+    Supports pagination with limit and offset parameters.
+    """
     import json
-    result = []
+    # Collect all session directories first
+    session_dirs = [d for d in sorted(OUTPUT_DIR.iterdir()) if d.is_dir()]
+    total = len(session_dirs)
+    
+    # Apply pagination
+    paginated_dirs = session_dirs[offset:offset + limit]
+    
     jobs_by_session: dict[str, list] = {}
     for j in store._jobs.values():
         s = j.config.get("session")
         if s:
             jobs_by_session.setdefault(s, []).append(j)
-    for session_dir in sorted(OUTPUT_DIR.iterdir()):
-        if not session_dir.is_dir():
-            continue
+    
+    result = []
+    for session_dir in paginated_dirs:
         sid = session_dir.name
         panels_json = session_dir / "panels.json"
         tl_json = session_dir / "timeline.json"
@@ -269,7 +291,7 @@ async def projects():
             "created_at": last_job.created_at if last_job else None,
             "updated_at": last_job.updated_at if last_job else None,
         })
-    return {"projects": result}
+    return {"projects": result, "total": total, "limit": limit, "offset": offset}
 
 
 def _discard_session(session, session_dir: Path) -> None:
@@ -1459,3 +1481,13 @@ async def editor_speed(session: str, body: dict):
 from .main_cinematic_routes import attach_routes as _attach_cin  # noqa: E402
 
 _attach_cin(app)
+
+
+def main() -> None:
+    """Entry point for the recap-web console script."""
+    import uvicorn
+    uvicorn.run("webapp.main:app", host="0.0.0.0", port=8000, log_level="info")
+
+
+if __name__ == "__main__":
+    main()

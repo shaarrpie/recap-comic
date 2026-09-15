@@ -133,7 +133,7 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
     if use_xfade:
         return _build_xfade_command(
             cmd, timeline, transitions or [], has_audio, vlabels, alabels,
-            out_path)
+            out_path, base_chains=chains)
 
     n = len(timeline.entries)
     chains.append(f"{''.join(vlabels)}concat=n={n}:v=1:a=0[vcat];"
@@ -157,8 +157,8 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
 def _build_xfade_command(cmd: list[str], timeline: TimelineArtifact,
                          transitions: list[dict], has_audio: bool,
                          vlabels: list[str], alabels: list[str],
-                         out_path: Path) -> list[str]:
-    chains: list[str] = []
+                         out_path: Path, base_chains: list[str] | None = None) -> list[str]:
+    chains: list[str] = list(base_chains) if base_chains else []
     n = len(timeline.entries)
     # xfade needs exactly n-1 transitions (one per panel boundary).
     if len(transitions) != max(0, n - 1):

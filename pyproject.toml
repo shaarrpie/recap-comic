@@ -53,12 +53,13 @@ dev = [
 
 [project.scripts]
 recap-comic = "cli:app"
-recap-web = "webapp.main:app"
+recap-web = "webapp.main:main"
 
 [tool.setuptools]
 packages = ["adapters", "webapp"]
 py-modules = [
     "cli",
+    "cli_cinematic_patch",
     "guided_cutter",
     "guided_pipeline",
     "strip_analyzer",
@@ -69,6 +70,9 @@ py-modules = [
     "recap_video",
     "panel_validator",
     "blank_detector",
+    "panel_filter",
+    "story_context",
+    "cinematic_effects",
 ]
 
 [tool.setuptools.package-data]
