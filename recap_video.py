@@ -350,9 +350,10 @@ def build_narration(artifact: CutArtifact, cfg: VideoConfig,
                 (ln or {}).get("quote") else []
         else:
             text = script_text(p, include_dialogue=cfg.include_dialogue)
-            if text == prev_text:
+            if text and text == prev_text:
                 continue             # duplicate caption: no entry at all
-            prev_text = text
+            if text:
+                prev_text = text
             quotes = [q.strip() for q in re.findall(r"[\"“]([^\"”]+)[\"”]",
                                                     p.dialogue or "")]
         entries.append(NarrationEntry(id=p.id, panel_id=p.id, order=order,
