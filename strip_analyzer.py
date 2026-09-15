@@ -300,7 +300,7 @@ def parse_entries_from_json(text: str, chunk_height: int, *,
 
     max_unit = 1000 if normalized else chunk_height
     scale_y = chunk_height / 1000.0 if normalized else 1.0
-    scale_x = chunk_width / 1000.0 if normalized else 1.0
+    scale_x = (chunk_width if chunk_width is not None else chunk_height) / 1000.0 if normalized else 1.0
     cw = chunk_width if chunk_width is not None else chunk_height
     entries: list[PanelPlanEntry] = []
     for raw in panels:
