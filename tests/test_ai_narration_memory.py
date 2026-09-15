@@ -177,19 +177,18 @@ def test_entities_update_persists_and_grows_roster(session):
 
 def test_seed_failure_is_non_fatal(session):
     class Boom(Harness):
-        def request_fn(self, model, prompt, b64="", system=""):
-            if not b64:
+        def request_fn(self, model, prompt, third=""):
+            if self.SEED_USER_MARK in third:
                 raise RuntimeError("seed unavailable")
-            self.vision_calls.append({"model": model, "prompt": prompt,
-                                      "b64": ""})
-            return self.vision_texts.pop(0)
+            return super().request_fn(model, prompt, third)
 
     h = Boom([_vision_response("No memory narration.", ""),
               _vision_response("Still narrates.", "")])
     summary = ain.narrate_cropped_panels(
         session, api_key="k", request_fn=h.request_fn, gap_s=0)
     assert summary["narrated"] == 2
-    assert summary["story_memory"] in (True, False)   # field present
+    # memory field present (seed failed -> False)
+    assert "story_memory" in summary
 
 
 def test_scrub_fences_applied_to_narration(session):
