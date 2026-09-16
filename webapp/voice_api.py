@@ -40,7 +40,7 @@ SAMPLE_TEXT = ("The protagonist suddenly realizes something is wrong. "
                "The city will never be the same again.")
 
 
-def _session_dir(session: str) -> Path:
+def _session_dir(session: str, *, create: bool = False) -> Path:
     import re
     if not re.match(r"^[0-9a-f]{12}$", session):
         raise HTTPException(400, "invalid session id")
@@ -48,7 +48,11 @@ def _session_dir(session: str) -> Path:
     base = OUTPUT_DIR.resolve()
     if base not in d.parents and d != base:
         raise HTTPException(400, "invalid session path")
-    d.mkdir(parents=True, exist_ok=True)
+    # Read paths must NOT materialize directories: probing
+    # /api/voice/<hex-id> used to create a phantom empty session that then
+    # showed up in /api/projects (see panel_api._session_dir).
+    if create or d.is_dir():
+        d.mkdir(parents=True, exist_ok=True)
     return d
 
 
@@ -115,7 +119,7 @@ def put_voice(session: str, cfg: dict) -> dict:
     for k in DEFAULT_VOICE:
         if k in cfg:
             cur[k] = _coerce_voice_value(k, cfg[k])
-    p = _session_dir(session) / "voice.json"
+    p = _session_dir(session, create=True) / "voice.json"
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(cur, indent=2), "utf-8")
     tmp.replace(p)
@@ -169,7 +173,7 @@ def _rate_args(cfg: dict) -> dict:
 
 
 async def _preview_mp3(session: str, cfg: dict, text: str) -> Path:
-    d = _session_dir(session)
+    d = _session_dir(session, create=True)
     pre = d / ".previews"
     pre.mkdir(exist_ok=True)
     key = hashlib.sha1(

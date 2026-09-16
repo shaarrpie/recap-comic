@@ -67,12 +67,18 @@ def display_seconds(*, audio_seconds: float | None, words: int,
                     travel_px: int, gap: float, min_display: float,
                     max_display: float, silent_wpm: int,
                     pan_speed: int = 450) -> float:
-    """How long a panel stays on screen (including its trailing gap)."""
+    """How long a panel's CONTENT lasts on screen (gap NOT included).
+
+    The trailing `gap` is silence padding appended by the caller/timeline —
+    it must not inflate SRT cues or audio-timed displays. Both branches
+    clamp to `max_display` (a 10-minute TTS ramble must not hold one panel
+    forever) and honour the pan floor and `min_display`.
+    """
     pan_floor = travel_px / pan_speed if travel_px else 0.0
     if audio_seconds is not None:
-        return max(audio_seconds + gap, min_display, pan_floor)
+        return min(max(audio_seconds, min_display, pan_floor), max_display)
     read = (words / silent_wpm) * 60.0 if words else 0.0
-    return min(max(read + gap, min_display, pan_floor), max_display)
+    return min(max(read, min_display, pan_floor), max_display)
 
 
 def build(panels: PanelsArtifact, narration: NarrationArtifact,

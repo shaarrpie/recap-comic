@@ -70,9 +70,9 @@ def detect_panels(gray: np.ndarray, *, tol: int = 28,
             continue
         boxes.append((x, y, bw, bh))
     if reading_order == "right_to_left_rows":
-        boxes.sort(key=lambda b: (b[1], -b[0]))
+        boxes = _order_rows(boxes, right_to_left=True)
     else:
-        boxes.sort(key=lambda b: (b[1], b[0]))
+        boxes = _order_rows(boxes, right_to_left=False)
     return boxes
 
 

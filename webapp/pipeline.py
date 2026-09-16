@@ -856,10 +856,18 @@ def _render_video(job: Job, **kwargs: Any) -> None:
         threads = str(max(2, cpu_count - 2))
     prof = render_profiles(cpu_count).get(render_profile, render_profiles(4)["balanced"])
     prof["threads"] = threads
-    # Build the render command
-    strategy = pick_render_strategy(len(job.panels) if job.panels else 10, 120)
+    # Strategy must reflect the REAL timeline duration. The hardcoded 120
+    # made pick_render_strategy's total_seconds>150 branch dead: a
+    # 10-panel / 400s video rendered DIRECT (one giant filter graph,
+    # unbounded memory) while a 26-panel / 60s video went chunked.
+    ta = _get_timeline_artifact(session_dir)
+    from recap_video import total_seconds
+    n_entries = len(ta.entries)
+    duration_s = total_seconds(ta)
+    strategy = pick_render_strategy(n_entries, duration_s)
+    job.log("INFO", f"render strategy={strategy} entries={n_entries} "
+                    f"duration={duration_s:.1f}s", "render_video")
     if strategy == "chunked":
-        ta = _get_timeline_artifact(session_dir)
         # Chunked renders are heavy too: serialize them behind the same
         # one-render semaphore as direct renders, and make the job
         # cancellable while chunking.
@@ -886,7 +894,6 @@ def _render_video(job: Job, **kwargs: Any) -> None:
             raise _RenderSoftError(f"chunked render failed: {exc}") from exc
     else:
         from adapters.render_ffmpeg import build_command
-        ta = _get_timeline_artifact(session_dir)
         with render_slot() as cancel_event:
             def build_cmd(tmp):
                 return build_command(ta, tmp, ffmpeg_exe=ffmpeg_exe)

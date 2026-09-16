@@ -13,6 +13,7 @@ import contextlib
 import enum
 import json
 import logging
+import re
 import threading
 import time
 import uuid
@@ -38,6 +39,108 @@ class CancelledError(RuntimeError):
     """Raised inside a stage when the job was cancelled."""
 
 
+class _RevMixin:
+    """Bumps the owner Job's revision counter on every mutation.
+
+    The persistence fingerprint (JobStore._save) must notice in-place edits
+    to the mutable payloads: `job.outputs["x"] = "y"` and `job.panels = [...]`
+    (or an append) are real observable changes, and without a revision counter
+    they were only written if some later status/progress change happened to
+    fire — an edit could sit in memory until an unrelated flush.
+    """
+
+    _owner: Job
+
+    def _bump(self) -> None:
+        owner = getattr(self, "_owner", None)
+        if owner is not None:
+            owner._mutated()
+
+
+class _RevDict(_RevMixin, dict):
+    def __init__(self, owner: Job, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._owner = owner
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        super().__setitem__(key, value)
+        self._bump()
+
+    def __delitem__(self, key: Any) -> None:
+        super().__delitem__(key)
+        self._bump()
+
+    def pop(self, *args: Any) -> Any:
+        result = super().pop(*args)
+        self._bump()
+        return result
+
+    def popitem(self) -> Any:
+        result = super().popitem()
+        self._bump()
+        return result
+
+    def clear(self) -> None:
+        super().clear()
+        self._bump()
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        super().update(*args, **kwargs)
+        self._bump()
+
+    def setdefault(self, key: Any, default: Any = None) -> Any:
+        result = super().setdefault(key, default)
+        self._bump()
+        return result
+
+
+class _RevList(_RevMixin, list):
+    def __init__(self, owner: Job, *args: Any) -> None:
+        super().__init__(*args)
+        self._owner = owner
+
+    def __setitem__(self, index: Any, value: Any) -> None:
+        super().__setitem__(index, value)
+        self._bump()
+
+    def __delitem__(self, index: Any) -> None:
+        super().__delitem__(index)
+        self._bump()
+
+    def append(self, value: Any) -> None:
+        super().append(value)
+        self._bump()
+
+    def extend(self, values: Any) -> None:
+        super().extend(values)
+        self._bump()
+
+    def insert(self, index: int, value: Any) -> None:
+        super().insert(index, value)
+        self._bump()
+
+    def pop(self, *args: Any) -> Any:
+        result = super().pop(*args)
+        self._bump()
+        return result
+
+    def remove(self, value: Any) -> None:
+        super().remove(value)
+        self._bump()
+
+    def clear(self) -> None:
+        super().clear()
+        self._bump()
+
+    def sort(self, *args: Any, **kwargs: Any) -> None:
+        super().sort(*args, **kwargs)
+        self._bump()
+
+    def reverse(self) -> None:
+        super().reverse()
+        self._bump()
+
+
 class Job:
     def __init__(self, job_id: str, kind: str, config: dict[str, Any]):
         self.id = job_id
@@ -45,17 +148,64 @@ class Job:
         self.config = dict(config)
         self.status = JobStatus.QUEUED
         self.stage: str | None = None
-        self.progress = 0
+        # Plain backing fields: `progress`/`panels`/`outputs` are properties
+        # below, so __init__ must NOT assign through them (Job.progress = 0
+        # here would invoke the setter before _store/_progress exist; worse,
+        # a property + same-name instance attribute silently breaks the
+        # setter path and mutations stop persisting).
+        self._progress_count = 0
         self.error: str | None = None
-        self.panels: list[dict] = []
-        self.outputs: dict[str, str] = {}
+        self._rev = 0              # bumped by _RevDict/_RevList mutations
+        self._panels = _RevList(self)
+        self._outputs = _RevDict(self)
         self.cancel_requested = False
+        # Strictly-increasing creation order, assigned by JobStore.create().
+        # Wall-clock timestamps alone CANNOT order jobs: on Windows
+        # time.time() has ~15.6ms ticks, so two jobs created in the same
+        # tick tie on BOTH created_at and updated_at, and get_by_session /
+        # _session_index then fall back to arbitrary glob order and can
+        # return the OLDER job. seq is the deterministic tie-break.
+        self.seq: int = 0
         self.created_at = time.time()
         self.started_at: float | None = None
         self.updated_at = time.time()
         self.finished_at: float | None = None
         self._progress = 0
         self._logs: deque[dict] = deque(maxlen=300)
+
+    def _mutated(self) -> None:
+        """Record a mutation of a mutable payload and persist it.
+
+        Used by the revision-aware panels/outputs containers and their
+        setters. Panels are exactly what the review UI reads back, so an
+        in-place edit (narration rewrite, crop adjustment) must be durable on
+        its own — not only when an unrelated status/progress change happens
+        to fire later.
+        """
+        self._rev += 1
+        store = getattr(self, "_store", None)
+        if store is not None:
+            store._save(self)
+
+    @property
+    def panels(self) -> list[dict]:
+        return self._panels
+
+    @panels.setter
+    def panels(self, value: list[dict] | None) -> None:
+        # Assign a fresh revision-aware list (see _RevList): in-place edits
+        # and plain re-assignment both have to be visible to _save().
+        self._panels = _RevList(self, list(value or []))
+        self._mutated()
+
+    @property
+    def outputs(self) -> dict[str, str]:
+        return self._outputs
+
+    @outputs.setter
+    def outputs(self, value: dict[str, str] | None) -> None:
+        self._outputs = _RevDict(self, dict(value or {}))
+        self._mutated()
 
     @property
     def progress(self) -> int:
@@ -117,6 +267,7 @@ class Job:
             "error": self.error,
             "panels": _safe(self.panels),
             "outputs": _safe(self.outputs),
+            "seq": int(self.seq),
             "created_at": float(self.created_at) if self.created_at else None,
             "updated_at": float(self.updated_at) if self.updated_at else None,
             "started_at": float(self.started_at) if self.started_at else None,
@@ -149,6 +300,14 @@ class JobStore:
         self._max = max_jobs
         self._persist_dir: Path | None = None
         self._max_files = max_files
+        # Cached {session: (job_id, updated_at, created_at, seq)} disk index;
+        # see _session_index(). None means "rescan on next lookup".
+        self._index_cache: tuple[float, dict[str, tuple[str, float, float, int]]] | None = None
+        self._SESSION_INDEX_TTL_S = 2.0
+        # Monotonic job sequence: seeded from the highest seq on disk so a
+        # restarted store keeps assigning numbers above every persisted job.
+        self._seq = 0
+        self._seq_seeded = False
         if persist_dir is not None:
             self.configure_persistence(persist_dir)
 
@@ -156,8 +315,33 @@ class JobStore:
         self._persist_dir = Path(path)
         self._persist_dir.mkdir(parents=True, exist_ok=True)
 
+    def _next_seq(self) -> int:
+        """Next creation-order number, continuing above any persisted job.
+
+        Seeds from the max seq on disk on first use so a fresh store over
+        an existing persist_dir does not hand out numbers that sort below
+        old snapshots (that would let a restarted lookup pick a stale job
+        over the newly created one).
+        """
+        with self._lock:
+            if not self._seq_seeded and self._persist_dir is not None:
+                self._seq_seeded = True
+                hi = 0
+                with contextlib.suppress(OSError):
+                    for path in self._persist_dir.glob("*.json"):
+                        try:
+                            payload = (json.loads(path.read_text("utf-8"))
+                                       .get("job") or {})
+                            hi = max(hi, int(payload.get("seq") or 0))
+                        except (OSError, ValueError, TypeError):
+                            continue
+                self._seq = hi
+            self._seq += 1
+            return self._seq
+
     def create(self, kind: str, config: dict[str, Any]) -> Job:
         job = Job(uuid.uuid4().hex[:12], kind, config)
+        job.seq = self._next_seq()
         job._store = self  # type: ignore[attr-defined]
         with self._lock:
             if len(self._jobs) >= self._max:
@@ -198,6 +382,7 @@ class JobStore:
         if self._persist_dir is not None:
             with contextlib.suppress(OSError):
                 (self._persist_dir / f"{job_id}.json").unlink()
+            self._index_cache = None
 
     def get_by_session(self, session: str) -> Job | None:
         """Latest job (memory or disk) whose config.session == session.
@@ -206,18 +391,69 @@ class JobStore:
         job id for upload jobs — generate jobs get fresh UUIDs. Without
         this fallback, opening Logs for an older session 404s even when
         the server never restarted.
+
+        Disk lookups go through a cached session index: the previous code
+        globbed and json.loads'ed EVERY snapshot (up to max_files) on each
+        call, and the Logs UI polls this endpoint.
         """
         best: Job | None = None
+        best_key: tuple[float, float, int] = (0.0, 0.0, 0)
         with self._lock:
             candidates = [j for j in self._jobs.values()
                           if j.config.get("session") == session or j.id == session]
         for job in candidates:
-            if best is None or (job.updated_at or 0) > (best.updated_at or 0):
-                best = job
+            key = (job.updated_at or 0.0, job.created_at or 0.0,
+                   getattr(job, "seq", 0) or 0)
+            if best is None or key > best_key:
+                best, best_key = job, key
+        if self._persist_dir is not None:
+            entry = self._session_index().get(session)
+            if entry is not None:
+                job = self._load_snapshot(entry[0])
+                if job is not None:
+                    job._store = self  # type: ignore[attr-defined]
+                    key = (job.updated_at or 0.0, job.created_at or 0.0,
+                           getattr(job, "seq", 0) or 0)
+                    if best is None or key > best_key:
+                        best, best_key = job, key
+        if best is not None:
+            best._store = self  # type: ignore[attr-defined]
+            with self._lock:
+                self._jobs[best.id] = best
+        return best
+
+    def _load_snapshot(self, job_id: str) -> Job | None:
+        """Load one snapshot without the interrupted-marking side effect."""
+        if self._persist_dir is None:
+            return None
+        path = self._persist_dir / f"{job_id}.json"
+        if not path.is_file():
+            return None
+        try:
+            data = json.loads(path.read_text("utf-8"))
+        except (OSError, ValueError):
+            return None
+        return self._from_dict(data, mark_interrupted=False)
+
+    def _session_index(self) -> dict[str, tuple[str, float, float, int]]:
+        """{session: (job_id, updated_at, created_at, seq)} for every snapshot.
+
+        Cached for a few seconds (the Logs view polls) and invalidated
+        whenever a snapshot is written or removed, so a freshly created job
+        is never hidden by a stale index. The seq tie-break makes "latest
+        job for this session" deterministic: wall-clock timestamps tie on
+        Windows (~15.6ms time.time() resolution), and a strict > on tied
+        timestamps kept whichever file glob() happened to return first —
+        which could be the OLDER job.
+        """
+        now = time.time()
+        cached = self._index_cache
+        if cached is not None and now - cached[0] < self._SESSION_INDEX_TTL_S:
+            return cached[1]
+        index: dict[str, tuple[str, float, float, int]] = {}
         if self._persist_dir is not None:
             try:
-                files = sorted(self._persist_dir.glob("*.json"),
-                               key=lambda p: p.stat().st_mtime)
+                files = list(self._persist_dir.glob("*.json"))
             except OSError:
                 files = []
             for path in files:
@@ -225,20 +461,16 @@ class JobStore:
                     data = json.loads(path.read_text("utf-8"))
                 except (OSError, ValueError):
                     continue
-                cfg = data.get("config", {})
-                if cfg.get("session") != session and path.stem != session:
-                    continue
-                job = self._from_dict(data, mark_interrupted=False)
-                if job is None:
-                    continue
-                job._store = self  # type: ignore[attr-defined]
-                if best is None or (job.updated_at or 0) > (best.updated_at or 0):
-                    best = job
-        if best is not None:
-            best._store = self  # type: ignore[attr-defined]
-            with self._lock:
-                self._jobs[best.id] = best
-        return best
+                payload = data.get("job") or {}
+                sess = (data.get("config") or {}).get("session") or path.stem
+                updated = float(payload.get("updated_at") or 0)
+                created = float(payload.get("created_at") or 0)
+                seq = int(payload.get("seq") or 0)
+                prev = index.get(sess)
+                if prev is None or (updated, created, seq) > (prev[1], prev[2], prev[3]):
+                    index[sess] = (path.stem, updated, created, seq)
+        self._index_cache = (now, index)
+        return index
 
     # -- persistence -------------------------------------------------- #
     def _save(self, job: Job, *, immediate: bool | None = None) -> None:
@@ -259,7 +491,7 @@ class JobStore:
               job.created_at, job.started_at, job.updated_at,
               job.finished_at, len(job._logs),
               job._logs[-1]["t"] if job._logs else 0.0,
-              len(job.panels), repr(job.config))
+              job._rev, repr(job.config))
         prev = getattr(job, "_persist_fp", None)
         if fp == prev and job.status in TERMINAL:
             # already durable at a terminal state, nothing new to write
@@ -270,20 +502,31 @@ class JobStore:
         self._write_snapshot(job)
 
     def flush(self, job: Job | None = None) -> None:
-        """Force-write pending snapshots (used at worker exit; the
-        fingerprint gate already persists every real change, so this is
-        a belt-and-braces final sync)."""
+        """Force-write pending snapshots.
+
+        `job=None` used to be a silent no-op (`jobs = []`) even though the
+        docstring promised a store-wide sync, so a caller relying on it at
+        worker exit wrote nothing. With no argument it now flushes every
+        in-memory job.
+        """
         if self._persist_dir is None:
             return
-        jobs = [job] if job is not None else []
+        jobs = [job] if job is not None else self.snapshot()
         for j in jobs:
             j._persist_fp = None  # type: ignore[attr-defined]
             self._save(j)
 
-    # Keys in job.config whose persisted value must never be the real
-    # credential: snapshots land in .cache/jobs/<job_id>.json on disk.
+    # Keys whose persisted value must never be the real credential: snapshots
+    # land in .cache/jobs/<job_id>.json on disk.
     _REDACTED_CONFIG_KEYS = frozenset({"api_key", "api_keys", "token",
-                                      "password", "secret"})
+                                       "password", "secret"})
+    # Substring markers matched against a normalized (lowercase, alnum-only)
+    # key name. Exact-name matching missed realistic keys such as
+    # "xkiro_api_key", "gemini_api_key", "apiKey", "bearer", "credentials",
+    # so those secrets were written to disk in plaintext. Over-redacting an
+    # innocuous key only costs a blank value in the persisted copy.
+    _REDACTED_KEY_MARKERS = ("key", "token", "password", "passwd", "secret",
+                             "credential", "bearer", "auth")
 
     @classmethod
     def _redact_config(cls, config: dict[str, Any]) -> dict[str, Any]:
@@ -291,10 +534,15 @@ class JobStore:
         job keeps the real key (the worker needs it); only the persisted
         snapshot is redacted. A rehydrated job therefore resumes with
         key="" — same behavior as a restart after a server that never knew
-        the key; run steps read the key from settings/.env again."""
+        the key; run steps read the key from settings/.env again.
+        """
         out = dict(config or {})
         for k in list(out):
-            if k.lower() in cls._REDACTED_CONFIG_KEYS and out[k]:
+            name = re.sub(r"[^a-z0-9]", "", str(k).lower())
+            if not out[k]:
+                continue
+            if (name in cls._REDACTED_CONFIG_KEYS
+                    or any(m in name for m in cls._REDACTED_KEY_MARKERS)):
                 out[k] = ""
         return out
 
@@ -310,6 +558,7 @@ class JobStore:
                     "config": self._redact_config(job.config),
                 }, indent=2), encoding="utf-8")
                 tmp.replace(self._persist_dir / f"{job.id}.json")
+                self._index_cache = None      # a new snapshot changes the index
             except OSError as exc:
                 # Persistence must never break job processing.
                 log.debug("job persist failed for %s: %s", job.id, exc)
@@ -327,7 +576,22 @@ class JobStore:
         job = self._from_dict(data, mark_interrupted=True)
         if job is not None:
             job._store = self  # type: ignore[attr-defined]
+            self._persist_if_restarted(job)
         return job
+
+    def _persist_if_restarted(self, job: Job) -> None:
+        """Persist the 'server restarted' marking that _from_dict derived.
+
+        _from_dict runs BEFORE _store is attached, so the `job.touch()` it
+        used to call could not write anything (touch() no-ops without a
+        store): the FAILED/restarted state was memory-only and got
+        re-derived on every rehydrate, while the snapshot on disk kept
+        saying "running". Attach the store first, then persist.
+        """
+        if not getattr(job, "_needs_persist", False):
+            return
+        job._needs_persist = False
+        job.touch()
 
     @staticmethod
     def _from_dict(data: dict, *, mark_interrupted: bool) -> Job | None:
@@ -342,6 +606,7 @@ class JobStore:
             job.panels = payload.get("panels", [])
             job.outputs = payload.get("outputs", {})
             job.created_at = payload.get("created_at") or time.time()
+            job.seq = int(payload.get("seq") or 0)
             job.started_at = payload.get("started_at")
             job.updated_at = payload.get("updated_at") or time.time()
             job.finished_at = payload.get("finished_at")
@@ -349,12 +614,14 @@ class JobStore:
                 job._logs.append(line)
             if mark_interrupted and job.status not in TERMINAL:
                 # The process died mid-run: say so instead of resurrecting
-                # a zombie "running" job that will never progress.
+                # a zombie "running" job that will never progress. The write
+                # itself happens in JobStore._persist_if_restarted(), once
+                # this job has a _store to write through.
                 job.status = JobStatus.FAILED
                 job.error = ("server restarted while this job was running; "
                              "outputs on disk may be partial — re-run to resume")
                 job.finished_at = time.time()
-                job.touch()
+                job._needs_persist = True
                 job._logs.append({"t": round(time.time(), 3), "level": "ERROR",
                                   "stage": job.stage,
                                   "msg": job.error})

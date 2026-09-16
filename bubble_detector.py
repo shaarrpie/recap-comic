@@ -6,10 +6,11 @@ Why it exists: the AI's bubble_boxes may be missing or wrong. This OpenCV
 detector provides an independent, offline signal. A speech bubble is
 characterised as a near-white region that:
   - is a closed, compact contour of sufficient area,
-  - has a dark border (outline), and
+  - has a dark border (outline) close OUTSIDE the white region, and
   - has a "busy" interior (the dark text/glyphs inside create variance).
-A plain white GUTTER fails all three tests (open, no dark border, flat) and
-is therefore ignored — that is exactly what separates bubbles from gutters.
+A plain white GUTTER fails all three tests (panel-scale, no dark outline,
+flat) and is therefore ignored — that is exactly what separates bubbles from
+gutters.
 
 Heuristic thresholds (area, white level, border brightness, busyness) are
 configurable but ship with conservative defaults; tune on real strips.
@@ -30,8 +31,17 @@ def detect_bubbles(
     dark_border_max: int = 200,
     min_busyness: float = 5.0,
     min_bbox_side: int = 10,
+    ring_pad: int = 3,
 ) -> list[BBox]:
-    """Return pixel bounding boxes of candidate speech bubbles in `gray`."""
+    """Return pixel bounding boxes of candidate speech bubbles in `gray`.
+
+    The outline test samples the ring just OUTSIDE the bright blob. The
+    contour traces the edge of the WHITE INTERIOR, so the bubble's dark
+    outline lies outside it: an earlier version measured the ring *inside*
+    the blob (`filled & ~eroded`), which is white by construction, so
+    `ring_mean` was always ~255 and EVERY candidate was rejected — the
+    "never cut through a bubble" backup signal was silently inert.
+    """
     h, w = gray.shape
     bright = (gray > white_threshold).astype(np.uint8) * 255
     closed = cv2.morphologyEx(bright, cv2.MORPH_CLOSE,
@@ -39,6 +49,7 @@ def detect_bubbles(
     contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL,
                                    cv2.CHAIN_APPROX_SIMPLE)
     boxes: list[BBox] = []
+    kernel = np.ones((2 * ring_pad + 1, 2 * ring_pad + 1), np.uint8)
     for c in contours:
         area = cv2.contourArea(c)
         if area < min_area:
@@ -54,17 +65,20 @@ def detect_bubbles(
         if aspect > 5.0:  # extremely elongated -> not a bubble
             continue
 
-        offset = c - np.array([x, y])
-        filled = np.zeros((bh, bw), dtype=np.uint8)
-        cv2.drawContours(filled, [offset], -1, 255, thickness=cv2.FILLED)
-        eroded = cv2.erode(filled, np.ones((3, 3), np.uint8))
-        ring = (filled > 0) & (eroded == 0)
-        region = gray[y:y + bh, x:x + bw]
-        ring_mean = float(region[ring].mean()) if ring.any() else 255.0
+        # ROI padded so the outward ring around the blob stays in-bounds.
+        x0, y0 = max(0, x - ring_pad), max(0, y - ring_pad)
+        x1, y1 = min(w, x + bw + ring_pad), min(h, y + bh + ring_pad)
+        roi = gray[y0:y1, x0:x1]
+        filled = np.zeros(roi.shape, dtype=np.uint8)
+        cv2.drawContours(filled, [c - np.array([x0, y0])], -1, 255,
+                         thickness=cv2.FILLED)
+        dilated = cv2.dilate(filled, kernel)
+        ring = (dilated > 0) & (filled == 0)   # outline band, OUTSIDE the blob
+        ring_mean = float(roi[ring].mean()) if ring.any() else 255.0
         if ring_mean > dark_border_max:
             continue  # no dark outline -> likely just a white area/gutter
 
-        interior = region[filled > 0]
+        interior = roi[filled > 0]
         busyness = float(interior.std()) if interior.size else 0.0
         if busyness < min_busyness:
             continue  # flat white interior -> no text

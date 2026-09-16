@@ -33,13 +33,17 @@ def _validate_session(session: str) -> None:
         raise HTTPException(400, "invalid session id")
 
 
-def _session_dir(session: str) -> Path:
+def _session_dir(session: str, *, create: bool = False) -> Path:
     _validate_session(session)
     d = (OUTPUT_DIR / session).resolve()
     base = OUTPUT_DIR.resolve()
     if base not in d.parents and d != base:
         raise HTTPException(400, "invalid session path")
-    d.mkdir(parents=True, exist_ok=True)
+    # Read paths must NOT materialize directories: probing
+    # /api/editor/<hex-id> used to create a phantom empty session that then
+    # showed up in /api/projects (see panel_api._session_dir).
+    if create or d.is_dir():
+        d.mkdir(parents=True, exist_ok=True)
     return d
 
 

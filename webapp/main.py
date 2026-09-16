@@ -659,18 +659,33 @@ async def manual_crop_strip(session: str):
 @app.get("/api/voice/preview")
 async def voice_preview(voice: str, rate: str = "+0%", pitch: str = "+0Hz",
                         text: str = "This is how your recap will sound."):
+    import contextlib
     import hashlib
 
     from . import tts_helpers
-    key = hashlib.sha1(f"{voice}|{rate}|{pitch}|{text[:80]}".encode()).hexdigest()[:12]
+
+    # The cache key MUST hash exactly the text that gets synthesized: the
+    # old key hashed text[:80] while synth received text[:160], so two
+    # prompts identical for the first 80 chars shared one cache file and
+    # the FIRST one's audio was served for both.
+    snippet = text[:160]
+    key = hashlib.sha1(f"{voice}|{rate}|{pitch}|{snippet}".encode()).hexdigest()[:12]
     cache = BASE_DIR / ".cache" / "voice_preview"
     cache.mkdir(parents=True, exist_ok=True)
     out = cache / f"{key}.mp3"
     if not out.is_file():
         try:
-            await tts_helpers.synth_one(text[:160], voice, out, timeout_s=20)
+            await tts_helpers.synth_one(snippet, voice, out,
+                                        rate=rate, pitch=pitch, timeout_s=20)
         except Exception as exc:
             raise HTTPException(502, f"preview failed: {exc}") from exc
+        # Keep the preview cache bounded (matches voice_api._preview_mp3):
+        # this directory used to grow without limit.
+        with contextlib.suppress(OSError):
+            files = sorted(cache.glob("*.mp3"), key=lambda p: p.stat().st_mtime)
+            for old in files[:-30]:
+                with contextlib.suppress(OSError):
+                    old.unlink()
     return FileResponse(out, media_type="audio/mpeg")
 
 

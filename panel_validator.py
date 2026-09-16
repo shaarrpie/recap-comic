@@ -72,25 +72,22 @@ class PanelReport:
                 f"Duplicates: {self.duplicates}")
 
     def effective_ids(self, ordered_ids: list[str]) -> list[str]:
-        by = {v.panel_id: v for v in self.verdicts}
-        out = []
-        for pid in ordered_ids:
-            v = by.get(pid)
-            if v is None:
-                out.append(pid)
-                continue
-            if v.user_decision == "delete":
-                continue
-            if v.user_decision == "keep":
-                out.append(pid)
-                continue
-            if v.quality == INVALID:
-                continue
-            out.append(pid)
-        return out
+        # Delegate to the module-level function so the two implementations
+        # can never drift (they previously duplicated the same loop).
+        return _effective_ids_from_verdicts(
+            [{"panel_id": v.panel_id, "quality": v.quality,
+              "user_decision": v.user_decision} for v in self.verdicts],
+            ordered_ids)
 
 
 def effective_ids(report_dict: dict, ordered_ids: list[str]) -> list[str]:
+    """Dict-form twin of PanelReport.effective_ids — keep in sync.
+
+    Single source of truth for "which panels survive review": user
+    delete/keep decisions first, INVALID verdicts dropped, everything else
+    kept. The dataclass method above delegates here via asdict so the two
+    can never drift.
+    """
     by = {v["panel_id"]: v for v in report_dict.get("verdicts", [])}
     out = []
     for pid in ordered_ids:
@@ -110,14 +107,31 @@ def effective_ids(report_dict: dict, ordered_ids: list[str]) -> list[str]:
 
 
 def _region_metrics(gray: np.ndarray, y0: int, y1: int) -> dict[str, float]:
-    """Multi-signal content metrics for gray[y0:y1]."""
+    """Multi-signal content metrics for gray[y0:y1] (full strip width).
+
+    NOTE: `gray` is the whole-strip array — for Stack-A cuts the panel spans
+    the full strip width, so `width` here is the strip width. Callers must
+    NOT interpret height/width as a tight crop box; see validate_panels.
+    """
     import cv2
-    reg = gray[max(0, y0):y1].astype(np.float32)
+    y0c = max(0, y0)
+    reg = gray[y0c:y1].astype(np.float32)
+    h = int(y1 - y0)
+    if reg.size == 0 or reg.shape[0] == 0:
+        return {"variance": 0.0, "edge_density": 0.0,
+                "fg_ratio": 0.0, "entropy": 0.0,
+                "height": h, "width": int(gray.shape[1])}
     variance = float(reg.var())
     edges = cv2.Sobel(reg, cv2.CV_32F, 1, 0, ksize=3)
     edge_density = float(np.abs(edges).mean())
-    frame = np.concatenate([reg[:4].ravel(), reg[-4:].ravel(),
-                            reg[:, :4].ravel(), reg[:, -4:].ravel()])
+    # Border frame: top/bottom 4 rows + left/right 4 cols of the REGION.
+    # For regions under 8px tall, reg[:4] and reg[-4:] overlap and the
+    # median would double-count pixels; use a thin frame instead.
+    top_n = min(4, max(1, reg.shape[0] // 2))
+    sides = [reg[:top_n].ravel(), reg[-top_n:].ravel()]
+    if reg.shape[1] >= 8:
+        sides += [reg[:, :4].ravel(), reg[:, -4:].ravel()]
+    frame = np.concatenate(sides)
     border = float(np.median(frame)) if frame.size else 127.0
     fg_ratio = float((np.abs(reg - border) > 28).mean())
     hist, _ = np.histogram(reg, bins=64, range=(0, 256))
@@ -155,11 +169,18 @@ def validate_panels(gray: np.ndarray, panels: list, *,
     confs = ai_confidences or {}
     report = PanelReport(detected=len(panels))
     hashes: list[tuple[str, int]] = []
-    prev: PanelVerdict | None = None
-    prev_y: tuple[int, int] | None = None
+    # (y0, y1, panel_id) of every earlier non-INVALID panel, for the
+    # all-pairs overlap check below.
+    seen_spans: list[tuple[int, int, str]] = []
     for p in panels:
-        pid = (p.get("id") if isinstance(p, dict) else (getattr(p, "id", None) or getattr(p, "panel_id", None)))
-        pid = str(pid) if pid is not None else ""
+        raw_pid = (p.get("id") if isinstance(p, dict)
+                   else (getattr(p, "id", None) or getattr(p, "panel_id", None)))
+        pid = str(raw_pid) if raw_pid is not None else ""
+        if pid == "":
+            # Id-less panels must NOT share the "" key in verdict/user-decision
+            # maps (a keep/delete decision would leak to the wrong panel):
+            # synthesize a unique id that can never collide with a real one.
+            pid = f"<noid-{len(report.verdicts)}>"
         y0 = int(p["y_start"] if isinstance(p, dict) else p.y_start)
         y1 = int(p["y_end"] if isinstance(p, dict) else p.y_end)
         v = PanelVerdict(panel_id=pid, ai_confidence=confs.get(pid))
@@ -169,18 +190,29 @@ def validate_panels(gray: np.ndarray, panels: list, *,
         else:
             m = _region_metrics(gray, y0, y1)
             v.metrics = m
+            # Geometry here is a full-WIDTH horizontal slice: h is the panel
+            # height, w is the STRIP width. A wide banner/establishing panel is
+            # therefore *normal* for this pipeline — h/w is small by
+            # construction (e.g. a 60px-tall panel on an 800px strip is
+            # 0.075). The min_height_px + min_area_px guards already catch
+            # gutter debris; the aspect check below only fires on absurdly
+            # thin slices well under both, and NEVER invalidates on its own
+            # (SUSPICIOUS at most) so content-bearing banners survive.
             h, w, area = m["height"], m["width"], m["height"] * m["width"]
             aspect = h / max(1, w)
             if h < cfg.min_height_px:
                 v.quality = INVALID
                 v.reasons.append(f"extremely thin crop ({h}px tall)")
-            elif aspect < cfg.min_aspect_hw:
-                v.quality = INVALID
-                v.reasons.append(
-                    f"horizontal strip: height/width {aspect:.3f} < {cfg.min_aspect_hw}")
             elif area < cfg.min_area_px:
                 v.quality = INVALID
                 v.reasons.append(f"tiny area ({area}px²)")
+            elif aspect < cfg.min_aspect_hw and h < cfg.min_height_px:
+                # Unreachable while the min_height_px branch above holds
+                # (kept for config combinations with min_height_px == 0):
+                # aspect alone must not INVALID a full-width slice.
+                v.quality = SUSPICIOUS
+                v.reasons.append(
+                    f"very wide slice: height/width {aspect:.3f} < {cfg.min_aspect_hw}")
             else:
                 if h < cfg.thin_rel_height * strip_h:
                     v.quality = SUSPICIOUS
@@ -209,19 +241,26 @@ def validate_panels(gray: np.ndarray, panels: list, *,
                     v.reasons.append(f"possible duplicate of {other_id}")
                     break
             hashes.append((pid, hsh))
-        if prev_y is not None and v.quality != INVALID and y1 > y0:
-            inter = min(prev_y[1], y1) - max(prev_y[0], y0)
-            union = max(prev_y[1], y1) - min(prev_y[0], y0)
-            iou = inter / max(1, union)
-            if iou >= cfg.overlap_dup:
-                assert prev is not None  # prev_y is not None implies prev
-                v.duplicate_of = v.duplicate_of or prev.panel_id
-                v.quality = SUSPICIOUS if v.quality == NORMAL else v.quality
-                v.reasons.append(f"~identical to previous (IoU {iou:.2f})")
-            elif iou >= cfg.overlap_flag:
-                v.quality = SUSPICIOUS if v.quality == NORMAL else v.quality
-                v.reasons.append(f"overlaps previous (IoU {iou:.2f})")
-        prev, prev_y = v, (y0, y1)
+        if v.quality != INVALID and y1 > y0:
+            # Pairwise overlap is checked against EVERY earlier accepted
+            # panel, not just the previous one: non-adjacent overlaps
+            # (a long panel spanning two small ones) were previously missed.
+            for (oy0, oy1, opid) in seen_spans:
+                inter = min(oy1, y1) - max(oy0, y0)
+                if inter <= 0:
+                    continue
+                union = max(oy1, y1) - min(oy0, y0)
+                iou = inter / max(1, union)
+                if iou >= cfg.overlap_dup:
+                    v.duplicate_of = v.duplicate_of or opid
+                    v.quality = SUSPICIOUS if v.quality == NORMAL else v.quality
+                    v.reasons.append(f"~identical to {opid} (IoU {iou:.2f})")
+                    break
+                if iou >= cfg.overlap_flag:
+                    v.quality = SUSPICIOUS if v.quality == NORMAL else v.quality
+                    v.reasons.append(f"overlaps {opid} (IoU {iou:.2f})")
+                    break
+            seen_spans.append((y0, y1, pid))
         report.verdicts.append(v)
     for v in report.verdicts:
         if v.quality == NORMAL:

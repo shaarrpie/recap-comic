@@ -53,12 +53,21 @@ def synthesize_entry(entry: NarrationEntry, out_dir: Path, *,
             return None, RuntimeError(
                 "kokoro requires --kokoro-model-path and "
                 "--kokoro-voices-path")
-        try:
-            from .tts_kokoro import synthesize as kokoro_synth
-        except ImportError as exc:
+        if rate != "+0%" or pitch != "+0Hz":
+            log.warning("kokoro ignores edge-tts rate/pitch options "
+                        "(rate=%r pitch=%r); using defaults", rate, pitch)
+        if retries != 3:
+            log.warning("kokoro performs a single synthesis attempt; "
+                        "ignoring retries=%r", retries)
+        if probe_duration is None:
             return None, RuntimeError(
-                f"kokoro-onnx not installed: {exc}. pip install kokoro-onnx")
-        out_path = out_dir / f"{entry.id}.wav"
+                "kokoro requires a probe_duration callable to measure audio")
+        safe_name = re.sub(r"[^A-Za-z0-9_-]", "_", entry.id).strip("_") or "panel"
+        if safe_name != entry.id:
+            log.warning("sanitised kokoro output name %r -> %r",
+                        entry.id, safe_name)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / f"{safe_name}.wav"
         try:
             dur = kokoro_synth(
                 entry.text, out_path,
