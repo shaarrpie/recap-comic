@@ -92,6 +92,52 @@ def test_compute_pan_small_panel_keeps_uniform_scale():
     assert pan.scaled_w < rv.WIDTH or pan.scaled_h < rv.HEIGHT  # will be padded
 
 
+def test_compute_pan_landscape_canvas_flips_overflow_axis():
+    """A 16:9 canvas (1920x1080) must scale panels to cover IT, not 1080x1920.
+
+    The overflow axis flips relative to portrait: an exact-fit landscape panel
+    is static, and a wide panel pans right against the landscape width.
+    """
+    assert rv.compute_pan(1920, 1080, 1920, 1080).kind == "static"
+    wide = rv.compute_pan(3840, 1080, 1920, 1080)
+    assert wide.kind == "pan_right"
+    assert wide.scaled_h == 1080            # height matches the landscape canvas
+    assert wide.travel_px == wide.scaled_w - 1920 > 0
+    tall = rv.compute_pan(1080, 3240, 1920, 1080)
+    assert tall.kind == "pan_down"
+    assert tall.scaled_w == 1920            # covers the landscape width
+
+
+def test_compute_pan_canvas_defaults_match_constants():
+    """Omitting the canvas must equal passing the module constants."""
+    assert rv.compute_pan(800, 3600) == rv.compute_pan(800, 3600, rv.WIDTH, rv.HEIGHT)
+
+
+def test_video_config_canvas_defaults_and_hash():
+    """Canvas defaults to 9:16; changing it invalidates the config hash so a
+    landscape render never reuses a portrait video cache entry."""
+    base = rv.VideoConfig()
+    assert (base.canvas_w, base.canvas_h) == (rv.WIDTH, rv.HEIGHT)
+    land = rv.VideoConfig(canvas_w=1920, canvas_h=1080)
+    assert (land.canvas_w, land.canvas_h) == (1920, 1080)
+    assert base.hash() != land.hash()
+
+
+def test_build_timeline_landscape_declares_canvas(cut_dir):
+    """build_timeline must thread the canvas into the artifact AND pan geometry."""
+    d, art = cut_dir
+    cfg = rv.VideoConfig(tts="none")
+    nar = rv.build_narration(art, cfg, panels_hash="h")
+    aud = rv.synthesize_audio(nar, d / "audio", cfg)
+    tl = rv.build_timeline(art, d, nar, aud, d / "audio", cfg, panels_hash="h",
+                           canvas_w=1920, canvas_h=1080)
+    assert (tl.width, tl.height) == (1920, 1080)
+    for e in tl.entries:
+        # every scaled panel must cover the landscape canvas
+        assert e.pan.scaled_w >= 1920
+        assert e.pan.scaled_h >= 1080
+
+
 # ---------------------------------------------------------------- duration --
 def test_display_seconds_rules():
     cfg = rv.VideoConfig(gap_seconds=0.35, min_display_seconds=2.0,
@@ -210,6 +256,49 @@ def test_render_command_builds_without_ffmpeg(cut_dir):
     assert "concat=n=2:v=1:a=0" in fc
     assert "anullsrc" in " ".join(cmd)          # silent panels get silence
     assert "loudnorm" not in fc                 # no audio -> no loudnorm
+
+
+def _tl(pan: rv.PanSpec, w: int, h: int):
+    from adapters.schemas import (BBox, Meta, PanSpec, TimelineArtifact,
+                                  TimelineEntry)
+    from adapters.render_ffmpeg import build_command as _bc
+    return TimelineArtifact(
+        meta=Meta(schema_version="1", generator="t", config_hash="h",
+                  input_hashes={}),
+        width=w, height=h, fps=30, gap_seconds=0.0, min_display_seconds=1.0,
+        entries=[TimelineEntry(panel_id="p1", order=1, source_image="x.png",
+                               bbox=BBox(x=0, y=0, w=pan.scaled_w, h=pan.scaled_h),
+                               start_seconds=0.0, duration_seconds=2.0,
+                               audio_path=None, pan=pan)])
+
+
+@pytest.mark.parametrize("label,w,h,kind,sw,sh,expect", [
+    ("portrait", 1080, 1920, "pan_down", 1080, 4860, "crop=1080:1920"),
+    ("landscape", 1920, 1080, "pan_right", 2160, 1080, "crop=1920:1080"),
+    ("draft", 540, 960, "pan_down", 540, 1440, "crop=540:960"),
+])
+def test_render_honours_declared_canvas(label, w, h, kind, sw, sh, expect):
+    """The renderer must crop to the timeline's declared canvas, not to the
+    hardcoded 1080x1920 defaults. Regression: draft (540x960) was silently
+    upscaled to full HD before the canvas was threaded through."""
+    from adapters.render_ffmpeg import build_command as _bc
+    from adapters.schemas import PanSpec
+    tl = _tl(PanSpec(kind=kind, scaled_w=sw, scaled_h=sh, travel_px=100), w, h)
+    cmd = _bc(tl, Path("out.mp4"))
+    vf = next(a for a in cmd if "crop=" in a)
+    assert expect in vf, f"{label}: expected {expect} in {vf}"
+
+
+def test_render_zoom_uses_declared_canvas():
+    """zoom_in/zoom_out expressions must scale the declared canvas, not the
+    hardcoded 1080x1920 literals."""
+    from adapters.render_ffmpeg import build_command as _bc
+    from adapters.schemas import PanSpec
+    tl = _tl(PanSpec(kind="zoom_in", scaled_w=1920, scaled_h=1080,
+                     travel_px=0), 1920, 1080)
+    cmd = _bc(tl, Path("out.mp4"))
+    expr = next(a for a in cmd if "scale=w=" in a)
+    assert "1920*(1+0.3" in expr and "1080*(1+0.3" in expr
 
 
 # ------------------------------------------------------------ orchestrator --

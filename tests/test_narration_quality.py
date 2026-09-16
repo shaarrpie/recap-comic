@@ -216,6 +216,41 @@ class TestPacingByClass:
         assert dur >= 45000 / (cfg.max_pan_px_per_sec
                                * cfg.pan_fit_speech_speedup)
 
+    @pytest.mark.parametrize("travel", [
+        # durations are lower bounds: rounding must never truncate a pan
+        # floor below the exact readability bound it is derived from.
+        45000,   # the case that regressed: 45000/1350 = 33.3333 -> 33.333
+        4500,    # floor inside the speech window -> bounded speed-up applies
+        900,     # exact 2.0s at base speed, no speed-up needed
+    ])
+    def test_rounding_never_truncates_pan_floor(self, travel):
+        cfg = rv.VideoConfig(min_display_seconds=2.0, pan_fit_speech=True)
+        dur = rv.display_seconds(audio_seconds=0.5, words=0,
+                                 travel_px=travel, cfg=cfg,
+                                 panel_class="calm")
+        # The floor is travel/base_speed, but pan_fit_speech may raise the
+        # speed (bounded by pan_fit_speech_speedup) to fit the speech window.
+        # Whichever floor actually applies, the returned duration must not
+        # be truncated below it by the millisecond rounding.
+        base = 0.5 + cfg.gap_seconds
+        base_speed_floor = travel / cfg.max_pan_px_per_sec
+        bounded_floor = travel / (cfg.max_pan_px_per_sec
+                                  * cfg.pan_fit_speech_speedup)
+        # pan_fit_speech only ever raises speed when the floor beats speech,
+        # so the operative floor is the max of bounded floor and speech/base
+        operative = max(bounded_floor if base_speed_floor > base else 0.0,
+                        base, cfg.min_display_seconds)
+        assert dur >= operative - 1e-9, \
+            f"{dur} truncated below operative floor {operative}"
+
+    def test_exact_millisecond_durations_unchanged(self):
+        """Values already on a millisecond boundary must not be bumped."""
+        assert rv._round_ms_up(2.0) == 2.0
+        assert rv._round_ms_up(0.85) == 0.85
+        assert rv._round_ms_up(12.0) == 12.0
+        # and must never fall below the input
+        assert rv._round_ms_up(45000 / 1350) >= 45000 / 1350
+
     def test_pan_fit_speech_off_by_default(self):
         # Default behaviour unchanged: the classic pan floor always wins.
         cfg = rv.VideoConfig(min_display_seconds=2.0)

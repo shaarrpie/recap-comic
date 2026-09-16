@@ -26,19 +26,22 @@ log = logging.getLogger(__name__)
 WIDTH, HEIGHT = 1080, 1920
 
 
-def fit_pan(w: int, h: int) -> PanSpec:
-    """Scale a panel so it covers 1080×1920; overflow axis gets the pan.
+def fit_pan(w: int, h: int, width: int = WIDTH, height: int = HEIGHT) -> PanSpec:
+    """Scale a panel so it covers the output canvas; overflow axis gets the pan.
 
-    Never centre-crops away content: a tall panel pans down, a wide one pans
-    right, an exact-fit stays static.
+    Canvas defaults to 1080x1920 (9:16). Pass landscape dimensions (e.g.
+    1920x1080) to emit a 16:9 timeline instead -- the overflow axis flips, so
+    a wide panel becomes a pan_down candidate. Never centre-crops away
+    content: a tall panel pans down, a wide one pans right, an exact-fit
+    stays static.
     """
     if w <= 0 or h <= 0:
         raise ValueError(f"panel must have positive size, got {w}x{h}")
-    scale = max(WIDTH / w, HEIGHT / h)
-    scaled_w = max(WIDTH, round(w * scale))
-    scaled_h = max(HEIGHT, round(h * scale))
-    over_h = scaled_h - HEIGHT
-    over_w = scaled_w - WIDTH
+    scale = max(width / w, height / h)
+    scaled_w = max(width, round(w * scale))
+    scaled_h = max(height, round(h * scale))
+    over_h = scaled_h - height
+    over_w = scaled_w - width
     if over_h > 2 and over_h >= over_w:
         return PanSpec(kind="pan_down", scaled_w=scaled_w, scaled_h=scaled_h,
                        travel_px=over_h)
@@ -82,12 +85,17 @@ def display_seconds(*, audio_seconds: float | None, words: int,
 
 
 def build(panels: PanelsArtifact, narration: NarrationArtifact,
-          audio: AudioArtifact, *, gap: float = 0.35,
-          min_display: float = 2.0, max_display: float = 12.0,
-          silent_wpm: int = 160, fps: int = 30,
-          config_hash: str = "", input_hashes: dict[str, str] | None = None,
-          pan_speed: int = 450) -> TimelineArtifact:
-    """Assemble a contiguous timeline from already-built stages."""
+           audio: AudioArtifact, *, gap: float = 0.35,
+           min_display: float = 2.0, max_display: float = 12.0,
+           silent_wpm: int = 160, fps: int = 30,
+           config_hash: str = "", input_hashes: dict[str, str] | None = None,
+           pan_speed: int = 450,
+           width: int = WIDTH, height: int = HEIGHT) -> TimelineArtifact:
+    """Assemble a contiguous timeline from already-built stages.
+
+    width/height select the output canvas (default 1080x1920 portrait; pass
+    1920x1080 for a 16:9 landscape edit).
+    """
     by_audio = {a.entry_id: a for a in audio.entries}
     by_text = {n.id: n for n in narration.entries}
     entries: list[TimelineEntry] = []
@@ -102,7 +110,7 @@ def build(panels: PanelsArtifact, narration: NarrationArtifact,
         dur = display_seconds(
             audio_seconds=a.duration_seconds if a else None,
             words=_word_count(text),
-            travel_px=fit_pan(p.bbox.w, h).travel_px,
+            travel_px=fit_pan(p.bbox.w, h, width, height).travel_px,
             gap=gap, min_display=min_display,
             max_display=max_display, silent_wpm=silent_wpm,
             pan_speed=pan_speed)
@@ -113,7 +121,7 @@ def build(panels: PanelsArtifact, narration: NarrationArtifact,
             start_seconds=round(t, 3),
             duration_seconds=round(dur, 3),
             audio_path=a.path if a else None,
-            pan=fit_pan(p.bbox.w, h)))
+            pan=fit_pan(p.bbox.w, h, width, height)))
         t += dur
     if not entries:
         raise ValueError("no usable panels in PanelsArtifact")
@@ -123,6 +131,6 @@ def build(panels: PanelsArtifact, narration: NarrationArtifact,
                   generator="adapters.timeline",
                   config_hash=config_hash,
                   input_hashes=meta_input_hashes),
-        width=WIDTH, height=HEIGHT, fps=fps,
+        width=width, height=height, fps=fps,
         gap_seconds=gap, min_display_seconds=min_display,
         entries=entries)

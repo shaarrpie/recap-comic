@@ -1,0 +1,43 @@
+{
+  "series_title": "stitched:019.webp+020.webp",
+  "chapter": null,
+  "characters": {
+    "White Dragon": {
+      "role": "minor",
+      "description": "Large white dragon with sharp teeth and a long red tongue.",
+      "first_seen": 2,
+      "last_seen": 3,
+      "aliases": [],
+      "status": "active",
+      "associated_locations": [],
+      "relationships": {}
+    }
+  },
+  "locations": {},
+  "story_threads": [
+    {
+      "id": "t1",
+      "summary": "The masked figure confronts the combatant about the ongoing fight.",
+      "status": "resolved"
+    }
+  ],
+  "key_events": [
+    {
+      "panel": 1,
+      "summary": "The dragon attacks or is engaged by the falling group of figures."
+    },
+    {
+      "panel": 3,
+      "summary": "The masked figure rides the large beast and confronts the falling individual."
+    },
+    {
+      "panel": 4,
+      "summary": "The combatant is brought into close proximity with the blade, ending the confrontation."
+    }
+  ],
+  "_meta": {
+    "last_panel": 4,
+    "seed_built": true,
+    "version": 2
+  }
+}

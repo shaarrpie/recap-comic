@@ -734,6 +734,10 @@ def guided_video(
              "instead of holding silent frames after the voice stops "
              "(default off: classic pacing, pan floor always wins)"),
     fps: int = typer.Option(30, "--fps"),
+    canvas: str = typer.Option(
+        "9:16", "--canvas",
+        help="output aspect: 9:16 (1080x1920 portrait, default) | 16:9 "
+             "(1920x1080 landscape) | <W>x<H> explicit"),
     ffmpeg: str = typer.Option("ffmpeg", "--ffmpeg", help="ffmpeg executable"),
     ffprobe: str = typer.Option("ffprobe", "--ffprobe", help="ffprobe executable"),
     dry_run: bool = typer.Option(
@@ -742,15 +746,40 @@ def guided_video(
     force: bool = typer.Option(False, "--force", help="ignore all caches"),
     log_level: str = typer.Option("INFO", "--log-level"),
 ) -> None:
-    """Phase 3: panels.json -> recap.mp4 (9:16, narrated, captioned).
+    """Phase 3: panels.json -> recap.mp4 (narrated, captioned).
 
     Reads the per-panel narration, synthesises speech with edge-tts (or none),
     builds a drift-free timeline from MEASURED clip durations, pans each
     panel (Ken-Burns) and renders one mp4 with ffmpeg. Also writes recap.srt,
     timeline.json, audio/ and narration.json next to the mp4.
+
+    --canvas selects the output aspect (9:16 portrait default, 16:9 landscape).
     """
     _configure_logging(log_level)
     from recap_video import VideoConfig, VideoError, make_recap_video
+
+    def _parse_canvas(spec: str) -> tuple[int, int]:
+        s = spec.strip().lower().replace(" ", "")
+        named = {"9:16": (1080, 1920), "16:9": (1920, 1080),
+                 "portrait": (1080, 1920), "landscape": (1920, 1080)}
+        if s in named:
+            return named[s]
+        if "x" in s:
+            try:
+                w, h = (int(v) for v in s.split("x", 1))
+                if w <= 0 or h <= 0:
+                    raise ValueError
+                return w, h
+            except ValueError:
+                pass
+        raise ValueError(
+            f"bad --canvas {spec!r}: use 9:16, 16:9, or <W>x<H> (e.g. 1920x1080)")
+
+    try:
+        canvas_w, canvas_h = _parse_canvas(canvas)
+    except ValueError as exc:
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(1) from exc
 
     tts = _validate_tts(tts)
     out_path = out or panels.parent / "recap.mp4"
@@ -760,7 +789,7 @@ def guided_video(
         include_dialogue=dialogue, gap_seconds=gap,
         min_display_seconds=min_display, max_display_seconds=max_display,
         max_pan_px_per_sec=pan_speed, pan_fit_speech=pan_fit_speech,
-        fps=fps,
+        fps=fps, canvas_w=canvas_w, canvas_h=canvas_h,
         ffmpeg_exe=ffmpeg, ffprobe_exe=ffprobe,
         kokoro_model_path=kokoro_model_path,
         kokoro_voices_path=kokoro_voices_path)

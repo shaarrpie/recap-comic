@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "style": "recap",
+  "generator": "recap_script.1",
+  "model_used": "custom",
+  "fallback_used": false,
+  "input_hash": "b93ebee8ce7acc0e0e9d4090b52c608e",
+  "lines": [
+    {
+      "panel_id": "001",
+      "panel_index": 1,
+      "text": "Dark-clothed warriors scatter through the stormy sky as a giant white dragon roars, setting the stage for a brutal mid-air collision.",
+      "part": "hook",
+      "quote": null
+    },
+    {
+      "panel_id": "003",
+      "panel_index": 3,
+      "text": "From the back of a massive dark beast, a masked figure shouts at the falling combatant, demanding they explain their intentions before attacking.",
+      "part": "escalation",
+      "quote": "HEY! DON'T JUST GO SLICING WITHOUT SAYING ANYTHING!"
+    },
+    {
+      "panel_id": "004",
+      "panel_index": 4,
+      "text": "The confrontation ends in an instant as a blade tip stops inches from the long-haired figure's face, leaving them stunned by the sudden proximity.",
+      "part": "cliffhanger",
+      "quote": "Diiin"
+    }
+  ],
+  "text": "Dark-clothed warriors scatter through the stormy sky as a giant white dragon roars, setting the stage for a brutal mid-air collision. From the back of a massive dark beast, a masked figure shouts at the falling combatant, demanding they explain their intentions before attacking. The confrontation ends in an instant as a blade tip stops inches from the long-haired figure's face, leaving them stunned by the sudden proximity.",
+  "structure": [
+    "hook",
+    "setup",
+    "escalation",
+    "cliffhanger"
+  ]
+}

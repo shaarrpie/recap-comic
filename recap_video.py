@@ -105,6 +105,12 @@ class VideoConfig:
     action_floor_seconds: float = 0.8
     class_duration_multiplier: dict[str, float] | None = None  # set in __post_init__
     fps: int = 30
+    # Output canvas. Defaults to 1080x1920 (9:16 portrait). Pass 1920x1080
+    # for a 16:9 landscape edit. Drives pan geometry, the TimelineArtifact's
+    # declared dimensions, and the ffmpeg crop; participates in hash() so a
+    # canvas change invalidates the video cache.
+    canvas_w: int = WIDTH
+    canvas_h: int = HEIGHT
     ffmpeg_exe: str = "ffmpeg"
     ffprobe_exe: str = "ffprobe"
     kokoro_model_path: Path | None = None
@@ -536,20 +542,24 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
 # --------------------------------------------------------------------------- #
 # Stage 3 — timeline
 # --------------------------------------------------------------------------- #
-def compute_pan(width: int, height: int) -> PanSpec:
-    """Scale the panel so BOTH dims cover 1080x1920; pan along the overflow.
+def compute_pan(width: int, height: int,
+                canvas_w: int = WIDTH, canvas_h: int = HEIGHT) -> PanSpec:
+    """Scale the panel so BOTH dims cover the canvas; pan along the overflow.
 
-    Never centre-crops away content: a tall panel is read top->bottom
-    (pan_down), a wide one left->right (pan_right).  Exact-fit is static.
+    Canvas defaults to 1080x1920 (9:16). Pass landscape dimensions (e.g.
+    1920x1080) for a 16:9 edit -- the overflow axis flips, so wide panels
+    become pan_down candidates. Never centre-crops away content: a tall panel
+    is read top->bottom (pan_down), a wide one left->right (pan_right).
+    Exact-fit is static.
     """
     if width <= 0 or height <= 0:
         raise ValueError("panel must have positive size")
-    scale = max(WIDTH / width, HEIGHT / height)
+    scale = max(canvas_w / width, canvas_h / height)
     if scale > 4.0:
         scale = 4.0
     scaled_w = math.ceil(width * scale)
     scaled_h = math.ceil(height * scale)
-    over_h, over_w = scaled_h - HEIGHT, scaled_w - WIDTH
+    over_h, over_w = scaled_h - canvas_h, scaled_w - canvas_w
     if over_h > 2 and over_h >= over_w:
         return PanSpec(kind="pan_down", scaled_w=scaled_w, scaled_h=scaled_h,
                        travel_px=over_h)
@@ -557,6 +567,19 @@ def compute_pan(width: int, height: int) -> PanSpec:
         return PanSpec(kind="pan_right", scaled_w=scaled_w, scaled_h=scaled_h,
                        travel_px=over_w)
     return PanSpec(kind="static", scaled_w=scaled_w, scaled_h=scaled_h, travel_px=0)
+
+
+def _round_ms_up(x: float) -> float:
+    """Round up to millisecond precision.
+
+    Panel durations are LOWER bounds: narration must finish and a pan must
+    stay readable at max_pan_px_per_sec. Truncating with round() can shave a
+    sub-millisecond off an exact pan floor and silently violate that
+    invariant (observed: 45000/1350 = 33.3333 rendered as 33.333, dropping
+    below the readability floor). The inner round(..., 6) strips binary
+    float noise so genuinely exact ms values are left untouched.
+    """
+    return math.ceil(round(x * 1000.0, 6)) / 1000.0
 
 
 def display_seconds(*, audio_seconds: float | None, words: int,
@@ -593,12 +616,12 @@ def display_seconds(*, audio_seconds: float | None, words: int,
                         cfg.action_floor_seconds)
         else:
             floor = cfg.min_display_seconds
-        return round(max(base, floor, pan_floor) * mult, 3)
+        return _round_ms_up(max(base, floor, pan_floor) * mult)
     # silent panel: reading-speed heuristic (no audio => no drift possible)
     read = (words / cfg.silent_wpm) * 60.0 if words else 0.0
     dur = min(max(read + cfg.gap_seconds, cfg.min_display_seconds),
               cfg.max_display_seconds)
-    return round(max(dur, pan_floor) * mult, 3)
+    return _round_ms_up(max(dur, pan_floor) * mult)
 
 
 def _classify(p: CutPanel) -> str:
@@ -618,7 +641,15 @@ def _classify(p: CutPanel) -> str:
 def build_timeline(artifact: CutArtifact, panels_dir: Path,
                    narration: NarrationArtifact, audio: AudioArtifact,
                    audio_dir: Path, cfg: VideoConfig,
-                   *, panels_hash: str) -> TimelineArtifact:
+                   *, panels_hash: str,
+                   canvas_w: int = WIDTH, canvas_h: int = HEIGHT) -> TimelineArtifact:
+    """Assemble the timeline.
+
+    canvas_w/canvas_h select the output canvas (default 1080x1920 portrait;
+    pass 1920x1080 for a 16:9 landscape edit). The canvas drives both pan
+    geometry and the TimelineArtifact's declared dimensions, which the
+    renderer honours.
+    """
     by_audio = {a.entry_id: a for a in audio.entries}
     by_text = {n.id: n for n in narration.entries}
     entries: list[TimelineEntry] = []
@@ -684,7 +715,7 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
             # PNG dimensions are the source crop dimensions.
             png_w = p.strip_width or artifact.width
             png_h = h
-        pan = compute_pan(png_w, png_h)
+        pan = compute_pan(png_w, png_h, canvas_w, canvas_h)
         dur = display_seconds(
             audio_seconds=a.duration_seconds if a else None,
             words=_word_count(text), travel_px=pan.travel_px, cfg=cfg,
@@ -703,7 +734,7 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
             "panels.json": panels_hash,
             "narration.json": _sha256_text(narration.model_dump_json()),
             "audio.json": _sha256_text(audio.model_dump_json())}),
-        width=WIDTH, height=HEIGHT, fps=cfg.fps,
+        width=canvas_w, height=canvas_h, fps=cfg.fps,
         gap_seconds=cfg.gap_seconds,
         min_display_seconds=cfg.min_display_seconds, entries=entries,
         skipped_panels=skipped)
@@ -875,7 +906,8 @@ def make_recap_video(panels_json: Path, out_path: Path,
 
     # 3. timeline
     timeline = build_timeline(artifact, panels_dir, narration, audio,
-                              audio_dir, cfg, panels_hash=panels_hash)
+                              audio_dir, cfg, panels_hash=panels_hash,
+                              canvas_w=cfg.canvas_w, canvas_h=cfg.canvas_h)
     _write_atomic(work / "timeline.json",
                   timeline.model_dump_json(indent=2) + "\n")
 
@@ -935,8 +967,10 @@ def render_edited_project(editor_path: Path, out_path: Path,
         scaled_h = e.get("pan", {}).get("scaled_h", HEIGHT)
         travel_px = e.get("pan", {}).get("travel_px", 0)
         if pan_kind in ("zoom_in", "zoom_out"):
-            scaled_w = WIDTH
-            scaled_h = HEIGHT
+            # zoom covers the canvas; the renderer derives the crop from the
+            # timeline's declared dimensions, so match those here.
+            scaled_w = editor.project.project.get("width", WIDTH)
+            scaled_h = editor.project.project.get("height", HEIGHT)
             travel_px = 0
         audio_path = e.get("audio_path")
         if audio_path and not Path(audio_path).is_file():

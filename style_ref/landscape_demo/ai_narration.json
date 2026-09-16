@@ -1,0 +1,22 @@
+{
+  "001": {
+    "model_used": "agnes-3.0-flash",
+    "fallback_used": false,
+    "cached": false
+  },
+  "002": {
+    "model_used": "agnes-3.0-flash",
+    "fallback_used": false,
+    "cached": false
+  },
+  "003": {
+    "model_used": "agnes-3.0-flash",
+    "fallback_used": false,
+    "cached": false
+  },
+  "004": {
+    "model_used": "agnes-3.0-flash",
+    "fallback_used": false,
+    "cached": false
+  }
+}

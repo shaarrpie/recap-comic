@@ -25,6 +25,7 @@ the 1080x1920 frame (overflow axis gets the pan; exact-fit gets static).
 from __future__ import annotations
 
 import subprocess
+from dataclasses import dataclass
 from pathlib import Path
 
 from .schemas import TimelineArtifact
@@ -38,47 +39,116 @@ class RenderError(RuntimeError):
         super().__init__(f"ffmpeg failed (last stderr lines):\n{stderr_tail}")
 
 
-def _scale_crop(kind: str, sw: int, sh: int, dur: float, t: str = "t") -> str:
-    """Build the scale+crop filter segment for one panel.
+# --------------------------------------------------------------------------- #
+# Visual style (blur background + vignette + optional colour grade)
+# --------------------------------------------------------------------------- #
+@dataclass
+class StyleConfig:
+    """Manhwa-recap look knobs. Defaults follow the shipped style patch:
+    the panel floats on a blurred full-frame copy of itself with a strong
+    dark vignette; the colour grade is OFF by default.
 
-    When the scale cap leaves the scaled image smaller than the target frame
-    (tiny panel), a pad step fills to 1080x1920 with black so crop never sees
-    an undersized buffer — this replaces the old max(WIDTH, …) clamping that
-    stretched panels non-uniformly.
+    All three effects are frame-local (spatial/per-pixel), so the grade and
+    the vignette are applied ONCE on the composited output instead of once
+    per panel clip -- bit-identical result, one filter pass instead of N.
+    The blur background must be per-panel (each clip has its own source).
     """
-    pad = "" if (sw >= WIDTH and sh >= HEIGHT) else \
-          f"pad={max(WIDTH,sw)}:{max(HEIGHT,sh)}:(ow-iw)/2:(oh-ih)/2:color=black,"
+
+    blur_background: bool = True    # panel floats on a blurred full-frame bg
+    color_grade: bool = False       # darken + desaturate + cool blue-gray tint
+    vignette: bool = True           # strong dark vignette around the edges
+    vignette_angle: str = "PI/2.5"  # ffmpeg angle expr; smaller = stronger
+    blur_sigma: float = 40.0        # gblur sigma for the background branch
+
+
+def _style_post_filters(style: StyleConfig | None) -> list[str]:
+    """Grade + vignette filters applied to the final composited video."""
+    if style is None:
+        return []
+    post: list[str] = []
+    if style.color_grade:
+        post += [
+            # darken + desaturate + contrast
+            "eq=brightness=-0.07:saturation=0.82:contrast=1.14",
+            # cool blue-gray tint (less red, more blue)
+            "colorchannelmixer="
+            "rr=0.92:rg=0.0:rb=0.08:"
+            "gr=0.0:gg=0.90:gb=0.10:"
+            "br=0.0:bg=0.15:bb=0.90",
+        ]
+    if style.vignette:
+        post.append(f"vignette=angle={style.vignette_angle}")
+    return post
+
+
+def _blur_bg_chain(i: int, w: int, h: int, sigma: float) -> str:
+    """One panel composited onto a blurred, slightly darkened full-frame
+    copy of itself. The foreground is contain-fitted (the whole panel stays
+    visible); the background covers the canvas and fills the letterbox.
+
+    Returns the chain WITHOUT the trailing label; the caller appends
+    transitions/setsar/fps/[vN] exactly as for the plain scale+crop chain.
+    """
+    return (
+        f"split=2[bgr{i}][fgr{i}];"
+        f"[bgr{i}]"
+        f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop={w}:{h}:(iw-{w})/2:(ih-{h})/2,"
+        f"gblur=sigma={sigma:g},"
+        f"eq=brightness=-0.10:saturation=1.3"
+        f"[bg{i}];"
+        f"[fgr{i}]"
+        f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos"
+        f"[fg{i}];"
+        f"[bg{i}][fg{i}]overlay=x=(W-w)/2:y=(H-h)/2"
+    )
+
+
+def _scale_crop(kind: str, sw: int, sh: int, dur: float, t: str = "t",
+                w: int = WIDTH, h: int = HEIGHT) -> str:
+    """Build the scale+crop filter segment for one panel on a w x h canvas.
+
+    The canvas defaults to 1080x1920 (9:16); callers pass the timeline's own
+    dimensions so landscape timelines render landscape and draft (540x960)
+    renders actually render at draft size.
+    """
+    pad = "" if (sw >= w and sh >= h) else \
+          f"pad={max(w,sw)}:{max(h,sh)}:(ow-iw)/2:(oh-ih)/2:color=black,"
     if kind == "pan_down":
-        return (f"scale={sw}:{sh},{pad}crop={WIDTH}:{HEIGHT}:"
-                f"x=0:y='(ih-{HEIGHT})*{t}/{dur:.3f}'")
+        return (f"scale={sw}:{sh},{pad}crop={w}:{h}:"
+                f"x=0:y='(ih-{h})*{t}/{dur:.3f}'")
     if kind == "pan_right":
-        return (f"scale={sw}:{sh},{pad}crop={WIDTH}:{HEIGHT}:"
-                f"x='(iw-{WIDTH})*{t}/{dur:.3f}':y=0")
+        return (f"scale={sw}:{sh},{pad}crop={w}:{h}:"
+                f"x='(iw-{w})*{t}/{dur:.3f}':y=0")
     if kind == "pan_left":
-        return (f"scale={sw}:{sh},{pad}crop={WIDTH}:{HEIGHT}:"
-                f"x='(iw-{WIDTH})*(1-{t}/{dur:.3f})':y=0")
+        return (f"scale={sw}:{sh},{pad}crop={w}:{h}:"
+                f"x='(iw-{w})*(1-{t}/{dur:.3f})':y=0")
     if kind == "pan_up":
-        return (f"scale={sw}:{sh},{pad}crop={WIDTH}:{HEIGHT}:"
-                f"x=0:y='(ih-{HEIGHT})*(1-{t}/{dur:.3f})'")
+        return (f"scale={sw}:{sh},{pad}crop={w}:{h}:"
+                f"x=0:y='(ih-{h})*(1-{t}/{dur:.3f})'")
     if kind == "zoom_in":
-        zw = f"1080*(1+0.3*{t}/{dur:.3f})"
-        zh = f"1920*(1+0.3*{t}/{dur:.3f})"
-        return (f"scale=w={zw}:h={zh}:eval=frame,crop={WIDTH}:{HEIGHT}:"
-                f"x='(iw-{WIDTH})/2':y='(ih-{HEIGHT})/2'")
+        zw = f"{w}*(1+0.3*{t}/{dur:.3f})"
+        zh = f"{h}*(1+0.3*{t}/{dur:.3f})"
+        return (f"scale=w={zw}:h={zh}:eval=frame,crop={w}:{h}:"
+                f"x='(iw-{w})/2':y='(ih-{h})/2'")
     if kind == "zoom_out":
-        zw = f"1080*(1.3-0.3*{t}/{dur:.3f})"
-        zh = f"1920*(1.3-0.3*{t}/{dur:.3f})"
-        return (f"scale=w={zw}:h={zh}:eval=frame,crop={WIDTH}:{HEIGHT}:"
-                f"x='(iw-{WIDTH})/2':y='(ih-{HEIGHT})/2'")
-    return f"scale={sw}:{sh},{pad}crop={WIDTH}:{HEIGHT}:x=0:y=0"
+        zw = f"{w}*(1.3-0.3*{t}/{dur:.3f})"
+        zh = f"{h}*(1.3-0.3*{t}/{dur:.3f})"
+        return (f"scale=w={zw}:h={zh}:eval=frame,crop={w}:{h}:"
+                f"x='(iw-{w})/2':y='(ih-{h})/2'")
+    return f"scale={sw}:{sh},{pad}crop={w}:{h}:x=0:y=0"
 
 
 def build_command(timeline: TimelineArtifact, out_path: Path,
                   ffmpeg_exe: str = "ffmpeg",
-                  transitions: list[dict] | None = None) -> list[str]:
+                  transitions: list[dict] | None = None,
+                  style: StyleConfig | None = None) -> list[str]:
     """Build the FULL command. All chains go into ONE -filter_complex:
     repeating -filter_complex would create separate graphs whose labels are
-    not visible to the concat graph (observed as a hang/garbage output)."""
+    not visible to the concat graph (observed as a hang/garbage output).
+
+    ``style`` enables the manhwa-recap look (blur background / vignette /
+    colour grade); None renders the plain scale+crop+pan picture."""
     cmd: list[str] = [ffmpeg_exe, "-y", "-nostdin"]
     chains: list[str] = []
     vlabels: list[str] = []
@@ -99,11 +169,19 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
         else:
             cmd += ["-f", "lavfi", "-t", dur,
                     "-i", "anullsrc=channel_layout=stereo:sample_rate=48000"]
+        # Honour the timeline's declared canvas (portrait, landscape, or
+        # draft) rather than the module defaults.
+        tw, th = timeline.width, timeline.height
         sw, sh = e.pan.scaled_w, e.pan.scaled_h
         kind = e.pan.kind
         if kind in ("zoom_in", "zoom_out"):
-            sw, sh = WIDTH, HEIGHT
-        vf = _scale_crop(kind, sw, sh, e.duration_seconds)
+            sw, sh = tw, th
+        if style is not None and style.blur_background:
+            # The whole panel stays visible (contain-fit) over a blurred
+            # full-frame background; there is no pan to express here.
+            vf = _blur_bg_chain(i, tw, th, style.blur_sigma)
+        else:
+            vf = _scale_crop(kind, sw, sh, e.duration_seconds, w=tw, h=th)
         # fade transition filters
         if transitions and not use_xfade:
             prev_tr = transitions[i - 1] if i > 0 else None
