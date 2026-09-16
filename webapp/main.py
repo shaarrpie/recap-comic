@@ -379,6 +379,13 @@ class RunRequest(BaseModel):
     cf_account_id: str = ""
     start_stage: str | None = None  # resume from a specific stage (retry)
     continue_from: str | None = None  # previous strip's session (chain)
+    # Manhwa-recap visual style (defaults match the CLI / VideoConfig).
+    # None means "use the VideoConfig default".
+    blur_background: bool | None = None
+    color_grade: bool | None = None
+    vignette: bool | None = None
+    vignette_angle: str | None = None
+    blur_sigma: float | None = None
 
 
 @app.post("/api/run")
@@ -476,6 +483,11 @@ async def run(body: RunRequest):
         "cf_account_id": cf_account_id,
         "start_stage": body.start_stage,
         "continue_from": body.continue_from,
+        "blur_background": body.blur_background,
+        "color_grade": body.color_grade,
+        "vignette": body.vignette,
+        "vignette_angle": body.vignette_angle,
+        "blur_sigma": body.blur_sigma,
     })
     log.info("job=%s created kind=generate session=%s order=%s backend=%s",
              job.id, session,
