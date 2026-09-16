@@ -284,8 +284,14 @@ def _build_xfade_command(cmd: list[str], timeline: TimelineArtifact,
         chains.append("[acat]aresample=48000[aout]")
         alabel_out = "[aout]"
 
+    post = _style_post_filters(style)
+    if post:
+        chains.append(f"[vcat]{','.join(post)}[vout]")
+        vlabel_out = "[vout]"
+    else:
+        vlabel_out = "[vcat]"
     cmd += ["-filter_complex", ";".join(chains),
-            "-map", "[vcat]", "-map", alabel_out,
+            "-map", vlabel_out, "-map", alabel_out,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
             "-pix_fmt", "yuv420p", "-r", str(timeline.fps),
             "-c:a", "aac", "-b:a", "192k", "-max_muxing_queue_size", "9999",
@@ -294,8 +300,9 @@ def _build_xfade_command(cmd: list[str], timeline: TimelineArtifact,
 
 
 def render(timeline: TimelineArtifact, out_path: Path,
-           ffmpeg_exe: str = "ffmpeg", timeout: int = 3600) -> None:
-    cmd = build_command(timeline, out_path, ffmpeg_exe)
+           ffmpeg_exe: str = "ffmpeg", timeout: int = 3600,
+           style: StyleConfig | None = None) -> None:
+    cmd = build_command(timeline, out_path, ffmpeg_exe, style=style)
     proc = subprocess.run(cmd, capture_output=True, text=True,
                           timeout=timeout, shell=False,  # NEVER shell=True
                           check=False)  # returncode handled explicitly below
@@ -308,7 +315,9 @@ def render(timeline: TimelineArtifact, out_path: Path,
 def build_command_chunked(timeline: TimelineArtifact, out_path: Path,
                           ffmpeg_exe: str = "ffmpeg",
                           chunk_size: int = 12,
-                          profile: dict | None = None) -> tuple[list[tuple[list[str], Path]], list[str], Path]:
+                          profile: dict | None = None,
+                          style: StyleConfig | None = None
+                          ) -> tuple[list[tuple[list[str], Path]], list[str], Path]:
     """Split entries into <=chunk_size groups; encode each to a small
     .ts segment (bounded filter graph, bounded memory), then concat with
     the concat DEMUXER (no re-encode). Returns (segments, concat_cmd, temp_dir)."""
