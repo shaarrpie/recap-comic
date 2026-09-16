@@ -334,7 +334,7 @@ def build_command_chunked(timeline: TimelineArtifact, out_path: Path,
             min_display_seconds=timeline.min_display_seconds,
             entries=entries[i:i + chunk_size])
         seg = tmp / f"seg_{i:03d}.ts"
-        cmd = build_command(part, seg, ffmpeg_exe)
+        cmd = build_command(part, seg, ffmpeg_exe, style=style)
         # swap mp4 container flags for mpegts + profile limits: drop BOTH the
         # -movflags flag and its +faststart value so neither is left orphan.
         cleaned: list[str] = []
