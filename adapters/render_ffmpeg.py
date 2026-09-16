@@ -243,7 +243,8 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
 def _build_xfade_command(cmd: list[str], timeline: TimelineArtifact,
                          transitions: list[dict], has_audio: bool,
                          vlabels: list[str], alabels: list[str],
-                         out_path: Path, base_chains: list[str] | None = None) -> list[str]:
+                         out_path: Path, base_chains: list[str] | None = None,
+                         style: StyleConfig | None = None) -> list[str]:
     chains: list[str] = list(base_chains) if base_chains else []
     n = len(timeline.entries)
     # xfade needs exactly n-1 transitions (one per panel boundary).
