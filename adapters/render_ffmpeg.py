@@ -211,7 +211,7 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
     if use_xfade:
         return _build_xfade_command(
             cmd, timeline, transitions or [], has_audio, vlabels, alabels,
-            out_path, base_chains=chains)
+            out_path, base_chains=chains, style=style)
 
     n = len(timeline.entries)
     chains.append(f"{''.join(vlabels)}concat=n={n}:v=1:a=0[vcat];"
@@ -223,8 +223,16 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
     else:
         chains.append("[acat]aresample=48000[aout]")
         alabel_out = "[aout]"
+    # Grade + vignette are frame-local: one pass over the composited video
+    # is identical to one pass per clip (and to the xfade path below).
+    post = _style_post_filters(style)
+    if post:
+        chains.append(f"[vcat]{','.join(post)}[vout]")
+        vlabel_out = "[vout]"
+    else:
+        vlabel_out = "[vcat]"
     cmd += ["-filter_complex", ";".join(chains),
-            "-map", "[vcat]", "-map", alabel_out,
+            "-map", vlabel_out, "-map", alabel_out,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
             "-pix_fmt", "yuv420p", "-r", str(timeline.fps),
             "-c:a", "aac", "-b:a", "192k", "-max_muxing_queue_size", "9999",
