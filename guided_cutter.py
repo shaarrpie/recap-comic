@@ -92,8 +92,9 @@ class CutterConfig:
     # Policy: every panel PNG is exactly `output_width` px wide with its
     # height clamped to [min_output_height, max_output_height]. The source
     # crop is first resized to `output_width` (aspect-preserving, LANCZOS),
-    # then center-cropped (if taller than max) or center-padded with black
-    # (if shorter than min). Source geometry (y_start/y_end, artifact
+    # then center-padded with black (if shorter than min). Panels taller than
+    # max are NOT cropped: they are kept full-res so the video can pan them
+    # (see normalize_panel_image). Source geometry (y_start/y_end, artifact
     # width/height) is never altered by this step.
     output_width: int = 390
     min_output_height: int = 760

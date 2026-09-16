@@ -13,7 +13,6 @@ import contextlib
 import enum
 import json
 import logging
-import re
 import threading
 import time
 import uuid
@@ -516,17 +515,8 @@ class JobStore:
             j._persist_fp = None  # type: ignore[attr-defined]
             self._save(j)
 
-    # Keys whose persisted value must never be the real credential: snapshots
-    # land in .cache/jobs/<job_id>.json on disk.
-    _REDACTED_CONFIG_KEYS = frozenset({"api_key", "api_keys", "token",
-                                       "password", "secret"})
-    # Substring markers matched against a normalized (lowercase, alnum-only)
-    # key name. Exact-name matching missed realistic keys such as
-    # "xkiro_api_key", "gemini_api_key", "apiKey", "bearer", "credentials",
-    # so those secrets were written to disk in plaintext. Over-redacting an
-    # innocuous key only costs a blank value in the persisted copy.
-    _REDACTED_KEY_MARKERS = ("key", "token", "password", "passwd", "secret",
-                             "credential", "bearer", "auth")
+    # Credential detection for persisted snapshots lives in
+    # adapters/_logging (is_sensitive_key), shared with the log sanitizer.
 
     @classmethod
     def _redact_config(cls, config: dict[str, Any]) -> dict[str, Any]:
@@ -535,14 +525,18 @@ class JobStore:
         snapshot is redacted. A rehydrated job therefore resumes with
         key="" — same behavior as a restart after a server that never knew
         the key; run steps read the key from settings/.env again.
+
+        Detection is shared with adapters/_logging.sanitize so the two
+        redaction sites cannot drift; the old local marker list matched
+        "auth" as a substring and blanked an innocent "author" key.
         """
+        from adapters._logging import is_sensitive_key
+
         out = dict(config or {})
         for k in list(out):
-            name = re.sub(r"[^a-z0-9]", "", str(k).lower())
             if not out[k]:
                 continue
-            if (name in cls._REDACTED_CONFIG_KEYS
-                    or any(m in name for m in cls._REDACTED_KEY_MARKERS)):
+            if is_sensitive_key(k):
                 out[k] = ""
         return out
 

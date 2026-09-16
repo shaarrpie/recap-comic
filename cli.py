@@ -20,10 +20,15 @@ into a single tall strip before processing.
 """
 from __future__ import annotations
 
+import atexit
+import contextlib
+import io
 import logging
 import os
 import re
+import shutil
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -41,6 +46,14 @@ _WRITE_ATOMIC = sa.write_atomic
 
 _ARCHIVE_EXTS = {".zip", ".cbz"}
 _IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}
+
+# Caps for stitched archives. A crafted or just huge CBZ used to load every
+# image into RAM at once (images.append in the old code) and allocate the
+# full stitched buffer before the later 80 MP guard ever ran — an OOM bomb.
+_MAX_CBZ_ARCHIVE_BYTES = 200 * 1024 * 1024   # 200 MB
+_MAX_CBZ_IMAGES = 600                          # panel count
+_MAX_CBZ_IMAGE_PX = 60_000_000                 # 60 MP per page
+_MAX_CBZ_STITCHED_PX = 80_000_000              # 80 MP, matches the later guard
 
 
 def _natural_sort_key(name: str) -> list[str | int]:
@@ -73,19 +86,45 @@ def _resolve_strip_path(strip: Path) -> Path:
             raise typer.BadParameter(
                 f"no images found in archive {strip.name}")
 
-        # First pass: get dimensions without fully decoding
+        # First pass: get dimensions without fully decoding, and enforce caps.
         dimensions = []
+        total_bytes = 0
         for name in names:
-            with archive.open(name) as fh, Image.open(fh) as img:
+            with archive.open(name) as fh:
+                data = fh.read()
+            total_bytes += len(data)
+            if total_bytes > _MAX_CBZ_ARCHIVE_BYTES:
+                raise typer.BadParameter(
+                    f"archive {strip.name} is too large to load into memory "
+                    f"({total_bytes / 1024 / 1024:.0f} MB > "
+                    f"{_MAX_CBZ_ARCHIVE_BYTES / 1024 / 1024:.0f} MB)")
+            with Image.open(io.BytesIO(data)) as img:
                 img.load()  # verify it's a valid image
+                if img.width * img.height > _MAX_CBZ_IMAGE_PX:
+                    raise typer.BadParameter(
+                        f"image {name} in {strip.name} is too large "
+                        f"({img.width}x{img.height} = "
+                        f"{img.width * img.height / 1_000_000:.0f} MP > "
+                        f"{_MAX_CBZ_IMAGE_PX / 1_000_000:.0f} MP)")
                 dimensions.append((name, img.width, img.height))
+
+        if len(dimensions) > _MAX_CBZ_IMAGES:
+            raise typer.BadParameter(
+                f"archive {strip.name} has too many images "
+                f"({len(dimensions)} > {_MAX_CBZ_IMAGES})")
 
         total_h = sum(h for _, _, h in dimensions)
         max_w = max(w for _, w, _ in dimensions)
+        if max_w * total_h > _MAX_CBZ_STITCHED_PX:
+            raise typer.BadParameter(
+                f"stitched strip {strip.name} would be too large to load "
+                f"({max_w}x{total_h} = {max_w * total_h / 1_000_000:.0f} MP > "
+                f"{_MAX_CBZ_STITCHED_PX / 1_000_000:.0f} MP)")
         stitched = Image.new("RGB", (max_w, total_h))
         y = 0
 
-        # Second pass: decode and paste each image
+        # Second pass: decode and paste each image (the caps above bound
+        # how much can ever be in RAM at once).
         for name, w, h in dimensions:
             with archive.open(name) as fh, Image.open(fh) as img:
                 img.load()
@@ -103,24 +142,50 @@ def _resolve_strip_path(strip: Path) -> Path:
                     stitched.paste(img_rgb, (0, y))
             y += h
 
-    # Create temp file with cleanup registration
-    import atexit
-    tmp_fd, tmp_path = tempfile.mkstemp(
-        suffix=".png",
-        prefix=f"recap-comic-{strip.stem}-",
-        dir=tempfile.gettempdir()
-    )
-    os.close(tmp_fd)
+    # Write the stitched strip into a per-run temp directory that atexit
+# removes wholesale (the old single-file + atexit.unlink left the file
+# behind on a hard kill, and a second archive in the same process leaked).
+    tmp_dir = Path(tempfile.mkdtemp(
+        prefix=f"recap-comic-{strip.stem}-", dir=tempfile.gettempdir()))
+    tmp_path = tmp_dir / "stitched.png"
     stitched.save(tmp_path, "PNG")
     log.info("archive stitched images=%d out=%s", len(dimensions), tmp_path)
 
-    # Register cleanup - best effort, won't run on hard kill
-    def _cleanup(path: Path = Path(tmp_path)) -> None:
-        path.unlink(missing_ok=True)
-
-    atexit.register(_cleanup)
+    atexit.register(_purge_stitched_temp, tmp_dir)
 
     return Path(tmp_path)
+
+
+_STITCHED_TMP_RE = re.compile(r"^recap-comic-.+-(\d{10,})$")
+
+
+def _purge_stitched_temp(tmp_dir: Path) -> None:
+    """Best-effort removal of one stitched-archive temp dir."""
+    with contextlib.suppress(OSError):
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+
+def _sweep_stitched_temp() -> None:
+    """Drop stitched-archive temp dirs older than the run window.
+
+    A hard kill or a crash used to leave a temp dir behind forever; this
+    runs once at startup so they cannot accumulate.
+    """
+    tmp_root = Path(tempfile.gettempdir())
+    now = time.time()
+    for entry in tmp_root.iterdir():
+        if not _STITCHED_TMP_RE.match(entry.name):
+            continue
+        try:
+            age = now - entry.stat().st_mtime
+        except OSError:
+            continue
+        if age > 3600:                       # 1 h
+            with contextlib.suppress(OSError):
+                shutil.rmtree(entry, ignore_errors=True)
+
+
+_sweep_stitched_temp()
 
 
 app = typer.Typer(
@@ -322,7 +387,8 @@ def guided_cut(
         help="minimum normalized panel PNG height in px (pads with black)"),
     max_output_height: int = typer.Option(
         800, "--max-output-height",
-        help="maximum normalized panel PNG height in px (center-crops)"),
+        help="maximum normalized panel PNG height in px (panels taller than "
+             "this are kept full-res so the video can pan them, not cropped)"),
     no_normalize: bool = typer.Option(
         False, "--no-normalize-output",
         help="write legacy full-resolution panel crops instead of 390x[760,800]"),
@@ -360,9 +426,18 @@ def guided_cut(
     typer.echo(f"cut {len(artifact.panels)} panels into {out_dir}")
     typer.echo(f"sidecar: {Path(out_dir) / 'panels.json'}")
     if report is not None:
-        from report import render_report
-        render_report(artifact, report, out_dir)
-        typer.echo(f"report: {report}")
+        # The report is a best-effort review artifact: a missing parent
+        # directory or an unreadable panel PNG must not undo a successful
+        # cut with a raw traceback. Failures here are reported and the cut
+        # still exits 0 (the panels.json sidecar is the real output).
+        try:
+            from report import render_report
+            render_report(artifact, report, out_dir)
+            typer.echo(f"report: {report}")
+        except Exception as exc:
+            typer.echo(f"ERROR: report rendering failed: {exc}", err=True)
+            if log.isEnabledFor(logging.DEBUG):
+                log.exception("report rendering failed")
 
 
 @guided_app.command("run")
@@ -412,7 +487,8 @@ def guided_run(
         help="minimum normalized panel PNG height in px (pads with black)"),
     max_output_height: int = typer.Option(
         800, "--max-output-height",
-        help="maximum normalized panel PNG height in px (center-crops)"),
+        help="maximum normalized panel PNG height in px (panels taller than "
+             "this are kept full-res so the video can pan them, not cropped)"),
     no_normalize: bool = typer.Option(
         False, "--no-normalize-output",
         help="write legacy full-resolution panel crops instead of 390x[760,800]"),

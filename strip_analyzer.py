@@ -130,6 +130,19 @@ class VisionAnalysisError(RuntimeError):
     """Raised when Phase 1 cannot produce a usable plan."""
 
 
+class EmptyChunkResult(ValueError):
+    """The model returned VALID JSON with zero panels for one chunk.
+
+    This is a legitimate answer, not a failure: _chunk_prompt explicitly
+    tells the model to return {"panels": [], "characters": []} when it
+    cannot comply, and a genuinely blank stretch between scenes is common
+    in webtoons. It is raised (not silently returned) so a primary-model
+    empty still gets the fallback model's chance; if BOTH models come back
+    empty, analyze_chunk accepts it as a blank chunk instead of letting the
+    whole strip degrade to the no-narration gutter fallback.
+    """
+
+
 class TruncatedResponseError(ValueError):
     """The model stopped because it hit the output-token ceiling.
 
@@ -1057,8 +1070,15 @@ class GeminiVisionBackend:
     def __init__(self, model: str = "gemini-2.5-flash",
                  api_key: str | None = None) -> None:
         self.model = model
-        from adapters._gemini_keys import from_env
-        self._rotator = from_env()
+        from adapters._gemini_keys import KeyRotator, from_env
+        # An explicit key (webapp settings UI, --api-key) wins over env, the
+        # same chain the OpenAI/Anthropic/Xkiro backends use. It used to be
+        # silently dropped here, so a key entered in the UI never reached
+        # the Gemini client and the run failed with "not set".
+        if api_key and api_key.strip():
+            self._rotator = KeyRotator([api_key.strip()])
+        else:
+            self._rotator = from_env()
         self.usage_log: list[dict] = []
         self.last_usage: dict | None = None
         try:
@@ -1305,10 +1325,10 @@ class XkiroVisionBackend:
         entries, characters = parse_entries_from_json(
             raw_text, image.size[1], chunk_width=image.size[0])
         if not entries:
-            # An empty panel list is an unusable response for a strip chunk:
-            # fall back to the next model rather than silently continuing
-            # with no panels.
-            raise ValueError(f"model {model_id} returned no panels")
+            # Valid JSON but zero panels: a legitimate blank stretch (see
+            # EmptyChunkResult). Raise so the fallback model still gets a
+            # chance; if it is ALSO empty, analyze_chunk accepts the chunk.
+            raise EmptyChunkResult(f"model {model_id} returned no panels")
         return entries, characters
 
     def analyze_chunk(self, image: Image.Image,
@@ -1337,6 +1357,15 @@ class XkiroVisionBackend:
                 primary_model=self.primary_model,
                 fallback_model=self.fallback_model)
         except _ai.AIFallbackError as exc:
+            # Both models returned VALID but EMPTY panel lists: a
+            # legitimately blank chunk (white space between scenes), not a
+            # failure. Accept it — the whole-strip coverage check and the
+            # fallback ratio decide downstream whether the plan is usable.
+            # Anything else is a real failure: surface it so the caller can
+            # degrade to the gutter detector with an honest reason.
+            if (isinstance(exc.primary_error, EmptyChunkResult)
+                    and isinstance(exc.fallback_error, EmptyChunkResult)):
+                return [], []
             raise VisionAnalysisError(
                 f"xkiro vision failed (primary {self.primary_model}: "
                 f"{exc.primary_error}; fallback {self.fallback_model}: "

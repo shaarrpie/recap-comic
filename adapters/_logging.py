@@ -8,6 +8,7 @@ Provides:
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 import sys
@@ -18,10 +19,41 @@ from typing import Any
 
 _tl = threading.local()
 
+# Sensitive-key detection, shared with webapp/jobs.py so the two redaction
+# implementations cannot drift. Key names are matched as WORDS (camelCase and
+# separators both split) so "apiKey"/"xkiro_api_key" hit while innocent names
+# like "author" do not; the markers catch compounds ("authkey") by substring.
+_WORD_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
+
+_SENSITIVE_WORDS = frozenset({
+    "key", "token", "password", "passwd", "secret", "credential",
+    "credentials", "bearer", "auth", "apikey", "apisecret",
+    "authorization", "accesstoken", "refreshtoken",
+})
+_SENSITIVE_MARKERS = ("apikey", "token", "password", "passwd", "secret",
+                      "credential", "bearer", "auth")
+_INNOCENT_NAMES = frozenset({"author", "authors", "authored", "authorname"})
+
 SENSITIVE_KEYS = frozenset({
     "api_key", "apikey", "token", "authorization", "cookie",
     "password", "secret", "x-api-key", "x-auth-token",
 })
+
+
+def is_sensitive_key(key: Any) -> bool:
+    """True if a dict key name looks like it holds a credential.
+
+    Exact word matching handles "apiKey", "xkiro_api_key", "GEMINI_API_KEY";
+    the marker substring pass catches compounds like "authkey"; the
+    innocents list keeps "author" (blanked by the old "auth" marker).
+    """
+    name = re.sub(r"[^a-z0-9]", "", str(key).lower())
+    if name in _INNOCENT_NAMES:
+        return False
+    words = [w.lower() for w in _WORD_RE.findall(str(key))]
+    if any(w in _SENSITIVE_WORDS for w in words):
+        return True
+    return any(m in name for m in _SENSITIVE_MARKERS)
 
 # Key-shaped substrings that can appear in provider exception messages or
 # URLs ("key=sk-...", "Bearer ...", Google AIza keys, etc.). A bare
@@ -62,7 +94,7 @@ def _redact(value: Any) -> Any:
     if isinstance(value, dict):
         out: dict[str, Any] = {}
         for k, v in value.items():
-            if k.lower() in SENSITIVE_KEYS:
+            if is_sensitive_key(k):
                 out[k] = _REDACTED
             else:
                 out[k] = _redact(v)
@@ -123,12 +155,31 @@ class JobContext:
         _tl.job_id = None
 
 
+class _JsonFormatter(logging.Formatter):
+    """Emit one VALID JSON object per record.
+
+    A plain format string with "msg":%(message)s interpolates the message
+    RAW and UNQUOTED, so any message containing a double quote, backslash
+    or newline produced invalid JSON and broke every structured-log
+    ingesting these lines.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        payload: dict[str, Any] = {
+            "ts": self.formatTime(record, self.datefmt),
+            "level": record.levelname,
+            "job": getattr(record, "job_id", "-"),
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc_info"] = self.formatException(record.exc_info)
+        return json.dumps(payload, ensure_ascii=False)
+
+
 def _build_formatter(json_format: bool) -> logging.Formatter:
     if json_format:
-        return logging.Formatter(
-            '{"ts":"%(asctime)s","level":"%(levelname)s","job":"%(job_id)s",'
-            '"logger":"%(name)s","msg":%(message)s}'
-        )
+        return _JsonFormatter()
     return logging.Formatter(
         "%(asctime)s %(levelname)-7s [job=%(job_id)s] %(name)s: %(message)s"
     )

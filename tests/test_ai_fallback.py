@@ -166,7 +166,43 @@ def test_xkiro_backend_both_fail_surfaces_error() -> None:
     assert "qwen" in msg and "mistral" in msg
 
 
-def test_build_backend_accepts_xkiro_names() -> None:
+def test_xkiro_backend_both_empty_panels_is_blank_chunk() -> None:
+    """Both models returning an empty panel list is a VALID blank chunk.
+
+    A genuinely empty 2000px stretch between scenes used to fail both
+    models, surface as VisionAnalysisError, and silently degrade the whole
+    strip to the no-narration gutter fallback.
+    """
+    empty = json.dumps({"panels": [], "characters": []})
+    called: list[str] = []
+
+    def _fake(model_id: str, prompt: str, b64: str, image: Image.Image) -> str:
+        called.append(model_id)
+        return empty
+    b = sa.XkiroVisionBackend(api_key="test", request_fn=_fake)
+    entries, characters = b.analyze_chunk(_img())
+    assert entries == []
+    assert characters == []
+    # The fallback model still got its chance before the chunk was accepted
+    # as blank (fallback_used is only set on the success path, so verify
+    # via the request log).
+    assert called == [ai.PRIMARY_MODEL, ai.FALLBACK_MODEL]
+
+
+def test_gemini_backend_honors_explicit_api_key() -> None:
+    """An explicit api_key (webapp settings UI, --api-key) must win over env.
+
+    The constructor used to only build the rotator from_env(), silently
+    dropping the passed key — unlike the OpenAI/Anthropic/Xkiro backends.
+    """
+    import adapters._gemini_keys as gk
+
+    b = sa.GeminiVisionBackend(api_key="explicit-key-from-ui")
+    assert b._rotator.total == 1
+    assert b._rotator.current() == "explicit-key-from-ui"
+    # Round-robin of one key is stable; rotation never introduces a second.
+    assert gk.KeyRotator(["a", "b"]).current() == "a"
+    assert gk.KeyRotator(["a", "b"]).advance() == "b"
     for name in ("xkiro", "qwen", "mistral"):
         b = gp.build_backend(name, api_key="test-key")
         assert isinstance(b, sa.XkiroVisionBackend)

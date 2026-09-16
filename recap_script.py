@@ -329,14 +329,40 @@ def build_chapter_script(
                 "lines": [], "text": text, "structure": [],
                 "model_used": "", "input_hash": input_hash}
 
-    prompt = USER_PROMPT_TEMPLATE.format(
-        memory_block=_memory_block(ctx, len(panels)),
-        panel_list="\n".join(
-            f"{p['panel_index']}. {p['visual']}"
-            + (f'  [dialogue: {p["dialogue"]}]' if p["dialogue"] else "")
-            for p in panels))
+    panel_lines = [
+        f"{p['panel_index']}. {p['visual']}"
+        + (f'  [dialogue: {p["dialogue"]}]' if p["dialogue"] else "")
+        for p in panels]
+
+    def _assemble(block: str) -> str:
+        return USER_PROMPT_TEMPLATE.format(
+            memory_block=_memory_block(ctx, len(panels)), panel_list=block)
+
+    prompt = _assemble("\n".join(panel_lines))
     if len(prompt) > MAX_PROMPT_CHARS:
-        prompt = prompt[:MAX_PROMPT_CHARS]
+        # Truncate the PANEL LIST, never the assembled prompt: the
+        # "Return STRICT JSON, exactly: …" contract the parser depends on
+        # sits AFTER {panel_list} in the template, so the old
+        # prompt[:MAX_PROMPT_CHARS] head-truncation deleted exactly those
+        # instructions on long chapters and the model started emitting
+        # prose. Keep the first and last panels (hook + cliffhanger) and
+        # elide the redundant middle.
+        budget = MAX_PROMPT_CHARS - len(_assemble(""))
+        elided = "…(middle panels elided to fit the prompt budget)…"
+        block = ""
+        for keep in range(len(panel_lines), 0, -1):
+            half = keep // 2
+            cand = (panel_lines[:half]
+                    + ([elided] if keep < len(panel_lines) else [])
+                    + panel_lines[len(panel_lines) - (keep - half):])
+            block = "\n".join(cand)
+            if len(block) <= budget:
+                break
+        else:
+            block = panel_lines[0][:max(0, budget)]
+        prompt = _assemble(block)
+        log.info("[script] panel list trimmed %d -> fit %d chars",
+                 len(panel_lines), len(block))
 
     model_used, fb = "", False
     try:

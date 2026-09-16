@@ -48,7 +48,10 @@ h1{{font-size:20px;}}
 def _embed_png(path: Path) -> str:
     raw = path.read_bytes()
     b64 = base64.b64encode(raw).decode("ascii")
-    return f'<img src="data:image/png;base64,{b64}" alt="{path.name}">'
+    # path.name is unescaped: a panel file named a"b.png would break out of
+    # the attribute and let an attacker inject markup into the report.
+    return (f'<img src="data:image/png;base64,{b64}" '
+            f'alt="{html.escape(path.name)}">')
 
 
 def render_report(artifact: CutArtifact, out_path: Path,

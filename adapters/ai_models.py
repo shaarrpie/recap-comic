@@ -101,7 +101,8 @@ def manual_key() -> str | None:
     return None
 
 
-def api_key_from_env(explicit: str | None = None) -> str | None:
+def api_key_from_env(explicit: str | None = None,
+                     allow_gemini_key: bool | None = None) -> str | None:
     """Resolve the Xkiro/OpenAI-compatible API key without logging it.
 
     Resolution order (manual webapp key wins over .env keys):
@@ -109,29 +110,41 @@ def api_key_from_env(explicit: str | None = None) -> str | None:
       2. webapp_output/settings.json "api_key" — manual webapp key.
       3. XKIRO_API_KEY
       4. XKIRO_API_KEYS (comma-separated pool; first entry)
-      5. GEMINI_API_KEYS pool (first entry)
-      6. GEMINI_API_KEY
+      5. GEMINI_API_KEYS pool (first entry)  -- opt-in only, see below
+      6. GEMINI_API_KEY                      -- opt-in only, see below
 
-    WARNING: If only GEMINI_API_KEY is set, it will be used against the
-    XKIRO endpoint (api.xkiro.com), which is a third-party proxy. Set
-    XKIRO_API_KEY explicitly to avoid this.
+    A GEMINI_* key is only used against the XKIRO endpoint when the caller
+    explicitly opts in (allow_gemini_key=True, or the env var
+    XKIRO_ALLOW_GEMINI_KEY=1). Otherwise it is skipped: the default endpoint
+    is api.xkiro.com, a third-party proxy, and sending a Google credential
+    there by default is not something a tool should do silently.
     """
     if explicit and explicit.strip():
         return explicit.strip()
     manual = manual_key()
     if manual:
         return manual
+    if allow_gemini_key is None:
+        allow_gemini_key = os.environ.get(
+            "XKIRO_ALLOW_GEMINI_KEY", "").strip().lower() in ("1", "true", "yes")
     # Check XKIRO keys first
     for var in ("XKIRO_API_KEY", "XKIRO_API_KEYS"):
         val = os.environ.get(var, "").strip()
         if val:
             return val.split(",")[0].strip()
-    # Fall back to Gemini keys with loud warning
+    # Fall back to Gemini keys, but only with explicit opt-in.
     for var in ("GEMINI_API_KEYS", "GEMINI_API_KEY"):
         val = os.environ.get(var, "").strip()
         if val:
-            import logging
-            log = logging.getLogger(__name__)
+            if not allow_gemini_key:
+                log.warning(
+                    "Only a GEMINI_API_KEY is set and the default endpoint is "
+                    "api.xkiro.com (a third-party proxy). Refusing to send a "
+                    "Google credential there by default: api_key_from_env "
+                    "returns None. Set XKIRO_API_KEY explicitly, or opt in "
+                    "with XKIRO_ALLOW_GEMINI_KEY=1 to use the Gemini key "
+                    "against the proxy.")
+                return None
             log.warning("Using GEMINI_API_KEY against XKIRO endpoint (api.xkiro.com). "
                         "This sends your Google credential to a third-party proxy. "
                         "Set XKIRO_API_KEY explicitly to avoid this.")

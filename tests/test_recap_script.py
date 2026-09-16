@@ -122,6 +122,43 @@ def test_prompt_contains_all_panels_and_dedups_nonlexical(session):
     assert "hook" in prompt
 
 
+def test_prompt_truncation_keeps_json_contract_and_head_tail(
+        session, monkeypatch):
+    """A long chapter must shrink the PANEL LIST, never the prompt tail.
+
+    The JSON-schema instructions the parser depends on sit AFTER
+    {panel_list} in USER_PROMPT_TEMPLATE, so the old prompt[:MAX_PROMPT_CHARS]
+    head-truncation deleted them exactly when they were most needed.
+    """
+    d, _ = session
+    big = CutArtifact.model_validate_json((d / "panels.json").read_text("utf-8"))
+    many = []
+    for n in range(25):
+        many.append(_panel(n + 1, n * 10, n * 10 + 10,
+                           f"Panel number {n} does something dramatic and "
+                           f"describes it at some length here."))
+    big = big.model_copy(update={"panels": many})
+    (d / "panels.json").write_text(big.model_dump_json(), "utf-8")
+
+    # Force the truncation path deterministically (the default 60k budget is
+    # generous enough that a 25-panel chapter fits untouched).
+    monkeypatch.setattr(rs, "MAX_PROMPT_CHARS", 3000)
+
+    model = FakeModel([GOOD_LINES])
+    rs.build_chapter_script(d, model_call=model, force=True)
+    prompt = model.prompts[0]
+
+    assert len(prompt) <= 3000
+    # The output contract survived: this is what used to be cut off.
+    assert "Return STRICT JSON" in prompt, (
+        "the JSON-schema instructions were truncated out of the prompt")
+    # The panel list was elided in the MIDDLE, keeping head + tail (the hook
+    # and the cliffhanger matter most), not head-only.
+    assert "Panel number 0 " in prompt          # first panel kept
+    assert "elided" in prompt                    # middle marker present
+    assert "Panel number 24 " in prompt          # last panel kept
+
+
 def test_panel_indices_out_of_range_are_dropped(session):
     d, _ = session
     bad = json.dumps({"lines": [

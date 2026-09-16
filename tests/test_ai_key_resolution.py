@@ -23,7 +23,8 @@ def clean_env(monkeypatch: pytest.MonkeyPatch):
     """No key env vars, no manual settings file influence."""
     for var in ("XKIRO_API_KEY", "XKIRO_API_KEYS",
                 "GEMINI_API_KEYS", "GEMINI_API_KEY",
-                "OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+                "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+                "XKIRO_ALLOW_GEMINI_KEY"):
         monkeypatch.delenv(var, raising=False)
     yield monkeypatch
 
@@ -70,9 +71,32 @@ def test_xkiro_pool_first_entry_taken(clean_env, fake_settings) -> None:
     assert ai.api_key_from_env() == "k1"
 
 
+def test_gemini_key_not_used_against_proxy_by_default(clean_env, fake_settings) -> None:
+    """A GEMINI_* key must NOT be sent to the third-party proxy by default.
+
+    api_key_from_env() returns None (rather than silently forwarding the
+    Google credential to api.xkiro.com) unless the caller opts in.
+    """
+    fake_settings(None)
+    clean_env.setenv("GEMINI_API_KEYS", "g1,g2")
+    assert ai.api_key_from_env() is None
+    clean_env.delenv("GEMINI_API_KEYS")
+    clean_env.setenv("GEMINI_API_KEY", "g-single")
+    assert ai.api_key_from_env() is None
+
+
+def test_gemini_key_used_against_proxy_when_opted_in(clean_env, fake_settings) -> None:
+    """XKIRO_ALLOW_GEMINI_KEY=1 opts in to forwarding a GEMINI_* key."""
+    fake_settings(None)
+    clean_env.setenv("GEMINI_API_KEY", "g-single")
+    clean_env.setenv("XKIRO_ALLOW_GEMINI_KEY", "1")
+    assert ai.api_key_from_env() == "g-single"
+
+
 def test_gemini_pool_and_single_key_in_chain(clean_env, fake_settings) -> None:
     fake_settings(None)
     clean_env.setenv("GEMINI_API_KEYS", "g1,g2")
+    clean_env.setenv("XKIRO_ALLOW_GEMINI_KEY", "1")
     assert ai.api_key_from_env() == "g1"
     clean_env.delenv("GEMINI_API_KEYS")
     clean_env.setenv("GEMINI_API_KEY", "g-single")

@@ -5,9 +5,8 @@
   the gutter-snapped final boundaries (green), panel IDs + confidence labels,
   and bubble boxes (blue). Used by `guided plan --debug-overlay` and by
   scripts/smoke_test_live.py.
-- write_panel_report(): a single self-contained HTML page (images embedded as
-  base64 data URIs) listing each output panel with its narration and dialogue
-  in reading order. Used by `guided cut --report`.
+- HTML panel report: see report.render_report() (the function behind
+  `guided cut --report`), NOT a function in this module.
 """
 from __future__ import annotations
 
