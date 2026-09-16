@@ -363,9 +363,11 @@ def render_chunked(timeline: TimelineArtifact, out_path: Path,
                    ffmpeg_exe: str = "ffmpeg",
                    chunk_size: int = 12,
                    profile: dict | None = None,
-                   timeout: int = 3600) -> None:
+                   timeout: int = 3600,
+                   style: StyleConfig | None = None) -> None:
     """Render large timelines in chunks to bound memory usage."""
-    segs, concat_cmd, tmp = build_command_chunked(timeline, out_path, ffmpeg_exe, chunk_size, profile)
+    segs, concat_cmd, tmp = build_command_chunked(
+        timeline, out_path, ffmpeg_exe, chunk_size, profile, style=style)
     try:
         for cmd, seg in segs:
             proc = subprocess.run(cmd, capture_output=True, text=True,
@@ -397,7 +399,8 @@ def pick_render_strategy(n_panels: int, total_seconds: float) -> str:
 
 # ---------------------------------------------------------------- draft render
 def render_draft(timeline: TimelineArtifact, out_path: Path,
-                 ffmpeg_exe: str = "ffmpeg", timeout: int = 1800) -> None:
+                 ffmpeg_exe: str = "ffmpeg", timeout: int = 1800,
+                 style: StyleConfig | None = None) -> None:
     """Draft render: lower resolution, faster encoding, for preview."""
     draft_timeline = TimelineArtifact(
         meta=timeline.meta,
@@ -407,7 +410,7 @@ def render_draft(timeline: TimelineArtifact, out_path: Path,
         gap_seconds=timeline.gap_seconds,
         min_display_seconds=timeline.min_display_seconds,
         entries=timeline.entries)
-    cmd = build_command(draft_timeline, out_path, ffmpeg_exe)
+    cmd = build_command(draft_timeline, out_path, ffmpeg_exe, style=style)
     # Drop -preset/-crf/-r TOGETHER with their values; -r is replaced below
     # with 24, and -preset/-crf are re-inserted with draft settings.
     cleaned: list[str] = []

@@ -115,6 +115,16 @@ class VideoConfig:
     ffprobe_exe: str = "ffprobe"
     kokoro_model_path: Path | None = None
     kokoro_voices_path: Path | None = None
+    # ── Visual style (manhwa-recap look) ────────────────────────────────────
+    # The panel floats on a blurred full-frame copy of itself with a strong
+    # dark vignette; colour grade is OFF by default. See adapters.render_ffmpeg
+    # StyleConfig. blur_background makes panels contain-fitted (whole panel
+    # visible, no Ken-Burns pan); the timeline geometry follows automatically.
+    blur_background: bool = True
+    color_grade: bool = False
+    vignette: bool = True
+    vignette_angle: str = "PI/2.5"   # ffmpeg angle expr; smaller = stronger
+    blur_sigma: float = 40.0         # gblur sigma of the background branch
 
     def __post_init__(self) -> None:
         if not self.class_duration_multiplier:
@@ -132,6 +142,23 @@ class VideoConfig:
                 return str(o)
             raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
         return _sha256_text(json.dumps(asdict(self), sort_keys=True, default=_default))
+
+    # Visual-only style fields. Narration and audio depend solely on
+    # text/voice/provider/pacing, so these are excluded from the TTS cache
+    # key: toggling the vignette must not re-synthesize identical clips.
+    # The full hash() still covers the timeline + video cache, where the
+    # style genuinely changes the output.
+    _STYLE_FIELDS = ("blur_background", "color_grade", "vignette",
+                     "vignette_angle", "blur_sigma")
+
+    def hash_essentials(self) -> str:
+        """hash() minus the visual-only style flags (TTS/narration cache key)."""
+        def _default(o):
+            if isinstance(o, Path):
+                return str(o)
+            raise TypeError(f"Object of type {type(o).__name__} is not JSON serializable")
+        d = {k: v for k, v in asdict(self).items() if k not in self._STYLE_FIELDS}
+        return _sha256_text(json.dumps(d, sort_keys=True, default=_default))
 
 
 # --------------------------------------------------------------------------- #
@@ -377,7 +404,7 @@ def build_narration(artifact: CutArtifact, cfg: VideoConfig,
         entries.append(NarrationEntry(id=p.id, panel_id=p.id, order=order,
                                        speaker=None, text=text, quotes=quotes))
     result = NarrationArtifact(
-        meta=_meta(cfg.hash(), {"panels.json": panels_hash}),
+        meta=_meta(cfg.hash_essentials(), {"panels.json": panels_hash}),
         mode="narrator", entries=entries)
     log.info("build_narration entries=%d spoken=%d",
              len(entries), sum(1 for e in entries if e.text.strip()))
@@ -431,7 +458,7 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
     }
 
     if cfg.tts == "none":
-        return AudioArtifact(meta=_meta(cfg.hash(), input_hashes),
+        return AudioArtifact(meta=_meta(cfg.hash_essentials(), input_hashes),
                              voice="none", entries=[])
 
     expected_ids = _clips_to_synthesize(narration)
@@ -448,7 +475,7 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
     # the cache forever (the degraded artifact was reused until --force).
     same_inputs = (
         prev is not None
-        and prev.meta.config_hash == cfg.hash()
+        and prev.meta.config_hash == cfg.hash_essentials()
         and prev.meta.input_hashes == input_hashes
     )
     reusable: dict[str, AudioEntry] = {}
@@ -527,7 +554,7 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
         if progress_ctx is not None:
             progress_ctx.stop()
 
-    artifact = AudioArtifact(meta=_meta(cfg.hash(), input_hashes),
+    artifact = AudioArtifact(meta=_meta(cfg.hash_essentials(), input_hashes),
                              voice=cfg.voice, entries=entries)
     _write_atomic(sidecar, artifact.model_dump_json(indent=2) + "\n")
     missing_after = [i for i in expected_ids if i not in {a.entry_id for a in entries}]
@@ -543,7 +570,8 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
 # Stage 3 — timeline
 # --------------------------------------------------------------------------- #
 def compute_pan(width: int, height: int,
-                canvas_w: int = WIDTH, canvas_h: int = HEIGHT) -> PanSpec:
+                canvas_w: int = WIDTH, canvas_h: int = HEIGHT,
+                *, blur_background: bool = False) -> PanSpec:
     """Scale the panel so BOTH dims cover the canvas; pan along the overflow.
 
     Canvas defaults to 1080x1920 (9:16). Pass landscape dimensions (e.g.
@@ -551,9 +579,23 @@ def compute_pan(width: int, height: int,
     become pan_down candidates. Never centre-crops away content: a tall panel
     is read top->bottom (pan_down), a wide one left->right (pan_right).
     Exact-fit is static.
+
+    With ``blur_background`` the panel is contain-fitted instead (the whole
+    panel stays visible floating on the blurred background), so there is no
+    overflow to pan through: the spec is static and travel_px is 0. That
+    also keeps display_seconds from padding duration for a pan that would
+    never be rendered.
     """
     if width <= 0 or height <= 0:
         raise ValueError("panel must have positive size")
+    if blur_background:
+        scale = min(canvas_w / width, canvas_h / height)
+        if scale > 4.0:
+            scale = 4.0
+        return PanSpec(kind="static",
+                       scaled_w=max(1, math.ceil(width * scale)),
+                       scaled_h=max(1, math.ceil(height * scale)),
+                       travel_px=0)
     scale = max(canvas_w / width, canvas_h / height)
     if scale > 4.0:
         scale = 4.0
@@ -715,7 +757,8 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
             # PNG dimensions are the source crop dimensions.
             png_w = p.strip_width or artifact.width
             png_h = h
-        pan = compute_pan(png_w, png_h, canvas_w, canvas_h)
+        pan = compute_pan(png_w, png_h, canvas_w, canvas_h,
+                          blur_background=cfg.blur_background)
         dur = display_seconds(
             audio_seconds=a.duration_seconds if a else None,
             words=_word_count(text), travel_px=pan.travel_px, cfg=cfg,
@@ -805,11 +848,21 @@ def write_srt(timeline: TimelineArtifact, narration: NarrationArtifact,
 def render_video(timeline: TimelineArtifact, out_path: Path,
                  cfg: VideoConfig) -> None:
     exe = _resolve_ffmpeg(cfg.ffmpeg_exe)
-    from adapters.render_ffmpeg import RenderError, pick_render_strategy, render, render_chunked
+    from adapters.render_ffmpeg import (RenderError, StyleConfig,
+                                        pick_render_strategy, render,
+                                        render_chunked)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(out_path.stem + ".partial.mp4")
-    log.info("render_video start out=%s timeline_entries=%d",
-             out_path, len(timeline.entries))
+    style = StyleConfig(
+        blur_background=cfg.blur_background,
+        color_grade=cfg.color_grade,
+        vignette=cfg.vignette,
+        vignette_angle=cfg.vignette_angle,
+        blur_sigma=cfg.blur_sigma)
+    log.info("render_video start out=%s timeline_entries=%d style=blur=%s/"
+             "grade=%s/vignette=%s",
+             out_path, len(timeline.entries), style.blur_background,
+             style.color_grade, style.vignette)
     t0 = time.time()
     strategy = pick_render_strategy(len(timeline.entries), total_seconds(timeline))
     log.info("render strategy=%s", strategy)
@@ -817,9 +870,10 @@ def render_video(timeline: TimelineArtifact, out_path: Path,
         if strategy == "chunked":
             render_chunked(
                 timeline, tmp, ffmpeg_exe=exe, chunk_size=12,
-                profile={"preset": "veryfast", "crf": "23", "threads": "4"})
+                profile={"preset": "veryfast", "crf": "23", "threads": "4"},
+                style=style)
         else:
-            render(timeline, tmp, ffmpeg_exe=exe)
+            render(timeline, tmp, ffmpeg_exe=exe, style=style)
     except RenderError as exc:
         raise VideoError(str(exc)) from exc
     elapsed = time.time() - t0

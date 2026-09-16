@@ -738,6 +738,25 @@ def guided_video(
         "9:16", "--canvas",
         help="output aspect: 9:16 (1080x1920 portrait, default) | 16:9 "
              "(1920x1080 landscape) | <W>x<H> explicit"),
+    blur_background: bool = typer.Option(
+        True, "--blur-background/--no-blur-background",
+        help="manhwa-recap look: the panel floats on a blurred full-frame "
+             "copy of itself (default on; disables the Ken-Burns pan since "
+             "the whole panel is already visible)"),
+    color_grade: bool = typer.Option(
+        False, "--color-grade/--no-color-grade",
+        help="moody grade: darken + desaturate + cool blue-gray tint "
+             "(default off)"),
+    vignette: bool = typer.Option(
+        True, "--vignette/--no-vignette",
+        help="strong dark vignette around all 4 edges (default on)"),
+    vignette_angle: str = typer.Option(
+        "PI/2.5", "--vignette-angle",
+        help="ffmpeg vignette angle expression; SMALLER = stronger "
+             "(PI/3.5 mild, PI/2.5 default, PI/2.1 very aggressive)"),
+    blur_sigma: float = typer.Option(
+        40.0, "--blur-sigma",
+        help="gblur sigma for the blurred background (default 40)"),
     ffmpeg: str = typer.Option("ffmpeg", "--ffmpeg", help="ffmpeg executable"),
     ffprobe: str = typer.Option("ffprobe", "--ffprobe", help="ffprobe executable"),
     dry_run: bool = typer.Option(
@@ -754,6 +773,7 @@ def guided_video(
     timeline.json, audio/ and narration.json next to the mp4.
 
     --canvas selects the output aspect (9:16 portrait default, 16:9 landscape).
+    --blur-background/--vignette/--color-grade control the manhwa-recap look.
     """
     _configure_logging(log_level)
     from recap_video import VideoConfig, VideoError, make_recap_video
@@ -790,6 +810,9 @@ def guided_video(
         min_display_seconds=min_display, max_display_seconds=max_display,
         max_pan_px_per_sec=pan_speed, pan_fit_speech=pan_fit_speech,
         fps=fps, canvas_w=canvas_w, canvas_h=canvas_h,
+        blur_background=blur_background, color_grade=color_grade,
+        vignette=vignette, vignette_angle=vignette_angle,
+        blur_sigma=blur_sigma,
         ffmpeg_exe=ffmpeg, ffprobe_exe=ffprobe,
         kokoro_model_path=kokoro_model_path,
         kokoro_voices_path=kokoro_voices_path)

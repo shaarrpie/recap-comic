@@ -75,6 +75,36 @@ Outputs next to the mp4: recap.srt (captions), timeline.json, audio/*.mp3,
 narration.json. Re-running is incremental: unchanged narration reuses the
 cached audio, an unchanged timeline skips the ffmpeg render (`--force` resets).
 
+### Manhwa-recap visual style (blur + vignette)
+
+`guided video` renders with the manhwa-recap look by default: each panel
+floats on a blurred, slightly darkened full-frame copy of itself, with a
+strong dark vignette around all four edges. The colour grade is OFF by
+default.
+
+| Flag | Default | Meaning |
+| --- | --- | --- |
+| `--blur-background` / `--no-blur-background` | on | panel contain-fitted over a blurred full-frame background (disables the Ken-Burns pan, since the whole panel is already visible) |
+| `--vignette` / `--no-vignette` | on | dark vignette on all 4 edges |
+| `--vignette-angle` | `PI/2.5` | ffmpeg angle expression; **smaller = stronger** (`PI/3.5` mild, `PI/2.5` default, `PI/2.1` aggressive) |
+| `--color-grade` / `--no-color-grade` | off | darken + desaturate + cool blue-gray tint |
+| `--blur-sigma` | `40` | gblur sigma of the background branch |
+
+```bash
+# The shipped default look
+python cli.py guided video guided_out/panels.json
+
+# Classic Ken-Burns edit, no styling at all
+python cli.py guided video guided_out/panels.json --no-blur-background --no-vignette
+
+# Mild vignette + the moody colour grade
+python cli.py guided video guided_out/panels.json --vignette-angle PI/3.5 --color-grade
+```
+
+Style flags are part of the timeline cache key, so changing the look re-renders
+the video — but NOT the TTS audio: narration and speech depend only on text,
+voice and pacing, so toggling a visual flag never re-synthesizes clips.
+
 ### Cinematic pass (optional Phase 3 variant)
 
 `guided cinematic` renders the same panels.json into a manhwa-recap-style
