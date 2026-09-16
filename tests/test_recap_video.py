@@ -10,7 +10,7 @@ from PIL import Image
 
 import recap_video as rv
 from adapters.render_ffmpeg import build_command
-from adapters.schemas import AudioArtifact, AudioEntry, Meta
+from adapters.schemas import AudioArtifact, AudioEntry, Meta, NarrationArtifact, NarrationEntry
 from guided_cutter import CutArtifact, CutPanel
 
 
@@ -227,3 +227,90 @@ def test_make_recap_video_dry_run_writes_sidecars(cut_dir):
     assert tl["width"] == 1080 and tl["height"] == 1920
     assert len(tl["entries"]) == 2
     assert {"panel_id": "003", "reason": "no_text_no_audio"} in tl["skipped_panels"]
+
+# --------------------------------------------------- TTS cache integrity --
+# A transient TTS failure used to be written into audio.json and then reused
+# forever (the cache hit only checked hashes + file existence), silently
+# dropping narration until --force.
+
+
+def _narration(*texts: str) -> NarrationArtifact:
+    entries = [NarrationEntry(id=f"{i:03d}", panel_id=f"{i:03d}", order=i,
+                              text=t)
+               for i, t in enumerate(texts, start=1)]
+    return NarrationArtifact(meta=_meta(), mode="narrator", entries=entries)
+
+
+class _FakeTts:
+    """Offline stand-in for adapters.tts.synthesize_entry."""
+
+    def __init__(self, fail_ids: tuple[str, ...] = ()) -> None:
+        self.fail_ids = set(fail_ids)
+        self.calls: list[str] = []
+
+    def __call__(self, entry, out_dir, **_kw):
+        self.calls.append(entry.id)
+        if entry.id in self.fail_ids:
+            return None, RuntimeError("network blip")
+        path = f"{entry.id}.mp3"
+        (out_dir / path).write_bytes(b"RIFF....")
+        return AudioEntry(entry_id=entry.id, path=path,
+                          duration_seconds=1.5), None
+
+
+def test_complete_tts_artifact_is_cached(tmp_path, monkeypatch):
+    fake = _FakeTts()
+    monkeypatch.setattr("adapters.tts.synthesize_entry", fake)
+    d = tmp_path / "audio"
+    nar = _narration("alpha", "beta")
+    cfg = rv.VideoConfig()
+    first = rv.synthesize_audio(nar, d, cfg)
+    assert [e.entry_id for e in first.entries] == ["001", "002"]
+    assert fake.calls == ["001", "002"]
+    # rerun: full cache hit, zero TTS calls
+    second = rv.synthesize_audio(nar, d, cfg)
+    assert [e.entry_id for e in second.entries] == ["001", "002"]
+    assert fake.calls == ["001", "002"]
+
+
+def test_partial_tts_failure_is_repaired_not_reused(tmp_path, monkeypatch):
+    """One failed clip must not poison the cache: the next run re-synthesizes
+    ONLY the missing clip and keeps the good ones."""
+    flaky = _FakeTts(fail_ids=("002",))
+    monkeypatch.setattr("adapters.tts.synthesize_entry", flaky)
+    d = tmp_path / "audio"
+    nar = _narration("alpha", "beta", "gamma")
+    cfg = rv.VideoConfig()
+    degraded = rv.synthesize_audio(nar, d, cfg)
+    assert [e.entry_id for e in degraded.entries] == ["001", "003"]
+
+    healed = _FakeTts()
+    monkeypatch.setattr("adapters.tts.synthesize_entry", healed)
+    repaired = rv.synthesize_audio(nar, d, cfg)
+    assert [e.entry_id for e in repaired.entries] == ["001", "002", "003"]
+    # ONLY the missing clip was re-synthesized
+    assert healed.calls == ["002"]
+    # and the repaired artifact is now a full cache hit
+    third = rv.synthesize_audio(nar, d, cfg)
+    assert [e.entry_id for e in third.entries] == ["001", "002", "003"]
+    assert healed.calls == ["002"]
+
+
+def test_changed_narration_invalidates_stale_clips(tmp_path, monkeypatch):
+    """A clip whose text changed (new narration) must never be reused."""
+    fake = _FakeTts()
+    monkeypatch.setattr("adapters.tts.synthesize_entry", fake)
+    d = tmp_path / "audio"
+    cfg = rv.VideoConfig()
+    rv.synthesize_audio(_narration("alpha", "beta"), d, cfg)
+    fake2 = _FakeTts()
+    monkeypatch.setattr("adapters.tts.synthesize_entry", fake2)
+    out = rv.synthesize_audio(_narration("alpha", "CHANGED"), d, cfg)
+    assert [e.entry_id for e in out.entries] == ["001", "002"]
+    assert fake2.calls == ["001", "002"]
+
+
+def test_clips_to_synthesize_matches_the_synth_loop():
+    nar = _narration("a", "", "b", "b", "c")
+    assert rv._clips_to_synthesize(nar) == ["001", "003", "005"]
+

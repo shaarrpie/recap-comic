@@ -8,6 +8,7 @@ image+prompt parity, cache reuse, deterministic cutter independence.
 from __future__ import annotations
 
 import json
+import types
 from pathlib import Path
 
 import pytest
@@ -220,3 +221,181 @@ def test_text_fallback_wrapper() -> None:
     assert out.fallback_used is True
     assert out.model_used == ai.FALLBACK_MODEL
     assert "Hi" in out.result
+
+# ------------------------------------------------- truncation + resume -----
+# Silent-failure hardening: truncated LLM output, per-chunk resume, and
+# corrupt-cache tolerance (all offline; no API key involved).
+
+
+def test_truncation_reason_normalization() -> None:
+    """Every provider's 'hit the output ceiling' reason maps to True, and
+    normal completions do not."""
+    enum_like = types.SimpleNamespace(name="MAX_TOKENS")   # Gemini FinishReason
+    assert sa.is_truncated_response(enum_like) is True
+    assert sa.is_truncated_response("FinishReason.MAX_TOKENS") is True
+    assert sa.is_truncated_response("length") is True          # OpenAI/Ollama
+    assert sa.is_truncated_response("max_tokens") is True      # Anthropic
+    assert sa.is_truncated_response("stop") is False
+    assert sa.is_truncated_response("end_turn") is False
+    assert sa.is_truncated_response(None) is False
+
+
+def test_truncation_raises_before_parsing() -> None:
+    """finish_reason 'length' must raise TruncatedResponseError instead of
+    surfacing as a JSON parse error, retrying verbatim, and silently
+    degrading the strip to the no-AI gutter fallback."""
+    resp = types.SimpleNamespace(
+        choices=[types.SimpleNamespace(
+            finish_reason="length",
+            message=types.SimpleNamespace(content='{"panels": [{"panel_index'))])
+    with pytest.raises(sa.TruncatedResponseError, match="TRUNCATED"):
+        sa.raise_if_truncated(sa._openai_finish_reason(resp), backend="openai",
+                              model="m", max_tokens=4096,
+                              image_size=(800, 2000))
+    # a normal completion never raises
+    ok = types.SimpleNamespace(
+        choices=[types.SimpleNamespace(
+            finish_reason="stop",
+            message=types.SimpleNamespace(content=_panel_payload()))])
+    sa.raise_if_truncated(sa._openai_finish_reason(ok), backend="openai",
+                          model="m", max_tokens=4096, image_size=(800, 2000))
+
+
+def test_truncated_chunk_is_retried_with_shorter_answer_instruction(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """An identical prompt at temperature 0 reproduces the same truncation,
+    so the retry must carry the truncation feedback instead."""
+    monkeypatch.setattr(sa.time, "sleep", lambda _s: None)
+    prompts: list[str] = []
+
+    class _TruncThenOk:
+        name = "trunc"
+
+        def analyze_chunk(self, image: Image.Image, previous_context: str = "",
+                          retry_feedback: str = ""
+                          ) -> tuple[list[sa.PanelPlanEntry], list[str]]:
+            prompts.append(retry_feedback)
+            if prompts[-1]:
+                return [sa.PanelPlanEntry(panel_index=1, y_start=0, y_end=100,
+                                          narration="ok")], []
+            raise sa.TruncatedResponseError("openai response was TRUNCATED")
+
+    entries, _chars = sa._call_with_retry(_TruncThenOk(), _img(), attempts=3)
+    assert [e.narration for e in entries] == ["ok"]
+    assert prompts[0] == ""
+    assert prompts[1] == sa.TRUNCATION_RETRY_FEEDBACK
+    assert "TRUNCATED" in prompts[1]
+
+
+def test_xkiro_truncated_primary_falls_back_to_secondary() -> None:
+    calls: list[str] = []
+
+    def _fake(model_id: str, prompt: str, b64: str,
+              image: Image.Image) -> str:
+        calls.append(model_id)
+        if len(calls) == 1:
+            raise sa.TruncatedResponseError(
+                "xkiro response was TRUNCATED (finish reason 'length')")
+        return _panel_payload()
+
+    backend = sa.XkiroVisionBackend(api_key="test", request_fn=_fake)
+    entries, _chars = backend.analyze_chunk(_img())
+    assert [e.narration for e in entries] == ["A hero stands."]
+    assert backend.fallback_used is True
+    assert len(calls) == 2   # primary truncated, secondary completed
+
+
+def test_failed_chunk_resumes_from_chunk_cache(tmp_path: Path) -> None:
+    """One failing chunk must not waste the tokens already spent: the chunks
+    that succeeded are cached per-chunk and a re-run only re-sends the rest."""
+    strip = tmp_path / "strip.png"
+    Image.new("RGB", (200, 2200), (200, 200, 200)).save(strip)
+    cache = tmp_path / "cache"
+    ok_entries = [sa.PanelPlanEntry(panel_index=1, y_start=0, y_end=1000,
+                                    narration="n")]
+
+    class HealingTailChunk:
+        """Chunk 1 always answers; the short tail chunk fails until healed."""
+        name = "healing-tail"
+        model = "m"
+
+        def __init__(self) -> None:
+            self.calls = 0
+            self.healed = False
+
+        def analyze_chunk(self, image: Image.Image, previous_context: str = "",
+                          retry_feedback: str = ""
+                          ) -> tuple[list[sa.PanelPlanEntry], list[str]]:
+            self.calls += 1
+            if not self.healed and image.height < 1000:
+                raise RuntimeError("chunk 2 exploded")
+            return ok_entries, []
+
+    first = HealingTailChunk()
+    with pytest.raises(sa.VisionAnalysisError, match="are cached"):
+        sa.analyze_strip(strip, first, cache_dir=cache, attempts=1)
+    assert first.calls == 2                  # chunk 1 ok, chunk 2 failed
+
+    # Rerun: chunk 1 must come from the chunk cache — only chunk 2 is re-sent.
+    second = HealingTailChunk()
+    with pytest.raises(sa.VisionAnalysisError):
+        sa.analyze_strip(strip, second, cache_dir=cache, attempts=1)
+    assert second.calls == 1
+    assert list((cache / "chunks").glob("chunk_*.json"))
+
+    # Once the model behaves, the resumed run completes with ONE model call
+    # and the full plan is cached for later runs.
+    third = HealingTailChunk()
+    third.healed = True
+    plan, used = sa.analyze_strip(strip, third, cache_dir=cache, attempts=1)
+    assert used is False
+    assert [e.panel_index for e in plan.entries] == [1, 2]
+    assert third.calls == 1                  # chunk 1 was a chunk-cache hit
+    _plan2, used2 = sa.analyze_strip(strip, HealingTailChunk(), cache_dir=cache)
+    assert used2 is True                     # full plan cache now exists
+
+
+def test_corrupt_phase1_cache_is_reanalyzed_not_fatal(tmp_path: Path) -> None:
+    """A truncated/garbage cache file used to hard-crash every later run of
+    the strip; it must be discarded and rebuilt instead.
+
+    With the per-chunk cache the rebuild needs NO model calls at all (chunk
+    answers are still on disk), which is exactly the cost profile we want.
+    """
+    strip = tmp_path / "strip.png"
+    Image.new("RGB", (200, 600), (200, 200, 200)).save(strip)
+    cache = tmp_path / "cache"
+    plan1, _used1 = sa.analyze_strip(
+        strip, sa.XkiroVisionBackend(api_key="test",
+                                     request_fn=lambda *a: _panel_payload()),
+        cache_dir=cache)
+    assert plan1.entries
+    plan_path = next(cache.glob("plan_*.json"))
+    plan_path.write_text('{"source": "strip.png", "wid', encoding="utf-8")
+
+    def _counting(model_id: str, prompt: str, b64: str,
+                  image: Image.Image) -> str:
+        raise AssertionError("the per-chunk cache must avoid a model call")
+
+    plan2, used2 = sa.analyze_strip(
+        strip, sa.XkiroVisionBackend(api_key="test", request_fn=_counting),
+        cache_dir=cache)
+    assert used2 is False                       # corrupt plan cache discarded
+    assert [e.panel_index for e in plan2.entries] == [1]
+    assert plan2.input_hash == plan1.input_hash
+    # the plan cache file was rewritten with a VALID artifact
+    sa.PanelPlan.model_validate_json(plan_path.read_text(encoding="utf-8"))
+
+    # A hash-mismatched cache (different strip, same file name) is discarded
+    # too — never returned as a hit.
+    wrong = sa.PanelPlan(
+        source="strip.png", width=200, height=600, model="test",
+        config_hash="t", input_hash="f" * 64,
+        entries=[sa.PanelPlanEntry(panel_index=1, y_start=0, y_end=100,
+                                   narration="stale")])
+    plan_path.write_text(wrong.model_dump_json(), encoding="utf-8")
+    _plan3, used3 = sa.analyze_strip(
+        strip, sa.XkiroVisionBackend(api_key="test", request_fn=_counting),
+        cache_dir=cache)
+    assert used3 is False
+

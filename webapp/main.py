@@ -383,18 +383,28 @@ class RunRequest(BaseModel):
 
 @app.post("/api/run")
 async def run(body: RunRequest):
+    # Session ids are uuid4().hex[:12] directory names under webapp_output.
+    # This is the ONE route that used to take the id as a bare str while every
+    # other route funnels through _validated_session_id: "../../sneaky" could
+    # read a strip outside webapp_output and write artifacts next to it.
+    # The gate is not just cosmetic: strip_file resolution below globs
+    # (OUTPUT_DIR / body.session) and the worker later writes plan.json /
+    # panels.json into that same directory.
+    session = _validated_session_id(body.session)
+    if body.continue_from:
+        _validated_session_id(body.continue_from)
     # Sessions are DIRECTORIES on disk; job records may be missing for
     # sessions created before job persistence existed (or evicted from
     # the store). Resolve the strip from disk first, the job record only
     # as a fallback for the stored config.
-    src = store.get(body.session) or store.get_by_session(body.session)
+    src = store.get(session) or store.get_by_session(session)
     strip_file = ""
     if src is not None:
         strip_file = src.config.get("strip_file", "")
-    if not strip_file or not (OUTPUT_DIR / body.session / strip_file).exists():
+    if not strip_file or not (OUTPUT_DIR / session / strip_file).exists():
         # disk fallback: whatever strip.* the session directory has
         found = None
-        for cand in (OUTPUT_DIR / body.session).glob("strip.*"):
+        for cand in (OUTPUT_DIR / session).glob("strip.*"):
             if cand.suffix.lower() in (".png", ".jpg", ".jpeg", ".webp"):
                 found = cand.name
                 break
@@ -429,7 +439,7 @@ async def run(body: RunRequest):
     # forever without any worker, and a queued upload must never block
     # the first /api/run.
     for j in store.snapshot():
-        if (j.config.get("session") == body.session
+        if (j.config.get("session") == session
                 and j.kind in ("generate", "pipeline_step", "pipeline_until")
                 and j.status.value in ("queued", "running")):
             raise HTTPException(409, "a job is already running for this "
@@ -455,7 +465,7 @@ async def run(body: RunRequest):
         if _ai.api_key_from_env():
             backend = _default_backend()
     job = store.create("generate", {
-        "session": body.session,
+        "session": session,
         "strip_file": strip_file,
         "order": body.order,
         "tts": body.tts, "voice": body.voice, "style": body.style,
@@ -468,7 +478,7 @@ async def run(body: RunRequest):
         "continue_from": body.continue_from,
     })
     log.info("job=%s created kind=generate session=%s order=%s backend=%s",
-             job.id, body.session,
+             job.id, session,
              "user" if body.order else "default", backend)
     kwargs = {
         "api_key": body.api_key or None,

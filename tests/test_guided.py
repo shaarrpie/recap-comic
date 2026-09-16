@@ -855,3 +855,152 @@ def test_call_with_retry_sleeps_for_retry_delay(monkeypatch: pytest.MonkeyPatch,
     assert len(sleeps) == 2
     assert sleeps[0] == 2.0
     assert sleeps[1] == 2.0
+
+# ------------------------- silent-failure hardening (plan hash, bubbles, --
+# --------------------------------------- snap measurement, smoke metric) ---
+
+
+def test_plan_hash_mismatch_is_rejected(tmp_path: Path) -> None:
+    """A plan produced from a DIFFERENT strip (same aspect ratio) used to be
+    cut against this strip verbatim -> garbage crops. The recorded strip
+    SHA-256 must match."""
+    import hashlib
+
+    strip = tmp_path / "strip.png"
+    make_strip(1200, panels=[(40, 300), (340, 600), (640, 1100)],
+               gutters=[(300, 340), (600, 640)]).save(strip)
+    other = tmp_path / "other.png"
+    make_strip(900, panels=[(40, 300), (340, 600)],
+               gutters=[(300, 340)]).save(other)
+
+    plan_file = tmp_path / "foreign.json"
+    plan = sa.PanelPlan(
+        source="strip.png", width=800, height=1200, model="test",
+        config_hash="t", input_hash=hashlib.sha256(other.read_bytes()).hexdigest(),
+        entries=[sa.PanelPlanEntry(panel_index=i + 1, y_start=y0, y_end=y1,
+                                   narration="n", confidence=0.9)
+                 for i, (y0, y1) in enumerate([(40, 300), (340, 600),
+                                               (640, 1100)])])
+    plan_file.write_text(plan.model_dump_json(), encoding="utf-8")
+    with pytest.raises(ValueError, match="DIFFERENT strip"):
+        gp.run_guided(strip, tmp_path / "out", backend_name="none",
+                      plan_path=plan_file, fallback=True)
+
+
+def test_plan_hash_match_is_accepted(tmp_path: Path) -> None:
+    """A plan that provably belongs to this strip is cut normally."""
+    import hashlib
+
+    strip = tmp_path / "strip.png"
+    make_strip(1200, panels=[(40, 300), (340, 600), (640, 1100)],
+               gutters=[(300, 340), (600, 640)]).save(strip)
+    plan_file = tmp_path / "plan.json"
+    plan = sa.PanelPlan(
+        source="strip.png", width=800, height=1200, model="test",
+        config_hash="t",
+        input_hash=hashlib.sha256(strip.read_bytes()).hexdigest(),
+        entries=[sa.PanelPlanEntry(panel_index=i + 1, y_start=y0, y_end=y1,
+                                   narration="n", dialogue="d", confidence=0.9)
+                 for i, (y0, y1) in enumerate([(40, 300), (340, 600),
+                                               (640, 1100)])])
+    plan_file.write_text(plan.model_dump_json(), encoding="utf-8")
+    _plan, artifact, used = gp.run_guided(strip, tmp_path / "out",
+                                          backend_name="none",
+                                          plan_path=plan_file, fallback=True)
+    assert used is False
+    assert artifact is not None and len(artifact.panels) == 3
+
+
+def test_find_valley_cuts_never_cuts_a_forbidden_band() -> None:
+    """find_valley_cuts must honour the forbidden rows (speech bubbles): a
+    gutter run inside a bubble is not a cut."""
+    strip_arr = make_strip(1200, panels=[(40, 600), (616, 1160)],
+                           gutters=[(600, 616)])
+    gray = np.asarray(strip_arr.convert("L"))
+    # unguarded: cuts through the gutter
+    cuts = gc.find_valley_cuts(gray)
+    assert any(600 < c < 616 for c in cuts)
+    # the bubble band covers the gutter -> no cut there
+    guarded = gc.find_valley_cuts(gray, forbidden=frozenset(range(596, 621)))
+    assert all(not (596 <= c <= 620) for c in guarded)
+
+
+def test_fallback_passes_bubble_rows_to_both_cutters(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bubble protection is not AI-path-only: the gutter fallback has no AI
+    bubble boxes, so it must derive the forbidden rows itself and pass them
+    to BOTH the valley scan and the oversized-panel splitter."""
+    strip = tmp_path / "strip.png"
+    make_sample_strip(strip)
+    captured: dict[str, frozenset] = {}
+    real_valley = gc.find_valley_cuts
+    real_split = gc._split_panel
+
+    def _valley(gray: np.ndarray, *, forbidden=frozenset(), **kw) -> list[int]:
+        captured["valley"] = forbidden
+        return real_valley(gray, forbidden=forbidden, **kw)
+
+    def _split(gray: np.ndarray, panel, forbidden: frozenset,
+               config: gc.CutterConfig, **kw):
+        captured["split"] = forbidden
+        return real_split(gray, panel, forbidden, config, **kw)
+
+    monkeypatch.setattr(gc, "find_valley_cuts", _valley)
+    monkeypatch.setattr(gc, "_split_panel", _split)
+    plan = gp.fallback_plan_from_gutter_detector(strip, max_panel_height=1000)
+    assert plan.entries
+    assert isinstance(captured["valley"], frozenset)
+    assert captured["split"] == captured["valley"], (
+        "the splitter must use the same forbidden rows as the valley scan")
+
+
+def test_snap_measured_marks_unsnapped_boundaries(tmp_path: Path) -> None:
+    """A boundary kept WITHOUT a gutter match carries 0 px that is 'not
+    measured', not '0px error' — snap_measured must say so."""
+    strip = tmp_path / "strip.png"
+    # continuous art across the AI boundary: no gutter run exists to snap to
+    make_strip(1200, panels=[(40, 1160)]).save(strip)
+    plan = plan_from([(40, 600), (616, 1160)], height=1200)
+    gray = np.asarray(Image.open(strip).convert("L"))
+    cuts = gc.build_cuts(
+        gray, plan, config=gc.CutterConfig(preserve_boundaries=True))
+    assert len(cuts) == 2
+    for c in cuts:
+        assert len(c.snap_measured) == len(c.snap_distances)
+    # the only boundary had no gutter -> nothing was measured
+    assert all(not m for c in cuts for m in c.snap_measured)
+
+
+def test_snap_measured_true_for_real_snaps(tmp_path: Path) -> None:
+    strip = tmp_path / "strip.png"
+    make_strip(1200, panels=[(40, 300), (340, 600), (640, 1100)],
+               gutters=[(300, 340), (600, 640)]).save(strip)
+    plan = plan_from([(40, 300), (340, 600), (640, 1100)], height=1200)
+    gray = np.asarray(Image.open(strip).convert("L"))
+    cuts = gc.build_cuts(gray, plan, config=gc.CutterConfig())
+    assert any(m for c in cuts for m in c.snap_measured), (
+        "boundaries snapped to a real gutter must count as measurements")
+    for c in cuts:
+        assert len(c.snap_measured) == len(c.snap_distances)
+
+
+def test_smoke_snap_stats_exclude_unmeasured_boundaries() -> None:
+    """The smoke test's accuracy metric must not count 'no gutter found'
+    boundaries as 0px — that made fallback runs report a perfect median."""
+    from scripts.smoke_test_live import snap_stats
+
+    def _cut(dists: list[int], measured: list[bool]) -> gc.CutPanel:
+        return gc.CutPanel(id="p", panel_index=1, y_start=0, y_end=100,
+                           narration="", dialogue="", panel_type="single",
+                           confidence=0.9, image_file="p.png",
+                           snap_distances=dists, snap_measured=measured)
+
+    stats = snap_stats([_cut([3, 5], [True, True]),      # both measured
+                        _cut([0, 0], [False, False]),    # never measured
+                        _cut([7], [])])                  # legacy: measured
+    assert stats == {"count": 3, "unsnapped": 2, "mean_px": 5.0,
+                     "median_px": 5.0, "max_px": 7}
+    # every boundary unmeasured -> EMPTY stats, not a perfect 0
+    assert snap_stats([_cut([0, 0], [False, False])]) == {
+        "count": 0, "unsnapped": 2}
+

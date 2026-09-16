@@ -140,6 +140,13 @@ class CutPanel(BaseModel):
     split_of: str | None = None  # parent panel id when this is an a/b piece
     merged_with: list[int] = Field(default_factory=list)
     snap_distances: list[int] = Field(default_factory=list)  # AI->final snap px
+    # Which entries of snap_distances were measured against a REAL gutter
+    # match. False = "no gutter was found, this boundary was kept as-is", so
+    # the 0 in snap_distances means "not measured", NOT "0px error". Counting
+    # unsnapped boundaries as 0px is what made every fallback run report a
+    # perfect 0px median in scripts/smoke_test_live.py. An empty list means a
+    # legacy artifact, where every distance is treated as measured.
+    snap_measured: list[bool] = Field(default_factory=list)
     # --- deterministic blank analysis (NO AI; set by the blank detector) --
     blank_score: float = Field(0.0, ge=0.0, le=1.0)
     blank_flag: str = Field("normal")  # normal | suspicious | blank
@@ -486,11 +493,14 @@ def find_gutter_row(
     return (best[0] + best[1]) // 2
 
 def _emit(group: list[PanelPlanEntry], y0: int, y1: int,
-          base_id: str, snap_distances: list[int] | None = None) -> CutPanel:
+          base_id: str, snap_distances: list[int] | None = None,
+          snap_measured: list[bool] | None = None) -> CutPanel:
     """One CutPanel from a (possibly merged) group of AI entries.
 
     snap_distances: [top_snap, bottom_snap] in px; logs the AI->final
     snap distance so the smoke test can report model accuracy.
+    snap_measured: [top, bottom] flags; False means "no gutter found at
+    this boundary" so the distance is NOT a measurement (see CutPanel).
     """
     narration = " ".join(
         e.narration.strip() for e in group if e.narration.strip())
@@ -509,6 +519,7 @@ def _emit(group: list[PanelPlanEntry], y0: int, y1: int,
         image_file=f"panel_{base_id}.png",
         merged_with=merged if len(merged) > 1 else [],
         snap_distances=snap_distances or [],
+        snap_measured=snap_measured or [],
     )
 
 
@@ -605,6 +616,11 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
     groups: list[list[PanelPlanEntry]] = [[entries[0]]]
     cut_rows: list[int] = []
     snap_distances: list[int] = []
+    # snap_measured[i] is False when NO gutter was found for cut i: the
+    # boundary was kept at the AI's position, so its 0 is "not measured",
+    # never "perfect 0px" (the smoke test must stay blind to model accuracy
+    # when the cutter could not measure anything).
+    snap_measured: list[bool] = []
     # We need to track modified entries since we can't mutate Pydantic models in-place
     modified_entries = list(entries)
     for i, (a, b) in enumerate(pairwise(modified_entries)):
@@ -655,6 +671,7 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
                     groups.append([b])
                     cut_rows.append(center)
                     snap_distances.append(0)
+                    snap_measured.append(False)
                     log.debug("no gutter at %d; boundary preserved "
                               "(structure-first)", center)
                 else:
@@ -664,10 +681,12 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
                 groups.append([b])
                 cut_rows.append(row)
                 snap_distances.append(abs(row - center))
+                snap_measured.append(True)
         else:
             groups.append([b])
             cut_rows.append(row)
             snap_distances.append(abs(row - center))
+            snap_measured.append(True)
 
     tops = [entries[0].y_start] + cut_rows
     bottoms = cut_rows + [entries[-1].y_end]
@@ -684,13 +703,21 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
     tops[0] = 0
     bottoms[-1] = strip_h
     panel_snaps: list[list[int]] = []
+    panel_measured: list[list[bool]] = []
     for i in range(len(groups)):
         top_snap = snap_distances[i - 1] if 0 <= i - 1 < len(snap_distances) else 0
         bot_snap = snap_distances[i] if 0 <= i < len(snap_distances) else 0
         panel_snaps.append([top_snap, bot_snap])
+        # Strip-top (i=0 top) and strip-bottom (last i bottom) are clamped to
+        # the image edge, not snapped to a gutter: not a measurement either.
+        panel_measured.append([
+            0 <= i - 1 < len(snap_measured) and snap_measured[i - 1],
+            0 <= i < len(snap_measured) and snap_measured[i],
+        ])
 
-    panels = [_emit(g, int(y0), int(y1), f"{g[0].panel_index:03d}", snaps)
-              for g, y0, y1, snaps in zip(groups, tops, bottoms, panel_snaps, strict=True)]
+    panels = [_emit(g, int(y0), int(y1), f"{g[0].panel_index:03d}", snaps, measured)
+              for g, y0, y1, snaps, measured in
+              zip(groups, tops, bottoms, panel_snaps, panel_measured, strict=True)]
     log.debug("after merge/snap groups=%d", len(panels))
 
     # 2. Split oversized panels at their internal gutters.
@@ -788,7 +815,15 @@ def _apply_blank_regions(cuts: list[CutPanel],
         if (y0, y1) != (c.y_start, c.y_end):
             log.info("trimmed panel %s from [%d,%d] to [%d,%d] "
                      "(blank regions removed)", c.id, c.y_start, c.y_end, y0, y1)
-            c = c.model_copy(update={"y_start": y0, "y_end": y1})
+            update: dict = {"y_start": y0, "y_end": y1}
+            if len(c.snap_measured) == 2:
+                # A trimmed edge no longer matches the gutter the snap was
+                # measured against; keep the untrimmed side's flag.
+                update["snap_measured"] = [
+                    c.snap_measured[0] if y0 == c.y_start else False,
+                    c.snap_measured[1] if y1 == c.y_end else False,
+                ]
+            c = c.model_copy(update=update)
         out.append(c)
     return out
 

@@ -54,16 +54,42 @@ def _load_dotenv(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+def snap_pair(cut) -> list[tuple[int, bool]]:
+    """(distance, measured) pairs for one panel's top/bottom boundaries.
+
+    `measured` is False when the boundary was KEPT because no gutter was
+    found (fallback / structure-first boundaries, or the clamped strip
+    edges). Those entries carry 0 px in snap_distances for backward
+    compatibility, and counting them as 0px errors understates model error —
+    a fallback run used to report a perfect 0px median while never measuring
+    a single snap.
+    """
+    dists = [int(d) for d in cut.snap_distances]
+    measured = [bool(m) for m in getattr(cut, "snap_measured", [])]
+    if len(measured) != len(dists):
+        # Legacy artifact (pre-snap_measured): everything counts as measured.
+        measured = [True] * len(dists)
+    return list(zip(dists, measured, strict=True))
+
+
 def snap_stats(cuts: list) -> dict:
-    """Mean/median/max of per-boundary snap distances across all panels."""
-    dists = [int(d) for c in cuts for d in c.snap_distances]
-    if not dists:
-        return {"count": 0}
+    """Mean/median/max snap distance over MEASURED boundaries only.
+
+    Boundaries that were kept without a gutter match are reported in
+    "unsnapped" and excluded from the stats: a 0 there means "not measured",
+    not "perfect".
+    """
+    pairs = [pair for c in cuts for pair in snap_pair(c)]
+    measured = [d for d, is_measured in pairs if is_measured]
+    unsnapped = len(pairs) - len(measured)
+    if not measured:
+        return {"count": 0, "unsnapped": unsnapped}
     return {
-        "count": len(dists),
-        "mean_px": round(statistics.mean(dists), 1),
-        "median_px": round(statistics.median(dists), 1),
-        "max_px": max(dists),
+        "count": len(measured),
+        "unsnapped": unsnapped,
+        "mean_px": round(statistics.mean(measured), 1),
+        "median_px": round(statistics.median(measured), 1),
+        "max_px": max(measured),
     }
 
 
@@ -145,9 +171,16 @@ def main(argv: list[str] | None = None) -> int:
         "plan": str(Path(args.plan_out)),
     }
     print(json.dumps(report, indent=2))
-    if stats_.get("count") and stats_["max_px"] > args.snap_tolerance:
+    if not stats_.get("count"):
+        print("WARNING: no boundary was snapped to a detected gutter — the "
+              "snap stats are EMPTY, not perfect. Inspect the overlay.")
+    elif stats_.get("max_px", 0) > args.snap_tolerance:
         print("WARNING: max snap distance exceeds --snap-tolerance; inspect "
               "the overlay - do NOT tune thresholds to hide model error.")
+    if stats_.get("unsnapped"):
+        print(f"NOTE: {stats_['unsnapped']} boundary/boundaries had no "
+              "gutter match and are EXCLUDED from the snap stats (a 0 there "
+              "would mean 'not measured', not 'perfect').")
     return 0
 
 

@@ -87,9 +87,21 @@ def test_upload_rejects_corrupt_image():
     assert "not a valid" in r.json()["detail"]
 
 
-def test_failure_reaches_status_and_message():
+def test_run_rejects_malformed_session_ids():
+    """Session ids are directory names under webapp_output, so a malformed
+    id (or a traversal attempt) must be rejected with 400 BEFORE any
+    filesystem access — not 404 after probing the disk."""
     c = TestClient(webmain.app)
-    r = c.post("/api/run", json={"session": "nope"})
+    for bad in ("nope", "../../sneaky", "../", "a" * 64, "A1B2C3D4E5F6"):
+        r = c.post("/api/run", json={"session": bad})
+        assert r.status_code == 400, bad
+
+
+def test_run_unknown_wellformed_session_is_404():
+    """A WELL-FORMED id that does not exist is still 404 (the regex gate must
+    not swallow the 'upload first' case)."""
+    c = TestClient(webmain.app)
+    r = c.post("/api/run", json={"session": "a1b2c3d4e5f6"})
     assert r.status_code == 404
 
 

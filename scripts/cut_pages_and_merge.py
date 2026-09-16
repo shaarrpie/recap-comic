@@ -169,6 +169,7 @@ def main() -> None:
                 split_of=p.split_of,
                 merged_with=p.merged_with,
                 snap_distances=p.snap_distances,
+                snap_measured=p.snap_measured,
                 blank_score=p.blank_score,
                 blank_flag=p.blank_flag,
                 blank_reasons=p.blank_reasons,

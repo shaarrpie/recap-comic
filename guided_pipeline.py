@@ -15,6 +15,7 @@ run_guided() wires Phase 1 (strip_analyzer: AI pre-read) to Phase 2
 from __future__ import annotations
 
 import logging
+import re
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,46 @@ LOW_CONF_RATIO_LIMIT = 0.30
 
 _OFFLINE_BACKENDS = frozenset(
     {"none", "deterministic", "cv", "manual", "no-ai", "noai"})
+
+# Phase 1 records the SHA-256 of the strip it read in PanelPlan.input_hash.
+# Anything that is not a full lowercase hex digest (hand-written test plans,
+# "fallback" provenance) cannot be verified, so it is accepted with a warning.
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def verify_plan_belongs_to_strip(plan: sa.PanelPlan, strip: Path,
+                                 plan_path: str | Path) -> None:
+    """Fail loud when an explicit --plan does not belong to this strip.
+
+    Nothing ever compared plan.input_hash against the strip's SHA-256, so a
+    plan cut for a DIFFERENT strip with a similar aspect ratio silently
+    produced garbage crops — guided_cut's 5% aspect-ratio gate only catches
+    gross mismatches, not a same-aspect-ratio wrong strip.
+    """
+    recorded = (plan.input_hash or "").strip()
+    if not _SHA256_RE.fullmatch(recorded):
+        log.warning(
+            "plan %s carries no verifiable strip hash (input_hash=%r); "
+            "cannot prove it belongs to %s — proceeding",
+            Path(plan_path).name, plan.input_hash, strip.name)
+        return
+    actual = sa._sha256_file(strip)
+    if recorded == actual:
+        if plan.source and plan.source != strip.name:
+            # Bytes match, so this is a renamed/moved file — harmless, but
+            # worth saying out loud because it looks alarming in the logs.
+            log.warning(
+                "plan %s was written for %r and is applied to %r (identical "
+                "bytes, sha256=%s…)", Path(plan_path).name, plan.source,
+                strip.name, actual[:12])
+        return
+    raise ValueError(
+        f"plan {Path(plan_path).name} belongs to a DIFFERENT strip: "
+        f"plan input_hash={recorded[:12]}…, {strip.name} sha256="
+        f"{actual[:12]}… (plan source={plan.source!r}, plan says "
+        f"{plan.width}x{plan.height}). Cropping this strip with that plan "
+        "would cut in the wrong places; re-run 'guided plan' against this "
+        "exact file.")
 
 
 def _merge_narration_into_fallback(ai_plan: sa.PanelPlan,
@@ -181,8 +222,21 @@ def fallback_plan_from_gutter_detector(
         width, height = img.size
         gray = np.asarray(img.convert("L"))
 
-    from guided_cutter import CutPanel, CutterConfig, _split_panel, find_valley_cuts
-    cuts = find_valley_cuts(gray, max_panel_height=max_panel_height)
+    from guided_cutter import CutPanel, CutterConfig, _split_panel, bubble_rows, find_valley_cuts
+    # Bubble protection is NOT AI-path-only: the fallback has no AI bubble
+    # boxes, so the offline pixel detector supplies the forbidden rows. Both
+    # the valley scan and the oversized-panel splitter must respect them.
+    empty_plan = sa.PanelPlan(source=strip_path.name, width=width,
+                              height=height, model="gutter-run",
+                              config_hash="fallback", input_hash="fallback",
+                              provenance="fallback", entries=[])
+    forbidden = frozenset(bubble_rows(empty_plan, pad=CutterConfig().bubble_pad,
+                                      gray=gray))
+    if forbidden:
+        log.info("fallback bubble protection: %d forbidden rows from the "
+                 "pixel bubble detector", len(forbidden))
+    cuts = find_valley_cuts(gray, max_panel_height=max_panel_height,
+                            forbidden=forbidden)
     if len(cuts) < 2:
         raise sa.VisionAnalysisError(
             "fallback detected no usable gutter runs on this strip")
@@ -221,7 +275,7 @@ def fallback_plan_from_gutter_detector(
                     "y_start": e.y_start,
                     "y_end": e.y_end,
                 })
-                pieces = _split_panel(gray, piece, frozenset(),
+                pieces = _split_panel(gray, piece, forbidden,
                                        CutterConfig(max_panel_height=max_panel_height,
                                                     variance_threshold=variance_threshold))
                 for pc in pieces:
@@ -293,6 +347,9 @@ def run_guided(
         plan = sa.PanelPlan.model_validate_json(
             Path(plan_path).read_text("utf-8"))
         plan_from_file = True
+        # A plan file is a Phase-1 artifact for ONE strip; verify it belongs
+        # to THIS strip before cutting coordinates out of it.
+        verify_plan_belongs_to_strip(plan, strip, plan_path)
         log.info("plan loaded from file panels=%d", len(plan.entries))
     elif backend is not None or backend_name.lower() not in _OFFLINE_BACKENDS:
         use = backend if backend is not None else build_backend(

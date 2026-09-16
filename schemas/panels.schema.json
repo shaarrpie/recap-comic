@@ -160,7 +160,17 @@
             "minimum": 0
           },
           "default": [],
-          "maxItems": 2
+          "maxItems": 2,
+          "description": "Per-boundary |final cut - AI boundary| in px. Entries whose snap_measured partner is false mean 'no gutter was found', not 0px."
+        },
+        "snap_measured": {
+          "type": "array",
+          "items": {
+            "type": "boolean"
+          },
+          "default": [],
+          "maxItems": 2,
+          "description": "Per-boundary measurement flags aligned with snap_distances: true = snapped to a detected gutter, false = boundary kept without a gutter match (distance is not a measurement). Empty on legacy artifacts, where every distance counts as measured."
         },
         "blank_score": {
           "type": "number",

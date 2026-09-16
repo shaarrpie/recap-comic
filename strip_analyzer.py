@@ -130,6 +130,113 @@ class VisionAnalysisError(RuntimeError):
     """Raised when Phase 1 cannot produce a usable plan."""
 
 
+class TruncatedResponseError(ValueError):
+    """The model stopped because it hit the output-token ceiling.
+
+    A truncated response is NOT a JSON parse error: the payload is cut off
+    mid-object, so re-sending the identical prompt at temperature 0 reproduces
+    the same cut-off answer. Historically it surfaced as a generic decode
+    error, was retried verbatim, failed again, and the strip silently degraded
+    to the no-AI gutter fallback ("some strips come out with no narration").
+    Detecting it explicitly lets the retry ask for a SHORTER answer instead.
+
+    Derives from ValueError because that is what the backends and the xkiro
+    primary->fallback wrapper already treat as "this response is unusable,
+    try the next model".
+    """
+
+
+# Provider finish/stop reasons that mean "output token ceiling reached":
+#   Gemini  FinishReason.MAX_TOKENS (enum -> name is what matters)
+#   OpenAI + OpenAI-compatible endpoints  "length"
+#   Anthropic  "max_tokens"
+#   Ollama  done_reason "length" | Cloudflare  "length"
+_TRUNCATION_REASONS = frozenset({
+    "length",
+    "max_tokens",
+    "max_output_tokens",
+    "max_tokens_reached",
+    "token_limit",
+    "string_above_max_length",
+})
+
+# Sent as retry_feedback (see _call_with_retry) when a chunk was truncated.
+# The retry must change the ANSWER, not just repeat the question.
+TRUNCATION_RETRY_FEEDBACK = (
+    "ERROR: your previous answer was TRUNCATED — it hit the output token "
+    "limit, so the JSON was cut off mid-object and could not be read. Send a "
+    "COMPLETE, valid JSON object this time. Keep every narration and dialogue "
+    "under 25 words, do not repeat the schema, and do not omit any required "
+    "field. If this chunk holds more panels than you can describe in one "
+    "answer, describe FEWER panels with short text rather than letting the "
+    "trailing JSON be cut off."
+)
+
+
+def finish_reason_label(reason: object) -> str:
+    """Normalize a provider finish/stop reason to a lowercase label.
+
+    Gemini returns a `types.FinishReason` enum whose str() is
+    "FinishReason.MAX_TOKENS", so the enum NAME is what matters; the
+    OpenAI-compatible endpoints return the bare string ("length").
+    """
+    name = getattr(reason, "name", None) or str(reason)
+    return name.rsplit(".", 1)[-1].strip().lower()
+
+
+def is_truncated_response(reason: object) -> bool:
+    """True when `reason` says the model hit its output-token ceiling."""
+    if reason is None:
+        return False
+    return finish_reason_label(reason) in _TRUNCATION_REASONS
+
+
+def raise_if_truncated(reason: object, *, backend: str, model: str = "",
+                       max_tokens: int | None = None,
+                       image_size: tuple[int, int] | None = None) -> None:
+    """Raise TruncatedResponseError when the provider reported truncation."""
+    if not is_truncated_response(reason):
+        return
+    bits = [f"{backend} response was TRUNCATED (finish reason "
+            f"{finish_reason_label(reason)!r})"]
+    if model:
+        bits.append(f"model={model}")
+    if max_tokens:
+        bits.append(f"max_output_tokens={max_tokens}")
+    if image_size is not None:
+        bits.append(f"chunk={image_size[0]}x{image_size[1]}")
+    raise TruncatedResponseError(
+        ", ".join(bits) + ": the model hit the output token ceiling and the "
+        "JSON is incomplete. This is NOT a parse bug — the answer was cut off.")
+
+
+def _first_choice(resp: object) -> object | None:
+    """resp.choices[0] for the OpenAI-compatible SDKs, else None."""
+    choices = getattr(resp, "choices", None)
+    if not choices:
+        return None
+    try:
+        return choices[0]
+    except (IndexError, TypeError):
+        return None
+
+
+def _openai_finish_reason(resp: object | None) -> object | None:
+    choice = _first_choice(resp) if resp is not None else None
+    return getattr(choice, "finish_reason", None)
+
+
+def _gemini_finish_reason(resp: object) -> object | None:
+    """resp.candidates[0].finish_reason for the google-genai SDK."""
+    candidates = getattr(resp, "candidates", None)
+    if not candidates:
+        return None
+    try:
+        return getattr(candidates[0], "finish_reason", None)
+    except (IndexError, TypeError):
+        return None
+
+
 class PanelPlanEntry(BaseModel):
     panel_index: int  # reading order, top -> bottom (1-based)
     y_start: int      # pixel coordinate in the ORIGINAL strip / chunk
@@ -487,6 +594,17 @@ def _call_with_retry(
             # attempt (temperature=0 means an identical prompt will produce
             # an identical bad answer; the feedback is what changes it).
             retry_feedback = str(exc)
+            if isinstance(exc, TruncatedResponseError):
+                # An identical prompt at temperature 0 reproduces the same
+                # truncation byte-for-byte, so the retry must ask for a
+                # SHORTER answer. Log it loudly: a truncation that survives
+                # all attempts must never quietly become "no narration".
+                retry_feedback = TRUNCATION_RETRY_FEEDBACK
+                log.warning(
+                    "chunk analysis attempt %d/%d was TRUNCATED (%s); "
+                    "retrying with a 'send a shorter, complete answer' "
+                    "instruction instead of the identical prompt",
+                    attempt, attempts, exc)
             retry_delay = _parse_retry_delay(exc)
             if retry_delay is not None and attempt < attempts:
                 log.warning("chunk analysis attempt %d/%d failed: %s; retrying in %.1fs",
@@ -499,6 +617,56 @@ def _call_with_retry(
     if last is not None:
         raise last
     raise RuntimeError("chunk analysis failed with no recorded exception")
+
+
+class ChunkCacheRecord(BaseModel):
+    """One cached per-chunk model answer — the Phase-1 resume unit.
+
+    Phase-1 tokens are spent per CHUNK, not per strip, so a single failing
+    chunk used to throw away every token already paid for (plans were only
+    cached on FULL success). Each successful chunk is written here so a
+    re-run reads it back and only re-sends the chunks that actually failed.
+    """
+
+    chunk_height: int
+    context_hash: str
+    image_hash: str
+    entries: list[PanelPlanEntry]
+    characters: list[str] = Field(default_factory=list)
+
+
+def _read_chunk_cache(
+        path: Path, *, chunk_height: int, context_hash: str,
+        image_hash: str) -> tuple[list[PanelPlanEntry], list[str]] | None:
+    """Validated per-chunk cache read.
+
+    A corrupt or stale record is never fatal: it returns None so the chunk is
+    re-analyzed (a truncated cache file used to be able to kill every later
+    run of the strip — the same class of bug as the plan cache).
+    """
+    if not path.is_file():
+        return None
+    try:
+        rec = ChunkCacheRecord.model_validate_json(path.read_text("utf-8"))
+    except Exception as exc:  # noqa: BLE001 - corrupt cache must never be fatal
+        log.warning("ignoring unreadable Phase-1 chunk cache %s: %s",
+                    path.name, exc)
+        return None
+    if (rec.chunk_height != chunk_height
+            or rec.context_hash != context_hash
+            or rec.image_hash != image_hash):
+        log.debug("Phase-1 chunk cache %s does not match this chunk; "
+                  "re-analyzing", path.name)
+        return None
+    return rec.entries, rec.characters
+
+
+def _write_chunk_cache(path: Path, record: ChunkCacheRecord) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_atomic(path, record.model_dump_json(indent=2) + "\n")
+    except OSError as exc:
+        log.warning("could not write Phase-1 chunk cache %s: %s", path, exc)
 
 
 def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
@@ -534,13 +702,31 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
 
     cache_root = Path(cache_dir) if cache_dir is not None else None
     cache_path: Path | None = None
+    chunk_cache_root: Path | None = None
     if cache_root is not None:
         cache_path = cache_root / f"plan_{input_hash[:16]}_{cfg_hash[:16]}.json"
+        chunk_cache_root = cache_root / "chunks"
         if not force and cache_path.is_file():
-            plan = PanelPlan.model_validate_json(cache_path.read_text("utf-8"))
-            if plan.input_hash == input_hash and plan.config_hash == cfg_hash:
-                log.info("phase-1 cache hit: %s", cache_path)
-                return plan, True
+            # A truncated / hand-corrupted cache file must never kill every
+            # later run of this strip: it is discarded and the strip is
+            # re-analyzed instead.
+            cached_plan: PanelPlan | None = None
+            try:
+                cached_plan = PanelPlan.model_validate_json(
+                    cache_path.read_text("utf-8"))
+            except Exception as exc:  # noqa: BLE001 - corrupt cache is not fatal
+                log.warning(
+                    "ignoring unreadable Phase-1 cache %s (%s); re-analyzing",
+                    cache_path.name, exc)
+            if cached_plan is not None:
+                if (cached_plan.input_hash == input_hash
+                        and cached_plan.config_hash == cfg_hash):
+                    log.info("phase-1 cache hit: %s", cache_path)
+                    return cached_plan, True
+                log.warning(
+                    "Phase-1 cache %s was produced from different inputs "
+                    "(input_hash/config_hash mismatch); re-analyzing",
+                    cache_path.name)
 
     chunk_dir_p = Path(chunk_dir) if chunk_dir is not None else None
     with Image.open(path) as img:
@@ -577,14 +763,45 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
                 context = build_context(prev_entries, characters)
                 log.debug("chunk %d/%d base_y=%d size=%dx%d context_len=%d",
                            idx + 1, len(chunks), base, chunk.width, chunk.height, len(context))
-                try:
-                    entries, new_chars = _call_with_retry(
-                        backend, chunk, attempts=attempts,
-                        previous_context=context)
-                except Exception as exc:
-                    raise VisionAnalysisError(
-                        f"chunk {idx} (absolute y0={base}) failed after "
-                        f"{attempts} attempt(s): {exc}") from exc
+                context_hash = _config_hash({"context": context})
+                image_hash = hashlib.sha256(chunk.tobytes()).hexdigest()
+                chunk_cache_path: Path | None = None
+                if chunk_cache_root is not None:
+                    chunk_cache_path = chunk_cache_root / (
+                        f"chunk_{input_hash[:8]}_{cfg_hash[:8]}_{idx:04d}"
+                        f"_{context_hash[:8]}_{image_hash[:8]}.json")
+                cached_chunk = (
+                    None if (force or chunk_cache_path is None)
+                    else _read_chunk_cache(
+                        chunk_cache_path, chunk_height=chunk_height,
+                        context_hash=context_hash, image_hash=image_hash))
+                if cached_chunk is not None:
+                    # Resume: this chunk already succeeded in an earlier run.
+                    # Re-sending it would re-spend tokens for the same answer.
+                    entries, new_chars = cached_chunk
+                    log.info("phase-1 chunk %d/%d cache hit panels=%d",
+                             idx + 1, len(chunks), len(entries))
+                else:
+                    try:
+                        entries, new_chars = _call_with_retry(
+                            backend, chunk, attempts=attempts,
+                            previous_context=context)
+                    except Exception as exc:
+                        done = len(results)
+                        hint = (""
+                                if not (chunk_cache_root is not None and done)
+                                else f"; {done} earlier chunk(s) succeeded and "
+                                     "are cached — re-run (without --force) to "
+                                     "resume and re-spend tokens only on the "
+                                     "failed chunk(s)")
+                        raise VisionAnalysisError(
+                            f"chunk {idx} (absolute y0={base}) failed after "
+                            f"{attempts} attempt(s): {exc}{hint}") from exc
+                    if chunk_cache_path is not None:
+                        _write_chunk_cache(chunk_cache_path, ChunkCacheRecord(
+                            chunk_height=chunk_height,
+                            context_hash=context_hash, image_hash=image_hash,
+                            entries=entries, characters=new_chars))
                 log.info("chunk %d/%d panels=%d new_chars=%s",
                          idx + 1, len(chunks), len(entries), new_chars)
                 prev_entries = entries
@@ -889,6 +1106,11 @@ config=types.GenerateContentConfig(
                        ),
                 )
                 elapsed = time.time() - t0
+                # Truncation check BEFORE parsing: a MAX_TOKENS answer is cut
+                # mid-JSON and must not be mistaken for a parse error.
+                raise_if_truncated(
+                    _gemini_finish_reason(resp), backend="gemini",
+                    model=self.model, max_tokens=4096, image_size=image.size)
                 raw = resp.text
                 if raw is None:
                     raw = ""
@@ -968,6 +1190,10 @@ class OpenAIVisionBackend:
                      "url": f"data:image/png;base64,{b64}"}}]},
             ],
         )
+        # Truncation check BEFORE parsing: a "length" answer is cut mid-JSON.
+        raise_if_truncated(_openai_finish_reason(resp), backend="openai",
+                           model=self.model, max_tokens=4096,
+                           image_size=image.size)
         raw_text = resp.choices[0].message.content
         if raw_text is None:
             raw_text = ""
@@ -1060,6 +1286,13 @@ class XkiroVisionBackend:
         raw_text = resp.choices[0].message.content
         if raw_text is None or not raw_text.strip():
             raise ValueError(f"model {model_id} returned an empty response")
+        # Truncation check BEFORE parsing: a "length" answer is cut mid-JSON
+        # and would otherwise surface as a misleading parse failure. It is
+        # raised as a response-quality error, so the Mistral fallback model
+        # gets its own chance at the same chunk.
+        raise_if_truncated(_openai_finish_reason(resp), backend="xkiro",
+                           model=model_id, max_tokens=self.max_tokens,
+                           image_size=image.size)
         return raw_text, resp
 
     def _analyze_with(self, model_id: str, image: Image.Image,
@@ -1168,6 +1401,11 @@ class AnthropicVisionBackend:
                 ],
             }],
         )
+        # Truncation check BEFORE parsing: stop_reason "max_tokens" means the
+        # JSON was cut off and must be retried, not parsed.
+        raise_if_truncated(getattr(resp, "stop_reason", None),
+                           backend="anthropic", model=self.model,
+                           max_tokens=4096, image_size=image.size)
         text = "".join(
             str(getattr(block, "text", None) or "")
             for block in resp.content)
@@ -1226,6 +1464,10 @@ class OllamaVisionBackend:
             headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             data = json.loads(resp.read().decode("utf-8"))
+        # Ollama reports done_reason "length" when the output was cut off by
+        # the context/num_predict limit — that answer is incomplete JSON.
+        raise_if_truncated(data.get("done_reason"), backend="ollama",
+                           model=self.model, image_size=image.size)
         text = data.get("response", "")
         self.last_usage = _capture_usage(data)
         self.usage_log.append(self.last_usage or {})
@@ -1373,6 +1615,14 @@ class CloudflareWorkersAIBackend:
                     log.debug("Cloudflare raw result: %s", result)
                     text = json.dumps(text) if isinstance(text, dict) else str(text)
                 usage_src = result
+            # Best-effort truncation gate: Workers AI surfaces finish_reason
+            # on the result object. A truncated answer is cut mid-JSON and
+            # must be retried, never parsed.
+            raise_if_truncated(
+                (usage_src.get("finish_reason")
+                 if isinstance(usage_src, dict) else None),
+                backend="cloudflare", model=self.model, max_tokens=4096,
+                image_size=image.size)
             try:
                 entries, new_chars = parse_entries_from_json(
                     text, image.size[1], chunk_width=image.size[0])

@@ -374,10 +374,34 @@ def build_narration(artifact: CutArtifact, cfg: VideoConfig,
 # --------------------------------------------------------------------------- #
 # Stage 2 — TTS
 # --------------------------------------------------------------------------- #
+def _clips_to_synthesize(narration: NarrationArtifact) -> list[str]:
+    """Ids of narration entries that get their own TTS clip.
+
+    The ONE source of truth for which clips are expected (duplicates of the
+    previous line and empty texts are skipped exactly as in the synth loop),
+    so the cache can tell a COMPLETE artifact from a partially failed one.
+    """
+    ids: list[str] = []
+    prev_text = ""
+    for e in narration.entries:
+        text = e.text.strip()
+        if not text or text == prev_text:
+            continue
+        prev_text = text
+        ids.append(e.id)
+    return ids
+
+
 def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
                      cfg: VideoConfig, *, force: bool = False,
                      retries: int = 3) -> AudioArtifact:
-    """One mp3/wav per non-empty entry. Reuses audio.json when hashes match."""
+    """One mp3/wav per non-empty entry.
+
+    audio.json is only a cache hit when the hashes match AND a usable clip
+    file exists for every expected entry: an artifact left behind by a
+    transient TTS failure is repaired (missing clips re-synthesized, the rest
+    reused) instead of being reused forever. --force re-synthesizes all.
+    """
     audio_dir.mkdir(parents=True, exist_ok=True)
     sidecar = audio_dir / "audio.json"
     # B4: cache key includes text content + voice + provider so changing
@@ -397,17 +421,37 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
         return AudioArtifact(meta=_meta(cfg.hash(), input_hashes),
                              voice="none", entries=[])
 
+    expected_ids = _clips_to_synthesize(narration)
+
+    prev: AudioArtifact | None = None
     if sidecar.exists() and not force:
         try:
             prev = AudioArtifact.model_validate_json(sidecar.read_text("utf-8"))
-            if (prev.meta.config_hash == cfg.hash()
-                    and prev.meta.input_hashes == input_hashes
-                    and all((audio_dir / e.path).is_file()
-                            for e in prev.entries)):
-                log.info("audio cache hit (%d clips)", len(prev.entries))
-                return prev
         except Exception as exc:  # noqa: BLE001 - stale/corrupt cache
             log.debug("ignoring unreadable audio.json: %s", exc)
+            prev = None
+    # A cache hit needs the SAME inputs AND a clip file for EVERY expected
+    # entry. Writing audio.json after a transient TTS failure used to poison
+    # the cache forever (the degraded artifact was reused until --force).
+    same_inputs = (
+        prev is not None
+        and prev.meta.config_hash == cfg.hash()
+        and prev.meta.input_hashes == input_hashes
+    )
+    reusable: dict[str, AudioEntry] = {}
+    if same_inputs and prev is not None:
+        reusable = {e.entry_id: e for e in prev.entries
+                    if (audio_dir / e.path).is_file()}
+        missing = [i for i in expected_ids if i not in reusable]
+        if not missing:
+            log.info("audio cache hit (%d clips)", len(prev.entries))
+            return prev
+        # Per-clip resume: only the missing clips are re-synthesized.
+        log.warning(
+            "audio.json is INCOMPLETE (%d of %d clips usable, missing: %s); "
+            "synthesizing the missing clips instead of reusing the degraded "
+            "artifact", len(expected_ids) - len(missing), len(expected_ids),
+            ", ".join(missing[:8]) or "?")
 
     try:
         from adapters.tts import synthesize_entry as tts_synth
@@ -415,17 +459,7 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
         raise VideoError(f"TTS provider not available: {exc}") from exc
 
     entries: list[AudioEntry] = []
-    prev_text = ""
-    synth_count = 0
-    for e in narration.entries:
-        if not e.text.strip():
-            continue
-        if e.text.strip() == prev_text:
-            log.info("TTS skipped %s: duplicate of previous narration", e.id)
-            continue
-        prev_text = e.text.strip()
-        synth_count += 1
-    total = synth_count
+    total = len(expected_ids)
     done = 0
     if _HAS_RICH and not EMBEDDED_MODE:
         progress_ctx = Progress(
@@ -452,6 +486,15 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
                 log.info("TTS skipped %s: duplicate of previous narration", e.id)
                 continue
             prev_text = text
+            hit = reusable.pop(e.id, None)
+            if hit is not None:
+                log.info("tts %d/%d  %s  %.2fs (reused cached clip)",
+                         done + 1, total, e.id, hit.duration_seconds)
+                entries.append(hit)
+                done += 1
+                if progress_ctx is not None and task_id is not None:
+                    progress_ctx.update(task_id, advance=1)
+                continue
             out, err = tts_synth(
                 e, audio_dir, provider=cfg.tts, voice=cfg.voice,
                 rate=cfg.rate, pitch=cfg.pitch, speed=cfg.speed,
@@ -474,6 +517,12 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
     artifact = AudioArtifact(meta=_meta(cfg.hash(), input_hashes),
                              voice=cfg.voice, entries=entries)
     _write_atomic(sidecar, artifact.model_dump_json(indent=2) + "\n")
+    missing_after = [i for i in expected_ids if i not in {a.entry_id for a in entries}]
+    if missing_after:
+        log.warning(
+            "audio.json written INCOMPLETE (%d of %d clips): %s failed TTS. "
+            "The next run retries exactly those clips (no --force needed).",
+            len(entries), total, ", ".join(missing_after[:8]) or "?")
     return artifact
 
 

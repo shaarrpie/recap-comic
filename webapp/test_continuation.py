@@ -195,11 +195,17 @@ def test_continuation_validation_errors(client, monkeypatch):
                                       "backend": "none", "tts": "none",
                                       "continue_from": bogus.id})
     assert r.status_code == 400
-    # unknown session
+    # unknown session (well-formed 12-hex id that does not exist)
     r = client.post("/api/run", json={"session": s2, "order": None,
                                       "backend": "none", "tts": "none",
-                                      "continue_from": "doesnotexist99"})
+                                      "continue_from": "a1b2c3d4e5f6"})
     assert r.status_code == 404
+    # malformed ids must be rejected before any filesystem access
+    for bad in ("doesnotexist99", "../../sneaky", "../" + s2):
+        r = client.post("/api/run", json={"session": s2, "order": None,
+                                          "backend": "none", "tts": "none",
+                                          "continue_from": bad})
+        assert r.status_code == 400, bad
 
 
 def test_run_survives_missing_job_records(client, monkeypatch):
