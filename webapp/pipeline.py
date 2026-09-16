@@ -811,15 +811,28 @@ def _render_video(job: Job, **kwargs: Any) -> None:
     def _pct(key, default):
         v = voice_cfg.get(key, default)
         return f"{int(v):+d}%" if key == "rate" else f"{int(v):+d}Hz"
+    # Manhwa-recap visual style: /api/run values override the VideoConfig
+    # defaults; a request that omits them keeps the defaults (blur + vignette
+    # on, colour grade off).
+    def _style(key: str, default):
+        v = job.config.get(key)
+        return default if v is None else v
     cfg = VideoConfig(
         tts=voice_cfg.get("provider") or job.config.get("tts", "edge"),
         voice=voice_cfg.get("voice") or job.config.get("voice", "en-US-AriaNeural"),
         rate=_pct("rate", 0) if voice_cfg else "+0%",
         pitch=_pct("pitch", 0) if voice_cfg else "+0Hz",
-        speed=float(voice_cfg.get("speed", 1.0) or 1.0))
+        speed=float(voice_cfg.get("speed", 1.0) or 1.0),
+        blur_background=_style("blur_background", VideoConfig.blur_background),
+        color_grade=_style("color_grade", VideoConfig.color_grade),
+        vignette=_style("vignette", VideoConfig.vignette),
+        vignette_angle=_style("vignette_angle", VideoConfig.vignette_angle),
+        blur_sigma=_style("blur_sigma", VideoConfig.blur_sigma))
     job.log("INFO",
             f"render input={panels_json.name} tts={cfg.tts} "
-            f"voice={cfg.voice} rate={cfg.rate} pitch={cfg.pitch}",
+            f"voice={cfg.voice} rate={cfg.rate} pitch={cfg.pitch} "
+            f"style=blur={cfg.blur_background}/grade={cfg.color_grade}/"
+            f"vignette={cfg.vignette}",
             "render_video")
     # TTS + timeline + captions FIRST (synchronous, cache-friendly): a
     # missing ffmpeg must not prevent timeline.json / recap.srt from

@@ -124,9 +124,13 @@ def test_video_config_canvas_defaults_and_hash():
 
 
 def test_build_timeline_landscape_declares_canvas(cut_dir):
-    """build_timeline must thread the canvas into the artifact AND pan geometry."""
+    """build_timeline must thread the canvas into the artifact AND pan geometry.
+
+    blur_background=False: in blur mode the panel is contain-fitted and static
+    by design, so the cover-fit + pan assertions below describe the legacy path.
+    """
     d, art = cut_dir
-    cfg = rv.VideoConfig(tts="none")
+    cfg = rv.VideoConfig(tts="none", blur_background=False)
     nar = rv.build_narration(art, cfg, panels_hash="h")
     aud = rv.synthesize_audio(nar, d / "audio", cfg)
     tl = rv.build_timeline(art, d, nar, aud, d / "audio", cfg, panels_hash="h",
@@ -160,7 +164,8 @@ def test_display_seconds_rules():
 # ---------------------------------------------------------------- timeline --
 def test_timeline_is_contiguous_and_silent_mode(cut_dir):
     d, art = cut_dir
-    cfg = rv.VideoConfig(tts="none")
+    # blur off: this test asserts the Ken-Burns pan kind; blur mode is static.
+    cfg = rv.VideoConfig(tts="none", blur_background=False)
     nar = rv.build_narration(art, cfg, panels_hash="h")
     aud = rv.synthesize_audio(nar, d / "audio", cfg)
     assert aud.entries == [] and aud.voice == "none"
@@ -181,7 +186,9 @@ def test_timeline_is_contiguous_and_silent_mode(cut_dir):
 
 def test_timeline_uses_measured_audio(cut_dir):
     d, art = cut_dir
-    cfg = rv.VideoConfig()
+    # blur off: panel 2's duration here is the pan floor (2940px travel),
+    # which blur mode never computes (contain-fit => travel_px=0).
+    cfg = rv.VideoConfig(blur_background=False)
     nar = rv.build_narration(art, cfg, panels_hash="h")
     aud = AudioArtifact(meta=_meta(), voice="v", entries=[
         AudioEntry(entry_id="001", path="001.mp3", duration_seconds=3.2,
