@@ -727,6 +727,12 @@ def guided_video(
         12.0, "--max-display", help="cap for SILENT panels (tts none)"),
     pan_speed: int = typer.Option(
         450, "--pan-speed", help="max pan speed in px/s (lower = slower)"),
+    pan_fit_speech: bool = typer.Option(
+        False, "--pan-fit-speech/--no-pan-fit-speech",
+        help="when a panel's pan would outlast its narration, speed the pan "
+             "(bounded at 2x --pan-speed) to fit inside the speech window "
+             "instead of holding silent frames after the voice stops "
+             "(default off: classic pacing, pan floor always wins)"),
     fps: int = typer.Option(30, "--fps"),
     ffmpeg: str = typer.Option("ffmpeg", "--ffmpeg", help="ffmpeg executable"),
     ffprobe: str = typer.Option("ffprobe", "--ffprobe", help="ffprobe executable"),
@@ -753,7 +759,8 @@ def guided_video(
         voice=voice, rate=rate, pitch=pitch, speed=speed,
         include_dialogue=dialogue, gap_seconds=gap,
         min_display_seconds=min_display, max_display_seconds=max_display,
-        max_pan_px_per_sec=pan_speed, fps=fps,
+        max_pan_px_per_sec=pan_speed, pan_fit_speech=pan_fit_speech,
+        fps=fps,
         ffmpeg_exe=ffmpeg, ffprobe_exe=ffprobe,
         kokoro_model_path=kokoro_model_path,
         kokoro_voices_path=kokoro_voices_path)

@@ -92,6 +92,13 @@ class VideoConfig:
     max_display_seconds: float = 12.0   # cap for SILENT panels only
     silent_wpm: int = 160        # reading speed used ONLY when tts == "none"
     max_pan_px_per_sec: int = 450  # slow, readable Ken-Burns pan
+    # When a panel's pan would outlast its narration, speed the pan up to
+    # fit inside the speech window (bounded: never more than this multiple
+    # of max_pan_px_per_sec) instead of holding silent frames after the
+    # voice stops. Default off keeps the classic "pan floor always wins"
+    # pacing; opt in when panels visibly linger past the narration.
+    pan_fit_speech: bool = False
+    pan_fit_speech_speedup: float = 3.0
     # Per-class pacing (Fix: flat TTS-length pacing reads as monotone).
     # Multipliers apply AFTER floors; action may also drop below
     # min_display_seconds down to action_floor_seconds.
@@ -573,6 +580,12 @@ def display_seconds(*, audio_seconds: float | None, words: int,
     if audio_seconds is not None:
         # spoken panel: narration must finish; never capped
         base = audio_seconds + cfg.gap_seconds
+        if cfg.pan_fit_speech and travel_px and pan_floor > base:
+            # The pan would still be running after the narrator stops.
+            # Speed it up (bounded) so it lands inside the speech window
+            # rather than holding silent frames on a static tail.
+            max_speed = cfg.max_pan_px_per_sec * cfg.pan_fit_speech_speedup
+            pan_floor = max(base, travel_px / max_speed)
         if panel_class == "action":
             # action floor is lower: fast cuts read as energy, not as
             # truncation, once the voice has finished

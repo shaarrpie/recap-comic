@@ -196,6 +196,38 @@ class TestPacingByClass:
                                  panel_class="action")
         assert dur >= 4500 / cfg.max_pan_px_per_sec
 
+    def test_pan_fit_speech_speeds_pan_into_speech_window(self):
+        # 4500px at 450 px/s = 10s pan, but only 5.35s of speech+gap.
+        # Opt-in speed-up (900 px/s => 5.0s) lands the pan inside the
+        # speech window, so the panel does not outlast the narration.
+        cfg = rv.VideoConfig(min_display_seconds=2.0, pan_fit_speech=True)
+        dur = rv.display_seconds(audio_seconds=5.0, words=3,
+                                 travel_px=4500, cfg=cfg,
+                                 panel_class="calm")
+        assert dur == pytest.approx(5.0 + cfg.gap_seconds, abs=0.01)
+
+    def test_pan_fit_speech_bounds_extreme_travel(self):
+        # 45000px / 900 = 50s: even 2x speed cannot fit the speech window,
+        # so the bounded pan floor still applies (readable, not instant).
+        cfg = rv.VideoConfig(min_display_seconds=2.0, pan_fit_speech=True)
+        dur = rv.display_seconds(audio_seconds=5.0, words=3,
+                                 travel_px=45000, cfg=cfg,
+                                 panel_class="calm")
+        assert dur >= 45000 / (cfg.max_pan_px_per_sec
+                               * cfg.pan_fit_speech_speedup)
+
+    def test_pan_fit_speech_off_by_default(self):
+        # Default behaviour unchanged: the classic pan floor always wins.
+        cfg = rv.VideoConfig(min_display_seconds=2.0)
+        dur = rv.display_seconds(audio_seconds=5.0, words=3,
+                                 travel_px=4500, cfg=cfg,
+                                 panel_class="calm")
+        assert dur >= 4500 / cfg.max_pan_px_per_sec
+
+    def test_pan_fit_speech_changes_config_hash(self):
+        assert rv.VideoConfig().hash() != rv.VideoConfig(
+            pan_fit_speech=True).hash()
+
     def test_class_config_hash_changes(self):
         base = rv.VideoConfig()
         tuned = rv.VideoConfig(class_duration_multiplier={
