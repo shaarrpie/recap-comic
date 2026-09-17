@@ -189,10 +189,18 @@ def _generate_speed_lines(width: int, height: int, out_path: Path) -> bool:
 # ---------------------------------------------------------------------------
 
 def _scale_pad_filter(w: int, h: int) -> str:
-    """Scale + pad the source image to exactly WxH, black bars."""
+    """Scale the source to FILL the w x h canvas, cropping the overflow.
+
+    Manhwa panels are tall (800x2000..9500); contain+pad would shrink them
+    to a thin vertical strip with black side bars -- most of the frame
+    wasted and the zoompan would drift over empty padding. Cover-scaling
+    keeps the artwork edge-to-edge; the zoompan's pan direction then
+    travels through real art (pan_down for tall panels, pan_right for
+    wide). Matches recap_video.compute_pan's never-centre-crop contract.
+    """
     return (
-        f"scale={w}:{h}:force_original_aspect_ratio=decrease,"
-        f"pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:black"
+        f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop={w}:{h}"
     )
 
 
@@ -415,6 +423,12 @@ def _build_panel_clip(
     # Audio map (last -i)
     if audio_path and audio_path.is_file():
         audio_input_idx = 2 if use_speedlines else 1
+        if not use_speedlines:
+            # The -vf chain above produces video on input 0, but a lone
+            # "-map <audio>" makes ffmpeg drop every unmapped stream --
+            # the clip would render audio-only (observed: 39/50 clips had
+            # no video stream). Map the filtered video explicitly.
+            cmd += ["-map", "0:v"]
         cmd += ["-map", f"{audio_input_idx}:a", "-acodec", "aac", "-b:a", "192k"]
     else:
         cmd += ["-an"]
@@ -689,13 +703,20 @@ def make_cinematic_video(
 
     concat_cmd += [
         "-vcodec", "libx264", "-preset", "fast", "-crf", "17",
-        "-acodec", "aac", "-b:a", "192k",
+        # The concat demuxer feeds panel clips (24kHz mono from edge-tts)
+        # and glitch transitions (44.1kHz stereo) into ONE output stream;
+        # without normalisation the aac encoder aborts mid-stream when the
+        # format switches ("Invalid argument", error -22).
+        "-acodec", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
         "-pix_fmt", "yuv420p",
         "-movflags", "+faststart",
         str(out_mp4),
     ]
 
-    _run(concat_cmd, label="concat")
+    # Re-encoding N clips (each already h264/aac) is the slow tail of a
+    # cinematic render: a 50-panel cut re-encodes ~100 segments and can
+    # exceed the per-clip 600s budget several times over.
+    _run(concat_cmd, label="concat", timeout=3600)
 
     log.info("done  out=%s  duration=%.1fs", out_mp4, total_duration)
     return {
@@ -723,10 +744,10 @@ def _resolve_ffmpeg(exe: str = "ffmpeg") -> str:
     raise RuntimeError(f"ffmpeg not found: {exe!r}")
 
 
-def _run(cmd: list[str], label: str = "") -> None:
+def _run(cmd: list[str], label: str = "", timeout: int = 600) -> None:
     log.debug("[%s] %s", label, " ".join(cmd))
     result = subprocess.run(
-        cmd, capture_output=True, text=True, check=False, timeout=600
+        cmd, capture_output=True, text=True, check=False, timeout=timeout
     )
     if result.returncode != 0:
         stderr = result.stderr[-2000:] if result.stderr else ""
