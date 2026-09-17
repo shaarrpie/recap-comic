@@ -347,23 +347,23 @@ def _locate_strip(session_dir: Path, data: dict[str, Any]) -> Path | None:
 
 
 def _renumber(panels: list[dict[str, Any]]) -> None:
-    """Re-key panel_index 1..n over the kept set, patching merged_with.
+    """Re-key panel_index 1..n over the kept set.
 
     Keyed by panel id (split pieces 005a/005b share their parent's index —
     index-keyed maps collide). Blank panels are gone before this runs.
+
+    merged_with is deliberately NOT rewritten. It holds the ORIGINAL AI
+    plan-entry indices that were combined into this panel (guided_cutter
+    ._emit) -- provenance for QA/review that a panel's narration
+    concatenates entries 31+32+33. Those entries are usually absorbed into
+    the very panel that carries them and exist nowhere else in the output,
+    so translating them through the new numbering silently emptied the
+    list (observed: [31, 32, 33] -> [] after the filter). panel_index is
+    the panel's position in the output; merged_with points into the plan.
     """
     new_index = {p["id"]: i for i, p in enumerate(panels, start=1)}
-    old_index: dict[int, int] = {}
-    for i, p in enumerate(panels, start=1):
-        old_index[int(p.get("panel_index", i))] = i
     for p in panels:
         p["panel_index"] = new_index[p["id"]]
-        merged = p.get("merged_with")
-        if isinstance(merged, list) and merged:
-            p["merged_with"] = [
-                old_index[m] for m in merged
-                if m in old_index and old_index[m] != new_index[p["id"]]
-            ]
 
 
 def _quarantine_blank_pngs(removed: list[dict[str, Any]],

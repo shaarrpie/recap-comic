@@ -18,6 +18,13 @@ Cutting rules (in priority order):
    keeps the parent panel's narration.
 4. Cuts are never placed inside a speech bubble: rows covered by the plan's
    bubble_boxes (plus a pad) are excluded from every cut-row search.
+5. Sliver guard: a panel whose final height is below min_panel_height is
+   absorbed into its taller neighbour (narration concatenated) instead of
+   being emitted as a black-padded frame. The snap step can move a
+   boundary by up to 2x tolerance (relaxed pass in build_cuts), and two
+   snaps around a short AI panel crush it into a sliver that clears the
+   30px debris check at save time only to become a mostly-black frame in
+   the video. Skipped in preserve_boundaries (structure-first) mode.
 
 Output: one PNG per panel under out_dir plus a panels.json sidecar mapping
 every file to its narration, dialogue, original Y range, type, confidence.
@@ -87,6 +94,11 @@ class CutterConfig:
     use_edge_density: bool = True  # require gutters to be low on BOTH variance+edge
     min_gutter_run: int = 4       # minimum consecutive low-variance rows
     blur_sigma: float = 0.5       # pre-blur to tolerate JPEG noise
+    # Sliver guard (rule 5 above): a panel whose final height is below this
+    # is absorbed into its taller neighbour by _absorb_thin_panels. The
+    # value must stay above the 30px save-time debris floor in guided_cut
+    # and is a floor, not a target -- it only stops crushed slivers.
+    min_panel_height: int = 150
     # Output PNG normalization. Source coordinates and source crops remain
     # full resolution; this only controls the panel image written to disk.
     # Policy: every panel PNG is exactly `output_width` px wide with its
@@ -118,6 +130,8 @@ class CutterConfig:
             raise ValueError(
                 "max_output_height must be greater than or equal to "
                 "min_output_height")
+        if self.min_panel_height <= 0:
+            raise ValueError("min_panel_height must be positive")
 
 
 class CutPanel(BaseModel):
@@ -139,6 +153,10 @@ class CutPanel(BaseModel):
     # width differs from the artifact's own width (continuation sequences).
     strip_width: int | None = None
     split_of: str | None = None  # parent panel id when this is an a/b piece
+    # ORIGINAL AI plan-entry indices combined into this panel (continuous-art
+    # merges and the sliver guard append to it via _emit). Provenance for
+    # QA/review -- points into the plan, never rewritten when panel_index is
+    # re-keyed downstream (panel_filter._renumber keeps it verbatim).
     merged_with: list[int] = Field(default_factory=list)
     snap_distances: list[int] = Field(default_factory=list)  # AI->final snap px
     # Which entries of snap_distances were measured against a REAL gutter
@@ -596,6 +614,69 @@ def _split_panel(gray: np.ndarray, panel: CutPanel,
     pieces = sorted(pieces, key=lambda c: c.y_start)
     return pieces
 
+def _group_heights(cut_rows: list[int], strip_h: int) -> list[int]:
+    """Emitted height of every group given the cut rows.
+
+    Uses the clamped outer bounds (0 and strip_h) exactly the way the
+    emit loop below does, so the sliver guard measures what will
+    actually be written to disk.
+    """
+    bounds = [0, *cut_rows, strip_h]
+    return [bounds[i + 1] - bounds[i] for i in range(len(cut_rows) + 1)]
+
+
+def _absorb_thin_panels(groups: list[list[PanelPlanEntry]],
+                        cut_rows: list[int],
+                        snap_distances: list[int],
+                        snap_measured: list[bool],
+                        strip_h: int,
+                        min_height: int) -> None:
+    """In-place: absorb panels thinner than `min_height` into a neighbour.
+
+    Why this exists: `find_gutter_row` is called with tolerance*2 (and a
+    relaxed variance/edge pass) when the strict window misses, so a single
+    boundary can move up to ~160px from the AI's position. Two such snaps
+    bracketing a short AI panel crush it -- e.g. a 460px plan entry
+    becoming a 129px crop, which cleared the old 30px debris floor and was
+    center-padded into a 390x760 mostly-black frame. `_split_panel` already
+    refuses lopsided SPLITS via its min_side guard; this is the matching
+    guard for SNAPS.
+
+    Absorption reuses the continuous-art merge path: the neighbour gains
+    the sliver's entries (narration concatenated by _emit), the cut row
+    between them is dropped, and no panel count is lost to gutter noise.
+    The taller neighbour is chosen to minimise distortion; ties go up
+    (reading order -- a reaction sliver belongs to the beat before it).
+    """
+    if min_height <= 0 or len(groups) < 2:
+        return
+    while True:
+        heights = _group_heights(cut_rows, strip_h)
+        thin = [i for i, h in enumerate(heights) if h < min_height]
+        if not thin:
+            return
+        i = thin[0]
+        prev_h = heights[i - 1] if i > 0 else -1
+        next_h = heights[i + 1] if i + 1 < len(groups) else -1
+        if prev_h >= next_h and prev_h >= 0:
+            j = i - 1
+        elif next_h >= 0:
+            j = i + 1
+        else:
+            return  # single group left; nothing to absorb into
+        # The cut row shared by groups i and j is cut_rows[min(i, j)].
+        k = min(i, j)
+        log.info("sliver guard: absorbing panel %d (%dpx) into panel %d "
+                 "(%dpx); cut row %d dropped", groups[i][0].panel_index,
+                 heights[i], groups[j][0].panel_index, heights[j],
+                 cut_rows[k])
+        groups[j] = sorted(groups[j] + groups[i], key=lambda e: e.y_start)
+        del groups[i]
+        del cut_rows[k]
+        del snap_distances[k]
+        del snap_measured[k]
+
+
 def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
                config: CutterConfig) -> list[CutPanel]:
     """AI-guided cut plan over the strip's pixel rows.
@@ -703,6 +784,15 @@ def build_cuts(gray: np.ndarray, plan: PanelPlan, *,
                     strip_h - last_bottom)
     tops[0] = 0
     bottoms[-1] = strip_h
+
+    # Sliver guard (cutting rule 5). Skipped in structure-first mode: there
+    # every detected boundary is kept by design, and absorption would undo
+    # that for colored/gradient gutters that fail the strict run test.
+    if not config.preserve_boundaries:
+        _absorb_thin_panels(groups, cut_rows, snap_distances, snap_measured,
+                            strip_h, config.min_panel_height)
+        tops = [0, *cut_rows]
+        bottoms = [*cut_rows, strip_h]
     panel_snaps: list[list[int]] = []
     panel_measured: list[list[bool]] = []
     for i in range(len(groups)):
@@ -932,7 +1022,9 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
             log.warning("panel validation skipped: %s", exc)
 
     saved: list[CutPanel] = []
-    min_panel_height = 30
+    # Save-time debris floor (gutter dust, not a panel). Independent of
+    # CutterConfig.min_panel_height, which is the pre-emit sliver guard.
+    min_save_height = 30
     for c in cuts:
         y0 = max(0, c.y_start)
         y1 = min(height, c.y_end)
@@ -940,9 +1032,9 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
             log.warning("cut panel %s has empty/negative range [%d,%d]; skipping",
                         c.id, c.y_start, c.y_end)
             continue
-        if (y1 - y0) < min_panel_height:
+        if (y1 - y0) < min_save_height:
             log.warning("cut panel %s is too thin (%dpx < %dpx); likely gutter "
-                        "debris, skipping", c.id, y1 - y0, min_panel_height)
+                        "debris, skipping", c.id, y1 - y0, min_save_height)
             continue
         piece = rgb.crop((0, y0, width, y1))
 

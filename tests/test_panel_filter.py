@@ -463,7 +463,9 @@ def test_filter_idempotent_on_own_output(tmp_path):
 
 
 def test_filter_renumbering_and_merged_with(tmp_path):
-    """Indices are re-keyed 1..n over the kept set; merged_with patched."""
+    """panel_index is re-keyed 1..n over the kept set; merged_with keeps the
+    ORIGINAL plan-entry indices (provenance into the plan, not pointers at
+    surviving panels)."""
     blocks = [art_block(500), uniform_block(500, (255, 255, 255)),
               art_block(500), art_block(500)]
     panels = [panel_dict(1, 0, 500, dialogue="a"),
@@ -476,8 +478,30 @@ def test_filter_renumbering_and_merged_with(tmp_path):
     out = json.loads((d / "panels_filtered.json").read_text("utf-8"))
     by_id = {p["id"]: p for p in out["panels"]}
     assert [p["panel_index"] for p in out["panels"]] == [1, 2, 3]
-    # merged_with [3, 4]: 3 -> new 2 survives, 4 == self -> dropped
-    assert by_id["004"]["merged_with"] == [2]
+    # merged_with [3, 4] preserved verbatim: 4 is the panel's own first
+    # entry, 3 survives as a sibling -- neither is translated, since the
+    # indices refer to the plan, not to the renumbered output.
+    assert by_id["004"]["merged_with"] == [3, 4]
+
+
+def test_filter_keeps_absorbed_entry_indices(tmp_path):
+    """Regression: entries absorbed into a panel (sliver guard / continuous
+    art) exist nowhere else in the output, so _renumber must not rewrite
+    merged_with -- or the panel loses its 'which entries were combined'
+    provenance. Observed on panel_031 of the asura 10-page cut:
+    merged_with [31, 32, 33] became [] once the filter ran."""
+    blocks = [art_block(500), art_block(500)]
+    panels = [panel_dict(1, 0, 500, dialogue="a"),
+              # this panel absorbed entries 31-33; no such panels exist here
+              panel_dict(2, 500, 1000, dialogue="b",
+                         merged_with=[2, 31, 32, 33])]
+    d = build_session(tmp_path, blocks, panels)
+    res = pf.filter_panels(d)
+    assert res["removed_blank"] == 0
+    out = json.loads((d / "panels_filtered.json").read_text("utf-8"))
+    by_id = {p["id"]: p for p in out["panels"]}
+    assert [p["panel_index"] for p in out["panels"]] == [1, 2]
+    assert by_id["002"]["merged_with"] == [2, 31, 32, 33]
 
 
 def test_filter_quarantine_moves_blank_pngs(tmp_path):

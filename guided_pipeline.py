@@ -312,7 +312,7 @@ def run_guided(
     min_output_height: int = 760,
     max_output_height: int = 800,
     normalize_output: bool = True,
-    filter_panels: bool = False,
+    filter_panels: bool = True,
     fallback: bool = True,
     force: bool = False,
     dry_run: bool = False,
@@ -333,7 +333,9 @@ def run_guided(
     filter_panels=True runs panel_filter on the fresh panels.json right
     after the cut (Phase 2.5): blank panels are removed and text-only
     panels are demoted to context_only=True (kept for story context, no
-    frame/narration). Deterministic; never re-runs the AI.
+    frame/narration). Deterministic; never re-runs the AI. Default ON --
+    the webapp runs the same filter on every build; pass False for raw
+    cuts.
     """
     strip = Path(strip)
     if not strip.is_file():

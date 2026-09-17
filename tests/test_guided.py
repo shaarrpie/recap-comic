@@ -250,20 +250,48 @@ def test_overlapping_ai_panels_are_repaired() -> None:
     assert cuts[0].y_end <= cuts[1].y_start  # no overlap after repair
 
 
-def test_thin_panel_filtered_in_guided_cut(tmp_path: Path) -> None:
-    """F8: panels thinner than min_panel_height are skipped, not saved as
-    blank/white images."""
+def test_thin_panel_absorbed_not_emitted(tmp_path: Path) -> None:
+    """F8: a sliver crushed by two gutter snaps is absorbed into its
+    neighbour, never emitted as a blank/white frame.
+
+    The AI gave the gutter its own 20px panel; both boundary snaps land in
+    the same gutter run, so the emitted panel would be ~0px (or a
+    black-padded 390x760 frame once normalized). The sliver guard absorbs
+    it into the taller neighbour instead.
+    """
     strip = tmp_path / "strip.png"
     img = make_strip(1000, panels=[(40, 400), (500, 980)],
                      gutters=[(400, 500)])
     img.save(strip)
-    # AI thinks there are 3 panels; the middle one (410..430) is just 20px
-    # of gutter — it should be filtered out.
     plan = plan_from([(50, 390), (410, 430), (510, 950)], height=1000)
     artifact = gc.guided_cut(strip, plan, out_dir=tmp_path / "panels")
-    ids = [p.id for p in artifact.panels]
-    assert "002" not in ids  # thin panel (20px after snap) skipped
-    assert len(artifact.panels) >= 2
+    assert len(artifact.panels) == 2
+    floor = gc.CutterConfig().min_panel_height
+    for p in artifact.panels:
+        assert p.y_end - p.y_start >= floor
+    # the sliver's entries survive inside the neighbour that absorbed it
+    merged = {i for p in artifact.panels for i in p.merged_with}
+    assert {2, 3} <= merged or {1, 2} <= merged
+
+
+def test_snap_crush_sliver_absorbed() -> None:
+    """Regression: two gutter snaps must not crush a panel into a sliver.
+
+    Real-world case (test_recap, page 4): a short AI entry bracketed by two
+    low-variance bands had both boundaries snapped inward and came out a
+    129px crop -- it cleared the 30px debris floor at save time and became
+    a 390x760 mostly-black frame in the video. The sliver guard absorbs it
+    into the taller neighbour instead. Deterministic (build_cuts only).
+    """
+    height = 1200
+    strip_img = make_strip(height, panels=[(0, 440), (440, 560), (560, height)],
+                           gutters=[(460, 480), (520, 540)])
+    gray = np.asarray(strip_img.convert("L"))
+    plan = plan_from([(0, 450), (450, 550), (550, height)], height=height)
+    cuts = gc.build_cuts(gray, plan, config=gc.CutterConfig(tolerance=80))
+    assert len(cuts) == 2
+    floor = gc.CutterConfig().min_panel_height
+    assert all(p.y_end - p.y_start >= floor for p in cuts)
 
 
 def _panel_png_size(out_dir: Path, image_file: str) -> tuple[int, int]:

@@ -27,6 +27,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import tempfile
 import time
 import zipfile
@@ -64,7 +65,25 @@ def _natural_sort_key(name: str) -> list[str | int]:
 log = get_logger(__name__)
 
 
+def _force_utf8_console() -> None:
+    """Manhwa dialogue/narration is Korean/Japanese; a cp1252 Windows
+    console makes typer.echo raise UnicodeEncodeError mid-command (the
+    plan JSON is printed AFTER it is safely on disk, so the run itself
+    succeeded -- but the CLI exited non-zero). Reconfigure the console
+    streams to UTF-8 whenever they are not already."""
+    for name in ("stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        encoding = (getattr(stream, "encoding", None) or "").lower().replace("-", "")
+        if encoding in ("utf8", "none", ""):
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8")  # type: ignore[attr-defined]
+        except (AttributeError, OSError, ValueError):
+            pass
+
+
 def _configure_logging(level: str) -> None:
+    _force_utf8_console()
     load_dotenv()
     setup_logging(level=os.environ.get("LOG_LEVEL", level))
     logging.getLogger().setLevel(getattr(logging, level.upper(), logging.INFO))
@@ -493,9 +512,12 @@ def guided_run(
         False, "--no-normalize-output",
         help="write legacy full-resolution panel crops instead of 390x[760,800]"),
     filter_panels: bool = typer.Option(
-        False, "--filter/--no-filter",
-        help="run the deterministic panel filter after the cut: blank panels "
-             "removed, text-only panels kept as context (no frame/narration)"),
+        True, "--filter/--no-filter",
+        help="run the deterministic panel filter after the cut (default ON; "
+             "matches the webapp): blank panels removed, text-only panels "
+             "kept as context (no frame/narration). Four gates must pass, "
+             "including a dialogue-content gate, so scene panels are never "
+             "false-positived. --no-filter for raw cuts"),
     dry_run: bool = typer.Option(
         False, "--dry-run",
         help="Phase 1 only: print the plan, do not cut anything"),
