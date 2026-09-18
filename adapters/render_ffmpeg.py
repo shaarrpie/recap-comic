@@ -88,7 +88,8 @@ def _style_post_filters(style: StyleConfig | None) -> list[str]:
 
 
 def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
-                   zoom: float = 0.0, dur: float = 1.0) -> str:
+                   zoom: float = 0.0, dur: float = 1.0,
+                   pan_x: float = 0.0, pan_y: float = 0.0) -> str:
     """One panel composited onto a blurred, slightly darkened full-frame
     copy of itself.
 
@@ -104,6 +105,12 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
     so there is no crop filter to go out of bounds.
 
     zoom=0 (or dur<=0) reproduces the legacy static contain-fit.
+
+    pan_x/pan_y are TOTAL overlay travels in canvas px over the clip
+    (reference-motion preset): +x = right, +y = down, smoothly interpolated
+    as t/dur. Zero reproduces the exact legacy centred overlay string. The
+    blurred background always fills the frame, so panning the foreground
+    can never reveal empty/black areas.
 
     Returns the chain WITHOUT the trailing label; the caller appends
     transitions/setsar/fps/[vN] exactly as for the plain scale+crop chain.
@@ -121,6 +128,12 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
         fg = (f"[fgr{i}]"
               f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos"
               f"[fg{i}]")
+    if (pan_x or pan_y) and dur > 0:
+        overlay = (f"[bg{i}][fg{i}]overlay="
+                   f"x='(W-w)/2+({pan_x:g})*t/{dur:.3f}':"
+                   f"y='(H-h)/2+({pan_y:g})*t/{dur:.3f}'")
+    else:
+        overlay = f"[bg{i}][fg{i}]overlay=x=(W-w)/2:y=(H-h)/2"
     return (
         f"split=2[bgr{i}][fgr{i}];"
         f"[bgr{i}]"
@@ -130,7 +143,7 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
         f"eq=brightness=-0.10:saturation=1.3"
         f"[bg{i}];"
         f"{fg};"
-        f"[bg{i}][fg{i}]overlay=x=(W-w)/2:y=(H-h)/2"
+        f"{overlay}"
     )
 
 
@@ -209,15 +222,30 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
         if kind in ("zoom_in", "zoom_out"):
             sw, sh = tw, th
         if style is not None and style.blur_background:
-            # The whole panel stays visible at t=0 (contain-fit over the
-            # blurred background) and is pushed in over the clip until it
-            # covers the frame; there is no pan to express here.
+            # Default look: contain-fit foreground pushed in over the clip.
+            # With a motion preset the foreground additionally pans via the
+            # overlay (per-panel zoom_strength + pan_x/y from timeline.motion;
+            # fallback to the global style so old timelines render unchanged).
+            # The blurred background always fills the frame, so overlay pans
+            # can never reveal empty areas.
+            motion = e.motion or {}
+            panel_zoom = float(motion.get("zoom_strength",
+                                          style.zoom_strength))
+            pan_x = float(motion.get("pan_x_px", 0.0) or 0.0)
+            pan_y = float(motion.get("pan_y_px", 0.0) or 0.0)
             vf = _blur_bg_chain(i, tw, th, style.blur_sigma,
-                                zoom=style.zoom_strength,
-                                dur=e.duration_seconds)
+                                zoom=panel_zoom,
+                                dur=e.duration_seconds,
+                                pan_x=pan_x, pan_y=pan_y)
         else:
+            motion = e.motion or {}
+            default_zoom = style.zoom_strength if style else 0.3
+            try:
+                panel_zoom = float(motion.get("zoom_strength", default_zoom))
+            except (TypeError, ValueError):
+                panel_zoom = default_zoom
             vf = _scale_crop(kind, sw, sh, e.duration_seconds, w=tw, h=th,
-                             zoom=style.zoom_strength if style else 0.3)
+                             zoom=panel_zoom)
         # fade transition filters
         if transitions and not use_xfade:
             prev_tr = transitions[i - 1] if i > 0 else None

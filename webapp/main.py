@@ -380,6 +380,10 @@ class RunRequest(BaseModel):
     vignette: bool | None = None
     vignette_angle: str | None = None
     blur_sigma: float | None = None
+    # Editing style: None = default automation; "reference" = reproduce the
+    # reference-video camera/editing rhythm (see reference_motion_preset.json).
+    motion_preset: str | None = None
+    motion_strength: float | None = None
 
 
 @app.post("/api/run")
@@ -478,6 +482,8 @@ async def run(body: RunRequest):
         "vignette": body.vignette,
         "vignette_angle": body.vignette_angle,
         "blur_sigma": body.blur_sigma,
+        "motion_preset": body.motion_preset,
+        "motion_strength": body.motion_strength,
     })
     log.info("job=%s created kind=generate session=%s order=%s backend=%s",
              job.id, session,

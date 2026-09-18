@@ -784,6 +784,23 @@ def guided_video(
     blur_sigma: float = typer.Option(
         40.0, "--blur-sigma",
         help="gblur sigma for the blurred background (default 40)"),
+    motion_preset: str = typer.Option(
+        "none", "--motion-preset",
+        help="editing style: none (default automation) | reference "
+             "(reproduce the reference-video camera/editing rhythm from "
+             "reference_motion_preset.json, normalized to each panel)"),
+    motion_preset_path: Path | None = typer.Option(
+        None, "--motion-preset-path",
+        help="override JSON for --motion-preset reference (custom template)"),
+    motion_strength: float = typer.Option(
+        1.0, "--motion-strength",
+        help="pan-travel scale for the motion preset (1.0 = as measured, "
+             "0 = static camera, zoom rhythm only)"),
+    motion_report: bool = typer.Option(
+        False, "--motion-report/--no-motion-report",
+        help="print the per-shot camera plan (seg, duration, zoom, dx/dy, "
+             "normalized movement, panel, confidence) and write "
+             "motion_report.json next to the timeline"),
     ffmpeg: str = typer.Option("ffmpeg", "--ffmpeg", help="ffmpeg executable"),
     ffprobe: str = typer.Option("ffprobe", "--ffprobe", help="ffprobe executable"),
     dry_run: bool = typer.Option(
@@ -829,6 +846,15 @@ def guided_video(
         raise typer.Exit(1) from exc
 
     tts = _validate_tts(tts)
+    mp = (motion_preset or "none").lower()
+    if mp not in ("none", "reference"):
+        typer.echo(
+            f"ERROR: unknown --motion-preset {motion_preset!r}; "
+            "choose 'none' or 'reference'", err=True)
+        raise typer.Exit(1)
+    if motion_strength < 0:
+        typer.echo("ERROR: --motion-strength must be >= 0", err=True)
+        raise typer.Exit(1)
     out_path = out or panels.parent / "recap.mp4"
     cfg = VideoConfig(
         tts=tts,  # type: ignore[arg-type]
@@ -840,6 +866,8 @@ def guided_video(
         blur_background=blur_background, color_grade=color_grade,
         vignette=vignette, vignette_angle=vignette_angle,
         blur_sigma=blur_sigma,
+        motion_preset=mp, motion_preset_path=motion_preset_path,
+        motion_strength=motion_strength,
         ffmpeg_exe=ffmpeg, ffprobe_exe=ffprobe,
         kokoro_model_path=kokoro_model_path,
         kokoro_voices_path=kokoro_voices_path)
@@ -863,8 +891,29 @@ def guided_video(
                f"  voice: {summary['voice']}  length: {int(mins)}m{secs:04.1f}s")
     typer.echo(f"timeline: {summary['timeline']}")
     typer.echo(f"captions: {summary['srt']} ({summary['srt_cues']} cues)")
+    if summary.get("motion_preset") and summary["motion_preset"] != "none":
+        typer.echo(f"motion preset: {summary['motion_preset']}"
+                   + (f" ({summary.get('motion_report')})"
+                      if summary.get("motion_report") else ""))
+    if motion_report and summary.get("motion_report"):
+        try:
+            import json as _json
+            rows = _json.loads(
+                Path(str(summary["motion_report"])).read_text("utf-8"))
+            typer.echo("motion plan (seg/dur/zoom/dx/dy/kind/conf/panel):")
+            for r in rows:
+                typer.echo(
+                    f"  seg {r.get('seg'):>2d} {r.get('duration_seconds', 0):5.2f}s "
+                    f"zoom {r.get('zoom'):4.2f} "
+                    f"dx {r.get('dx'):+6.1f} dy {r.get('dy'):+7.1f} "
+                    f"{str(r.get('pan_kind')):8s} conf {r.get('confidence'):5.3f} "
+                    f"{r.get('panel_id')}")
+        except Exception:
+            pass
     if dry_run:
-        typer.echo("dry run: mp4 not rendered")
+        typer.echo("dry run: mp4 not rendered (preview timeline.json"
+                   + (" + motion_report.json" if summary.get("motion_report") else "")
+                   + "; use a draft render to preview camera movement)")
     else:
         typer.echo(f"video: {summary['video']}")
 

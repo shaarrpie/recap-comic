@@ -130,6 +130,15 @@ class VideoConfig:
     # last frame). 0.5 = the panel grows to 1.5x. Applies to the blur
     # foreground and to the zoom_in/zoom_out pan kinds. 0 disables motion.
     zoom_strength: float = 0.5
+    # ── Reference-motion preset (editing style) ─────────────────────────────
+    # "none" (default) keeps the existing automation; "reference" reproduces
+    # the camera/editing rhythm of reference_motion_preset.json (segment
+    # order, relative timing, zoom, pan direction/speed) normalized to each
+    # panel/canvas. motion_strength scales pan travel (1.0 = as measured);
+    # motion_preset_path overrides the bundled JSON (custom templates).
+    motion_preset: str = "none"
+    motion_preset_path: Path | None = None
+    motion_strength: float = 1.0
     # Kokoro clips are independent, so they are synthesized in a bounded
     # thread pool. 6 keeps laptop CPU busy without thrashing; lower to 2-3
     # on weak machines, set 1 to serialize.
@@ -143,6 +152,14 @@ class VideoConfig:
                 "dialogue": 1.0,
                 "calm": 1.0,
             }
+        mp = (self.motion_preset or "none").lower()
+        if mp not in ("none", "reference"):
+            raise ValueError(
+                f"unknown motion_preset {self.motion_preset!r}; "
+                "choose 'none' or 'reference'")
+        self.motion_preset = mp
+        if self.motion_strength < 0:
+            raise ValueError("motion_strength must be >= 0")
 
     def hash(self) -> str:
         # Path objects are not JSON serializable; convert to strings
@@ -156,9 +173,12 @@ class VideoConfig:
     # text/voice/provider/pacing, so these are excluded from the TTS cache
     # key: toggling the vignette must not re-synthesize identical clips.
     # The full hash() still covers the timeline + video cache, where the
-    # style genuinely changes the output.
+    # style genuinely changes the output. Motion-preset fields are likewise
+    # timeline/render-only (they never change narration text or TTS audio,
+    # only camera geometry and pacing distribution).
     _STYLE_FIELDS = ("blur_background", "color_grade", "vignette",
-                     "vignette_angle", "blur_sigma", "zoom_strength")
+                     "vignette_angle", "blur_sigma", "zoom_strength",
+                     "motion_preset", "motion_preset_path", "motion_strength")
 
     def hash_essentials(self) -> str:
         """hash() minus the visual-only style flags (TTS/narration cache key)."""
@@ -699,6 +719,47 @@ def display_seconds(*, audio_seconds: float | None, words: int,
     return _round_ms_up(max(dur, pan_floor) * mult)
 
 
+def _load_motion_preset(path: Path | str | None):  # type: ignore[no-untyped-def]
+    """Import motion_presets robustly (script-dir vs installed-package CWD).
+
+    pytest and `recap-comic` run with the repo root on sys.path, but a
+    `python /tmp/script.py` invocation puts the script dir first instead —
+    fall back to the sibling file next to this module so the preset layer
+    never depends on the caller's CWD.
+    """
+    try:
+        import motion_presets as _mp  # type: ignore[import-not-found]
+        return _mp.load_preset(path)
+    except ModuleNotFoundError:
+        import importlib.util as _ilu
+        import sys as _sys
+        sibling = Path(__file__).resolve().parent / "motion_presets.py"
+        spec = _ilu.spec_from_file_location("motion_presets", sibling)
+        if spec is None or spec.loader is None:
+            raise
+        mod = _ilu.module_from_spec(spec)
+        _sys.modules.setdefault("motion_presets", mod)
+        spec.loader.exec_module(mod)
+        return mod.load_preset(path)
+
+
+def _motion_module():  # type: ignore[no-untyped-def]
+    try:
+        import motion_presets as _mp  # type: ignore[import-not-found]
+        return _mp
+    except ModuleNotFoundError:
+        import importlib.util as _ilu
+        import sys as _sys
+        sibling = Path(__file__).resolve().parent / "motion_presets.py"
+        spec = _ilu.spec_from_file_location("motion_presets", sibling)
+        if spec is None or spec.loader is None:
+            raise
+        mod = _ilu.module_from_spec(spec)
+        _sys.modules.setdefault("motion_presets", mod)
+        spec.loader.exec_module(mod)
+        return mod
+
+
 def _classify(p: CutPanel) -> str:
     """Panel class for pacing (action/reveal/dialogue/calm).
 
@@ -724,14 +785,21 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
     pass 1920x1080 for a 16:9 landscape edit). The canvas drives both pan
     geometry and the TimelineArtifact's declared dimensions, which the
     renderer honours.
+
+    With ``motion_preset="reference"`` the camera plan comes from the
+    normalized reference template (motion_presets.py) instead of the
+    heuristic compute_pan: segment order, relative timing weights, zoom
+    targets and pan direction/speed are reproduced per shot, clamped to
+    each panel's safe range. Durations scale proportionally to the measured
+    narration total so a short reference shot stays short relative to a
+    long one while narration never truncates.
     """
     by_audio = {a.entry_id: a for a in audio.entries}
     by_text = {n.id: n for n in narration.entries}
-    entries: list[TimelineEntry] = []
+    # First pass: collect usable panels (same skip contract as default).
+    usable: list[tuple[Any, Path, int, int, str, Any]] = []
     skipped: list[dict] = []
-    t = 0.0
-    skipped_missing = 0
-    for order, p in enumerate(sorted(artifact.panels,
+    for _order, p in enumerate(sorted(artifact.panels,
                                       key=lambda p: (p.panel_index, p.y_start)), start=1):
         h = p.y_end - p.y_start
         if h <= 0:
@@ -762,7 +830,6 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
                 "(panels.json references it but the PNG was not produced; "
                 "re-run 'guided cut' / 'guided run' to regenerate)",
                 p.id, img)
-            skipped_missing += 1
             skipped.append({"panel_id": p.id, "reason": "image_missing"})
             continue
         a = by_audio.get(p.id)
@@ -790,19 +857,114 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
             # PNG dimensions are the source crop dimensions.
             png_w = p.strip_width or artifact.width
             png_h = h
-        pan = compute_pan(png_w, png_h, canvas_w, canvas_h,
-                          blur_background=cfg.blur_background)
-        dur = display_seconds(
-            audio_seconds=a.duration_seconds if a else None,
-            words=_word_count(text), travel_px=pan.travel_px, cfg=cfg,
-            panel_class=_classify(p))
-        entries.append(TimelineEntry(
-            panel_id=p.id, order=order, source_image=str(img),
-            bbox=BBox(x=0, y=p.y_start, w=png_w, h=png_h),
-            start_seconds=round(t, 3), duration_seconds=dur,
-            audio_path=str((audio_dir / a.path).resolve()) if a else None,
-            pan=pan))
-        t += dur
+        usable.append((p, img, png_w, png_h, text, a))
+
+    if not usable and not skipped:
+        raise VideoError("no usable panels in panels.json")
+
+    preset = None
+    seg_indices: list[int] = []
+    _mp = None
+    if (cfg.motion_preset or "none") != "none":
+        try:
+            _mp = _motion_module()
+            preset = _load_motion_preset(cfg.motion_preset_path)
+            seg_indices = _mp.map_segments_to_panels(len(usable), preset)
+        except Exception as exc:
+            raise VideoError(
+                f"motion_preset {cfg.motion_preset!r} failed to load: {exc}"
+            ) from exc
+
+    entries: list[TimelineEntry] = []
+    t = 0.0
+    if preset is None:
+        for order, (p, img, png_w, png_h, text, a) in enumerate(usable, start=1):
+            pan = compute_pan(png_w, png_h, canvas_w, canvas_h,
+                              blur_background=cfg.blur_background)
+            dur = display_seconds(
+                audio_seconds=a.duration_seconds if a else None,
+                words=_word_count(text), travel_px=pan.travel_px, cfg=cfg,
+                panel_class=_classify(p))
+            entries.append(TimelineEntry(
+                panel_id=p.id, order=order, source_image=str(img),
+                bbox=BBox(x=0, y=p.y_start, w=png_w, h=png_h),
+                start_seconds=round(t, 3), duration_seconds=dur,
+                audio_path=str((audio_dir / a.path).resolve()) if a else None,
+                pan=pan))
+            t += dur
+    else:
+        assert preset is not None and preset.segments is not None
+        assert _mp is not None
+        # Base durations first (narration must finish; pan floor applies).
+        # panel_class is forced to calm so the per-class multiplier does not
+        # distort the reference rhythm (the template is the pacing source).
+        bases: list[float] = []
+        resolved: list[dict] = []
+        for (_p, _img, png_w, png_h, text, a), si in zip(
+                usable, seg_indices, strict=True):
+            seg = (preset.segments or [])[si]
+            r = _mp.resolve_for_panel(
+                png_w=png_w, png_h=png_h, canvas_w=canvas_w,
+                canvas_h=canvas_h, seg=seg, preset=preset,
+                motion_strength=cfg.motion_strength,
+                blur_background=cfg.blur_background)
+            resolved.append(r)
+            pan_probe = PanSpec(kind=r["kind"], scaled_w=r["scaled_w"],
+                                scaled_h=r["scaled_h"],
+                                travel_px=r["travel_px"])
+            base = display_seconds(
+                audio_seconds=a.duration_seconds if a else None,
+                words=_word_count(text), travel_px=pan_probe.travel_px,
+                cfg=cfg, panel_class="calm")
+            bases.append(base)
+        total_base = sum(bases) or 1.0
+        total_ref = sum((preset.segments or [])[si].dur
+                        for si in seg_indices) or 1.0
+        scale = total_base / total_ref
+        for order, ((p, img, png_w, png_h, _text, a), si, r, base) in enumerate(
+                zip(usable, seg_indices, resolved, bases, strict=True), start=1):
+            seg = (preset.segments or [])[si]
+            scaled_ref = seg.dur * scale
+            dur = _round_ms_up(max(base, scaled_ref))
+            pan = PanSpec(kind=r["kind"], scaled_w=r["scaled_w"],
+                          scaled_h=r["scaled_h"], travel_px=r["travel_px"])
+            motion = {
+                "preset": preset.name,
+                "seg": seg.seg,
+                "duration": seg.dur,
+                "zoom": seg.zoom,
+                "zoom_strength": r["zoom_strength"],
+                "dx": seg.dx,
+                "dy": seg.dy,
+                "dxps": seg.dxps,
+                "dyps": seg.dyps,
+                "ndx": r["ndx"],
+                "ndy": r["ndy"],
+                "ndxps": r["ndxps"],
+                "ndyps": r["ndyps"],
+                "matchScore": seg.matchScore,
+                "confidence": seg.matchScore,
+                "damping": r["damping"],
+                "static": r["static"],
+                "pan_x_px": r["pan_x_px"],
+                "pan_y_px": r["pan_y_px"],
+                "rhythm_weight": seg.dur / total_ref,
+                "scaled_ref_seconds": round(scaled_ref, 3),
+                "source_panel": p.id,
+            }
+            entries.append(TimelineEntry(
+                panel_id=p.id, order=order, source_image=str(img),
+                bbox=BBox(x=0, y=p.y_start, w=png_w, h=png_h),
+                start_seconds=round(t, 3), duration_seconds=dur,
+                audio_path=str((audio_dir / a.path).resolve()) if a else None,
+                pan=pan, motion=motion))
+            t += dur
+        try:
+            log.info("motion_preset=%s segments=%s\n%s",
+                     preset.name, seg_indices,
+                     _mp.preview_table(preset, seg_indices))
+        except Exception:
+            log.debug("motion preview table failed", exc_info=True)
     if not entries:
         raise VideoError("no usable panels in panels.json")
     result = TimelineArtifact(
@@ -821,6 +983,43 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
 
 def total_seconds(timeline: TimelineArtifact) -> float:
     return round(sum(e.duration_seconds for e in timeline.entries), 3)
+
+
+def build_motion_report(timeline: TimelineArtifact) -> list[dict[str, Any]]:
+    """Debug/preview rows for the reference-motion preset.
+
+    One row per timeline entry: selected preset, segment number, duration,
+    zoom, dx/dy, speed, normalized movement, source panel, confidence.
+    Empty list when the default automation path was used.
+    """
+    rows: list[dict[str, Any]] = []
+    for e in timeline.entries:
+        m = getattr(e, "motion", None) or {}
+        if not m:
+            continue
+        rows.append({
+            "panel_id": e.panel_id,
+            "order": e.order,
+            "preset": m.get("preset"),
+            "seg": m.get("seg"),
+            "duration_seconds": e.duration_seconds,
+            "reference_dur": m.get("duration"),
+            "zoom": m.get("zoom"),
+            "zoom_strength": m.get("zoom_strength"),
+            "dx": m.get("dx"),
+            "dy": m.get("dy"),
+            "dxps": m.get("dxps"),
+            "dyps": m.get("dyps"),
+            "ndx": m.get("ndx"),
+            "ndy": m.get("ndy"),
+            "pan_kind": e.pan.kind,
+            "travel_px": e.pan.travel_px,
+            "pan_x_px": m.get("pan_x_px"),
+            "pan_y_px": m.get("pan_y_px"),
+            "confidence": m.get("confidence", m.get("matchScore")),
+            "static": m.get("static"),
+        })
+    return rows
 
 
 # --------------------------------------------------------------------------- #
@@ -992,6 +1191,12 @@ def make_recap_video(panels_json: Path, out_path: Path,
                               canvas_w=cfg.canvas_w, canvas_h=cfg.canvas_h)
     _write_atomic(work / "timeline.json",
                   timeline.model_dump_json(indent=2) + "\n")
+    # 3b. motion debug sidecar (reference preset only; preview the camera
+    # plan without rendering the full video).
+    motion_report = build_motion_report(timeline)
+    if motion_report:
+        _write_atomic(work / "motion_report.json",
+                      json.dumps(motion_report, indent=2) + "\n")
 
     # 5. captions (before render so a render failure still leaves them)
     srt_path = out_path.with_suffix(".srt")
@@ -1006,6 +1211,9 @@ def make_recap_video(panels_json: Path, out_path: Path,
         "srt": str(srt_path),
         "srt_cues": cues,
         "video": None,
+        "motion_preset": cfg.motion_preset,
+        "motion_report": (str(work / "motion_report.json")
+                          if motion_report else None),
     }
     if dry_run:
         log.info("make_recap_video dry_run summary=%s", summary)
@@ -1066,6 +1274,7 @@ def render_edited_project(editor_path: Path, out_path: Path,
             duration_seconds=e["duration_seconds"],
             audio_path=audio_path,
             pan=PanSpec(kind=pan_kind, scaled_w=scaled_w, scaled_h=scaled_h, travel_px=travel_px),
+            motion=e.get("motion"),
         ))
 
     timeline = TimelineArtifact(

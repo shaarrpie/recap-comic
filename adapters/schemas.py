@@ -118,6 +118,14 @@ class TimelineEntry(BaseModel):
     duration_seconds: float
     audio_path: str | None = None  # None => silent, min display duration
     pan: PanSpec
+    # Optional reference-motion debug/provenance (Phase 3 motion-preset
+    # layer). None for the default automation path; when a motion preset is
+    # active this records {preset, seg, zoom, dx, dy, ndx, ndy, speed,
+    # confidence, ...} so the camera plan is auditable per shot. The
+    # renderer reads per-panel zoom/pan from here with a safe fallback to
+    # the global style when absent, so old timeline.json files (without
+    # this field) still validate and render unchanged.
+    motion: dict | None = None
 
 
 class TimelineArtifact(BaseModel):

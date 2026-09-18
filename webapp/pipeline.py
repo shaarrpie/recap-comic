@@ -861,7 +861,10 @@ def _render_video(job: Job, **kwargs: Any) -> None:
         vignette=_style("vignette", VideoConfig.vignette),
         vignette_angle=_style("vignette_angle", VideoConfig.vignette_angle),
         blur_sigma=_style("blur_sigma", VideoConfig.blur_sigma),
-        zoom_strength=_style("zoom_strength", VideoConfig.zoom_strength))
+        zoom_strength=_style("zoom_strength", VideoConfig.zoom_strength),
+        motion_preset=_style("motion_preset", VideoConfig.motion_preset),
+        motion_strength=_style("motion_strength",
+                               VideoConfig.motion_strength))
     job.log("INFO",
             f"render input={panels_json.name} tts={cfg.tts} "
             f"voice={cfg.voice} rate={cfg.rate} pitch={cfg.pitch} "
