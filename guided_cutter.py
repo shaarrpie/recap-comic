@@ -48,7 +48,7 @@ from typing import Any
 
 import numpy as np
 from PIL import Image
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from adapters.schemas import BBox
 from strip_analyzer import PanelPlan, PanelPlanEntry
@@ -175,6 +175,23 @@ class CutPanel(BaseModel):
     # the video timeline skip them (no audio, no video frame).
     context_only: bool = False
 
+    @model_validator(mode="after")
+    def _context_only_must_not_be_blank(self) -> "CutPanel":
+        # context_only=True means "kept for story context, skipped by
+        # narration/TTS/timeline" — the narration field is INTENTIONALLY
+        # retained as context, so a non-empty narration here is correct,
+        # not an inconsistency. The one genuinely contradictory state is a
+        # panel demoted to context-only AND scored blank: blank panels are
+        # removed (never emitted), so this pairing indicates a Phase-2 /
+        # Phase-2.5 bug and must fail loudly rather than render an empty
+        # context panel.
+        if self.context_only and self.blank_flag == "blank":
+            raise ValueError(
+                f"panel {self.id} is both context_only and "
+                f"blank_flag=blank — blank panels must be removed, not "
+                f"demoted to context-only")
+        return self
+
 
 class CutArtifact(BaseModel):
     source: str
@@ -183,6 +200,12 @@ class CutArtifact(BaseModel):
     plan_hash: str
     config: dict[str, Any]
     panels: list[CutPanel]
+    # True when a blank-detection safety layer raised mid-run and was
+    # skipped (the cut deliberately continues without it rather than
+    # killing the job). Read by the webapp to warn the user, so a
+    # safety-layer-off run is never silent. Defaults False; absent on
+    # legacy artifacts.
+    blank_detection_skipped: bool = False
 
 def row_edge_density(gray: np.ndarray, y0: int, y1: int) -> np.ndarray:
     """Per-row mean absolute Sobel-X edge magnitude for rows [y0, y1).
@@ -997,6 +1020,7 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
     # First layer: blank regions detected on the strip shrink/exclude cut
     # ranges BEFORE cropping, so blank sections never become panels.
     # ------------------------------------------------------------------ #
+    blank_skipped = False
     if config.blank_detection and _HAS_BLANK_DETECTOR:
         try:
             regions = detect_blank_regions(
@@ -1007,8 +1031,10 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
                 cuts = _apply_blank_regions(cuts, regions, height,
                                             blank_score_threshold=None)
         except Exception as exc:  # noqa: BLE001 - never kill a cut
-            log.warning("blank-region detection failed (continuing without "
-                        "it): %s", exc)
+            blank_skipped = True
+            log.error("blank-region detection FAILED and was skipped — the "
+                      "cut continues WITHOUT this safety layer, so blank "
+                      "regions may appear as panels: %s", exc)
 
     # Post-segmentation validation layer (advisory; never deletes).
     if validate:
@@ -1059,8 +1085,10 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
                     log.info("panel %s flagged suspicious blank score %.2f "
                              "(kept for review)", c.id, score)
             except Exception as exc:  # noqa: BLE001
-                log.warning("post-crop blank scoring failed for %s: %s",
-                            c.id, exc)
+                blank_skipped = True
+                log.error("post-crop blank scoring FAILED for %s and was "
+                          "skipped — that panel is unverified for blankness: "
+                          "%s", c.id, exc)
 
         dest = out / c.image_file
         if dest.exists() and not force:
@@ -1100,7 +1128,8 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
         plan.model_dump_json().encode("utf-8")).hexdigest()
     artifact = CutArtifact(
         source=strip.name, width=width, height=height, plan_hash=plan_hash,
-        config=asdict(config), panels=saved)
+        config=asdict(config), panels=saved,
+        blank_detection_skipped=blank_skipped)
     sidecar = out / "panels.json"
     tmp = sidecar.with_suffix(".json.tmp")
     tmp.write_text(artifact.model_dump_json(indent=2), "utf-8")

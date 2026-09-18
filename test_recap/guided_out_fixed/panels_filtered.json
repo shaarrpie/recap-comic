@@ -1,0 +1,1052 @@
+{
+  "source": "strip.png",
+  "width": 800,
+  "height": 95070,
+  "plan_hash": "f9fb57de75f24b5997eb8484e1bf858152d74c32ef27aa018e1c1d57c5b201dc",
+  "config": {
+    "tolerance": 80,
+    "max_panel_height": 1600,
+    "variance_threshold": 6.0,
+    "edge_threshold": 30.0,
+    "bubble_pad": 8,
+    "use_edge_density": true,
+    "min_gutter_run": 4,
+    "blur_sigma": 0.5,
+    "min_panel_height": 150,
+    "output_width": 390,
+    "min_output_height": 760,
+    "max_output_height": 800,
+    "normalize_output": true,
+    "preserve_boundaries": false,
+    "blank_detection": true,
+    "blank_preset": "conservative"
+  },
+  "panels": [
+    {
+      "id": "001",
+      "panel_index": 1,
+      "y_start": 0,
+      "y_end": 6395,
+      "narration": "Glowing white script floats over a dark, rainy scene with stone ruins. Giant glowing white symbols float in the air above a dark, jagged landscape. A snowy, mountainous landscape is shown with glowing blue lines carved into the rocks and the text 'THE DEADLANDS' overlaid. A glowing blue circular symbol shines above a cracked, rocky cliff face in the snow.",
+      "dialogue": "TOWER, FLOOR 8. THE DEADLANDS",
+      "panel_type": "single",
+      "confidence": 0.85,
+      "image_file": "panel_001.png",
+      "output_width": 800,
+      "output_height": 6395,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        41
+      ],
+      "snap_measured": [
+        false,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=5913.87",
+        "edge_density=33.64",
+        "entropy=5.56",
+        "color_spread=61.95",
+        "fg_ratio=0.4634"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "005",
+      "panel_index": 2,
+      "y_start": 6395,
+      "y_end": 8100,
+      "narration": "Two armored figures stand on the snowy ground with the blue symbol glowing behind them. White space with a large blue slash sound effect indicating impact",
+      "dialogue": "차",
+      "panel_type": "single",
+      "confidence": 0.93,
+      "image_file": "panel_005.png",
+      "output_width": 800,
+      "output_height": 1705,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        41,
+        0
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=7829.31",
+        "edge_density=34.18",
+        "entropy=4.04",
+        "color_spread=72.58",
+        "fg_ratio=0.3234"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "007",
+      "panel_index": 3,
+      "y_start": 8100,
+      "y_end": 13270,
+      "narration": "Another white space with a blue slash sound effect continuing the motion Group of armored soldiers with fur collars looking up in shock as snow falls around them A young man with light brown hair and a determined expression stands in the foreground while a group of armored soldiers in the background watch him with shock as snow continues to fall around them. A close-up shot follows a man in a dark trench coat and armor walking through heavy snow and rain.",
+      "dialogue": "차 ガビッ",
+      "panel_type": "transition_gutter",
+      "confidence": 0.88,
+      "image_file": "panel_007.png",
+      "output_width": 800,
+      "output_height": 5170,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        0
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=6697.43",
+        "edge_density=62.71",
+        "entropy=4.93",
+        "color_spread=88.54",
+        "fg_ratio=0.3967"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "011",
+      "panel_index": 4,
+      "y_start": 13270,
+      "y_end": 16328,
+      "narration": "A trench-coated man stands on a snowy ledge raising his arm, watched by two soldiers. Two armored soldiers stand back-to-back in the snow with large SFX text in the foreground. A large black SFX mark appears on a white background below the snowy scene.",
+      "dialogue": "Fuu 터져!",
+      "panel_type": "single",
+      "confidence": 0.9,
+      "image_file": "panel_011.png",
+      "output_width": 800,
+      "output_height": 3058,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        10
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=6898.24",
+        "edge_density=34.1",
+        "entropy=4.62",
+        "color_spread=76.45",
+        "fg_ratio=0.372"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "014",
+      "panel_index": 5,
+      "y_start": 16328,
+      "y_end": 19499,
+      "narration": "The upper portion of a panel is white, containing two overlapping speech bubbles. The top of a blonde-haired man's head is visible against a snowy background. A grey-haired man in a heavy, dark hooded coat glares with a cold expression in the falling snow. A text box identifies the character as the Rank 6 Blue Zone Guildmaster, Kyojo Itsuki.",
+      "dialogue": "TODAY, WE'RE HERE TO DO THE UNPRECEDENTED. TO TAKE DOWN THE 8TH FLOOR'S GUARDIAN. RANK 6 BLUE ZONE GUILDMASTER KYOJO ITSUKI",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_014.png",
+      "output_width": 800,
+      "output_height": 3171,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        10,
+        1
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=7253.65",
+        "edge_density=40.17",
+        "entropy=3.36",
+        "color_spread=132.41",
+        "fg_ratio=0.2726"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "018",
+      "panel_index": 6,
+      "y_start": 19499,
+      "y_end": 22264,
+      "narration": "Several armored soldiers hold spears in formation. Two speech bubbles contain dialogue. A knight in dark armor grips the pommel of their sword tightly.",
+      "dialogue": "BECAUSE THIS IS A COALITION RAID. IF WE DON'T CLEAR THIS, FLOOR 9 STAYS A FANTASY.",
+      "panel_type": "single",
+      "confidence": 0.92,
+      "image_file": "panel_018.png",
+      "output_width": 800,
+      "output_height": 2765,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        1,
+        34
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=7310.47",
+        "edge_density=54.88",
+        "entropy=3.3",
+        "color_spread=131.82",
+        "fg_ratio=0.2716"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "020",
+      "panel_index": 7,
+      "y_start": 22264,
+      "y_end": 25337,
+      "narration": "Sharp, metallic sounds repeat against a plain white background. A soldier in a fur-trimmed coat and armor looks on as other armed figures stand in the snow, ending with a surprised reaction.",
+      "dialogue": "Clink Clink Clink !",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_020.png",
+      "output_width": 800,
+      "output_height": 3073,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        34,
+        72
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=8292.8",
+        "edge_density=30.79",
+        "entropy=3.55",
+        "color_spread=70.77",
+        "fg_ratio=0.3284"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "022",
+      "panel_index": 8,
+      "y_start": 25337,
+      "y_end": 26805,
+      "narration": "A white speech bubble hangs in a snowy sky against a black background. A close-up of a man's intense face with dark hair and a headband in the snow.",
+      "dialogue": "...LOOK WHO SHOWED UP.",
+      "panel_type": "single",
+      "confidence": 0.98,
+      "image_file": "panel_022.png",
+      "output_width": 390,
+      "output_height": 760,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        72,
+        45
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=7443.66",
+        "edge_density=29.28",
+        "entropy=2.79",
+        "color_spread=108.47",
+        "fg_ratio=0.2085"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "025",
+      "panel_index": 9,
+      "y_start": 27100,
+      "y_end": 32080,
+      "narration": "A white speech bubble hangs in a snowy sky against a black background. The group stands together in the snow, ready for action. A close-up shows legs walking through snow, flanked by soldiers in heavy furs.",
+      "dialogue": "BLUE EYES THEMSELVES.",
+      "panel_type": "transition_gutter",
+      "confidence": 0.9,
+      "image_file": "panel_025.png",
+      "output_width": 800,
+      "output_height": 4980,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        0
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=7425.34",
+        "edge_density=40.98",
+        "entropy=4.95",
+        "color_spread=92.27",
+        "fg_ratio=0.3756"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "028a",
+      "panel_index": 10,
+      "y_start": 32080,
+      "y_end": 34716,
+      "narration": "A close-up shows a black-haired man in a dark mask and heavy fur coat standing in falling snow. A dark, close-up shot focuses on the back of a person in a heavy fur-collared coat.",
+      "dialogue": "RANK 1\nBLUE EYES\nGUILDMASTER\nNARUKAMI SUBARU ドワッ",
+      "panel_type": "tall_scenic",
+      "confidence": 0.95,
+      "image_file": "panel_028a.png",
+      "output_width": 800,
+      "output_height": 2636,
+      "strip_width": null,
+      "split_of": "028",
+      "merged_with": [
+        11
+      ],
+      "snap_distances": [
+        0,
+        37
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=10845.52",
+        "edge_density=24.26",
+        "entropy=3.99",
+        "color_spread=79.23",
+        "fg_ratio=0.2824"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "028b",
+      "panel_index": 11,
+      "y_start": 34716,
+      "y_end": 36747,
+      "narration": "A close-up shows a black-haired man in a dark mask and heavy fur coat standing in falling snow. A dark, close-up shot focuses on the back of a person in a heavy fur-collared coat.",
+      "dialogue": "RANK 1\nBLUE EYES\nGUILDMASTER\nNARUKAMI SUBARU ドワッ",
+      "panel_type": "tall_scenic",
+      "confidence": 0.95,
+      "image_file": "panel_028b.png",
+      "output_width": 800,
+      "output_height": 2031,
+      "strip_width": null,
+      "split_of": "028",
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        37
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=10243.16",
+        "edge_density=34.24",
+        "entropy=3.8",
+        "color_spread=110.52",
+        "fg_ratio=0.25"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "030",
+      "panel_index": 12,
+      "y_start": 36747,
+      "y_end": 37615,
+      "narration": "A speech bubble appears in a white space, apologizing for the delay.",
+      "dialogue": "SORRY FOR THE HOLD-UP.",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_030.png",
+      "output_width": 390,
+      "output_height": 760,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        37,
+        75
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.274,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=1058.53",
+        "edge_density=17.14",
+        "entropy=0.63",
+        "color_spread=59.8",
+        "fg_ratio=0.0262"
+      ],
+      "context_only": true
+    },
+    {
+      "id": "031",
+      "panel_index": 13,
+      "y_start": 37615,
+      "y_end": 39300,
+      "narration": "The blonde guildmaster smiles as he faces a man in a yellow-faced mask. The masked man and the smiling guildmaster shake hands in the snow. A speech bubble appears in the white space below.",
+      "dialogue": "Jin HOLD-UP? YOU'RE LITERALLY THE FIRST ONES HERE.",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_031.png",
+      "output_width": 800,
+      "output_height": 1685,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        75,
+        0
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=10406.58",
+        "edge_density=42.59",
+        "entropy=3.73",
+        "color_spread=58.05",
+        "fg_ratio=0.328"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "034",
+      "panel_index": 14,
+      "y_start": 39300,
+      "y_end": 41633,
+      "narration": "A group of adventurers and soldiers stand on the battlefield while others watch in the foreground.",
+      "dialogue": "I HEARD EVEN THE MARTIAL CLANS ARE JOINING IN TODAY.\nTHE NARUKAMI SUBARU IS LEADING THE CHARGE, AFTER ALL.\nTHEY PROBABLY JUST WANNA GRAB WHATEVER SCRAPS YOU LEAVE BEHIND.",
+      "panel_type": "single",
+      "confidence": 0.85,
+      "image_file": "panel_034.png",
+      "output_width": 800,
+      "output_height": 2333,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        33
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=8586.95",
+        "edge_density=61.9",
+        "entropy=4.39",
+        "color_spread=99.62",
+        "fg_ratio=0.4836"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "035",
+      "panel_index": 15,
+      "y_start": 41633,
+      "y_end": 44077,
+      "narration": "A man in a black jacket grips a device tightly with both hands in a snowy environment. A gloved hand grips the hilt of a sword in a snowy, dark environment.",
+      "dialogue": "IF THEY'RE AFTER SCRAPS... Kya",
+      "panel_type": "tall_scenic",
+      "confidence": 0.9,
+      "image_file": "panel_035.png",
+      "output_width": 800,
+      "output_height": 2444,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        33,
+        23
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=9290.79",
+        "edge_density=26.67",
+        "entropy=2.96",
+        "color_spread=165.01",
+        "fg_ratio=0.2889"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "037",
+      "panel_index": 16,
+      "y_start": 44077,
+      "y_end": 46935,
+      "narration": "A masked man with black hair and a blonde man face each other in a glowing corridor. Two men in winter coats grip each other's hands in the falling snow. A close-up shows one of their gloved hands receiving a glowing, heart-shaped object.",
+      "dialogue": "I'VE GOT ONE RIGHT HERE. ...?",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_037.png",
+      "output_width": 800,
+      "output_height": 2858,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        23,
+        55
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=7358.21",
+        "edge_density=32.77",
+        "entropy=4.82",
+        "color_spread=77.15",
+        "fg_ratio=0.4032"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "041a",
+      "panel_index": 17,
+      "y_start": 47490,
+      "y_end": 50684,
+      "narration": "A man with blonde and black hair stands looking down as snow falls around him. A young man in dark armor stares down in shock while holding a glowing red heart-shaped emblem with white wings. The tail of a speech bubble is visible at the top edge of the frame. A blank white background contains two overlapping speech bubbles. A dark-haired man in a dark coat stands with his back to the viewer while a blonde man in armor looks up with concern in the snow. A man in a heavy coat faces a dark figure in the snow and speaks. A tall, dark panel containing speech bubbles against a white background. A masked figure with black hair faces a blonde man in a snowy landscape.",
+      "dialogue": "THIS IS...! I INTEND TO CLEAR THIS RAID PERFECTLY, BUT... JUST IN CASE, KEEP THAT ON YOU. BUT YOU NEED THIS WAY MORE THAN I DO... ALSO, AFTER THIS FIGHT, ALSO, AFTER THIS FIGHT, HOW ABOUT COMING BACK TO BLUE EYES?",
+      "panel_type": "single",
+      "confidence": 0.9,
+      "image_file": "panel_041a.png",
+      "output_width": 800,
+      "output_height": 3194,
+      "strip_width": null,
+      "split_of": "041",
+      "merged_with": [
+        19
+      ],
+      "snap_distances": [
+        50,
+        34
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=6999.24",
+        "edge_density=36.26",
+        "entropy=4.33",
+        "color_spread=59.68",
+        "fg_ratio=0.3023"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "041ba",
+      "panel_index": 18,
+      "y_start": 50684,
+      "y_end": 53669,
+      "narration": "A man with blonde and black hair stands looking down as snow falls around him. A young man in dark armor stares down in shock while holding a glowing red heart-shaped emblem with white wings. The tail of a speech bubble is visible at the top edge of the frame. A blank white background contains two overlapping speech bubbles. A dark-haired man in a dark coat stands with his back to the viewer while a blonde man in armor looks up with concern in the snow. A man in a heavy coat faces a dark figure in the snow and speaks. A tall, dark panel containing speech bubbles against a white background. A masked figure with black hair faces a blonde man in a snowy landscape.",
+      "dialogue": "THIS IS...! I INTEND TO CLEAR THIS RAID PERFECTLY, BUT... JUST IN CASE, KEEP THAT ON YOU. BUT YOU NEED THIS WAY MORE THAN I DO... ALSO, AFTER THIS FIGHT, ALSO, AFTER THIS FIGHT, HOW ABOUT COMING BACK TO BLUE EYES?",
+      "panel_type": "single",
+      "confidence": 0.9,
+      "image_file": "panel_041ba.png",
+      "output_width": 800,
+      "output_height": 2985,
+      "strip_width": null,
+      "split_of": "041",
+      "merged_with": [
+        19
+      ],
+      "snap_distances": [
+        50,
+        34
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=8956.51",
+        "edge_density=34.51",
+        "entropy=3.13",
+        "color_spread=99.43",
+        "fg_ratio=0.3324"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "041bb",
+      "panel_index": 19,
+      "y_start": 53669,
+      "y_end": 56194,
+      "narration": "A man with blonde and black hair stands looking down as snow falls around him. A young man in dark armor stares down in shock while holding a glowing red heart-shaped emblem with white wings. The tail of a speech bubble is visible at the top edge of the frame. A blank white background contains two overlapping speech bubbles. A dark-haired man in a dark coat stands with his back to the viewer while a blonde man in armor looks up with concern in the snow. A man in a heavy coat faces a dark figure in the snow and speaks. A tall, dark panel containing speech bubbles against a white background. A masked figure with black hair faces a blonde man in a snowy landscape.",
+      "dialogue": "THIS IS...! I INTEND TO CLEAR THIS RAID PERFECTLY, BUT... JUST IN CASE, KEEP THAT ON YOU. BUT YOU NEED THIS WAY MORE THAN I DO... ALSO, AFTER THIS FIGHT, ALSO, AFTER THIS FIGHT, HOW ABOUT COMING BACK TO BLUE EYES?",
+      "panel_type": "single",
+      "confidence": 0.9,
+      "image_file": "panel_041bb.png",
+      "output_width": 800,
+      "output_height": 2525,
+      "strip_width": null,
+      "split_of": "041",
+      "merged_with": [],
+      "snap_distances": [
+        50,
+        34
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=8739.92",
+        "edge_density=32.13",
+        "entropy=3.52",
+        "color_spread=56.49",
+        "fg_ratio=0.2942"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "049",
+      "panel_index": 20,
+      "y_start": 56194,
+      "y_end": 58088,
+      "narration": "A single speech bubble appears against a plain white background, continuing the conversation. The man's gloved hand is extended forward, revealing a large, red-gemmed ring with white feathered accents resting on his dark coat. A masked figure in dark clothing stands with hands clasped.",
+      "dialogue": "You can give it back to me then.",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_049.png",
+      "output_width": 800,
+      "output_height": 1894,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        34,
+        38
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=9186.41",
+        "edge_density=27.99",
+        "entropy=2.82",
+        "color_spread=148.86",
+        "fg_ratio=0.2729"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "052",
+      "panel_index": 21,
+      "y_start": 58088,
+      "y_end": 60316,
+      "narration": "A plain white background features a single empty speech bubble containing ellipses. Two men stand close together in falling snow as one gazes at the other. A close-up shows the two men standing in falling snow, with the trench-coated man smiling.",
+      "dialogue": "......",
+      "panel_type": "single",
+      "confidence": 0.9,
+      "image_file": "panel_052.png",
+      "output_width": 800,
+      "output_height": 2228,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        38,
+        56
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=9447.52",
+        "edge_density=23.0",
+        "entropy=3.5",
+        "color_spread=85.57",
+        "fg_ratio=0.2511"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "055",
+      "panel_index": 22,
+      "y_start": 60316,
+      "y_end": 62655,
+      "narration": "A plain background shows an empty scene with a single speech bubble. The masked man in a black coat places his gloved hand on the shoulder of a blonde-haired man standing in falling snow.",
+      "dialogue": "Well, if you'd rather not return, you can also just hang onto it forever. トシン",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_055.png",
+      "output_width": 800,
+      "output_height": 2339,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        56,
+        25
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=8854.32",
+        "edge_density=34.17",
+        "entropy=3.49",
+        "color_spread=61.84",
+        "fg_ratio=0.2356"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "057",
+      "panel_index": 23,
+      "y_start": 62655,
+      "y_end": 65950,
+      "narration": "A plain shot of the snow-filled background with a white swoosh effect indicating motion. A figure in a gold-accented plague doctor mask stands in the rain next to a frightened brown-haired man. A close-up shows a figure with a fur-lined collar in the rain, accompanied by a sudden exclamation bubble.",
+      "dialogue": "Swish !!",
+      "panel_type": "single",
+      "confidence": 0.9,
+      "image_file": "panel_057.png",
+      "output_width": 800,
+      "output_height": 3295,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        25,
+        0
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=5677.19",
+        "edge_density=37.93",
+        "entropy=4.62",
+        "color_spread=89.63",
+        "fg_ratio=0.2643"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "060",
+      "panel_index": 24,
+      "y_start": 65950,
+      "y_end": 68282,
+      "narration": "A blonde man looks up with a worried expression in the snow, saying 'It's here' while a dark-haired figure stands to his side. A blonde man in a fur-lined coat stands nervously beside a dark-haired figure wearing a gold-trimmed mask as snow falls around them.",
+      "dialogue": "IT'S HERE. IT'S SHOWING ITSELF THIS EARLY?!",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_060.png",
+      "output_width": 800,
+      "output_height": 2332,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        0
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=7450.31",
+        "edge_density=32.85",
+        "entropy=3.32",
+        "color_spread=120.9",
+        "fg_ratio=0.2536"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "062",
+      "panel_index": 25,
+      "y_start": 68282,
+      "y_end": 78622,
+      "narration": "A large glowing symbol cuts across the scene as soldiers and a shouting warrior react to the revelation of the Floor 8 Guardian. A group of men in winter armor look down in panic as a bright streak of light plunges toward them. An empty white speech bubble appears against a rainy background. A brown-haired man in a dark trench coat screams in anguish as rain falls on him. A massive glowing blue claw strikes down through the air. A massive armored figure emerges surrounded by glowing blue energy. A massive multi-headed beast looms over a blue-haired man standing on the battlefield. A figure unleashes a glowing blue energy attack with intense speed lines.",
+      "dialogue": "FLOOR 8 GUARDIAN BRACE FOR IMPACT!!! VENOM DRAGON HYDRA",
+      "panel_type": "tall_scenic",
+      "confidence": 0.9,
+      "image_file": "panel_062.png",
+      "output_width": 800,
+      "output_height": 10340,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        122
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=5000.69",
+        "edge_density=69.81",
+        "entropy=5.58",
+        "color_spread=72.09",
+        "fg_ratio=0.539"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "070",
+      "panel_index": 26,
+      "y_start": 78622,
+      "y_end": 80860,
+      "narration": "A speech bubble declares an insult against the creature. A masked man with spiky dark hair stands in the falling snow.",
+      "dialogue": "NASTY-LOOKING BASTARD.",
+      "panel_type": "single",
+      "confidence": 0.92,
+      "image_file": "panel_070.png",
+      "output_width": 800,
+      "output_height": 2238,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        122,
+        0
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=9782.58",
+        "edge_density=33.98",
+        "entropy=3.59",
+        "color_spread=69.78",
+        "fg_ratio=0.3177"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "072",
+      "panel_index": 27,
+      "y_start": 80860,
+      "y_end": 87024,
+      "narration": "A black-gloved hand reaches down with glowing yellow energy spreading across the ground as dark tendrils swirl. Lightning cracks across a dark backdrop as a masked figure with a glowing blue eye emerges below a digital caption box. A close-up of a man in dark tactical armor and yellow pants, holding a sword on a cracked, dusty ground. A large speech bubble is superimposed over a dark background, declaring a fatal threat.",
+      "dialogue": "IT MAKES MY SKIN CRAWL... LIGHTNING SURGES THROUGH SUBARU'S ENTIRE BODY. TODAY'S THE DAY YOU DIE.",
+      "panel_type": "tall_scenic",
+      "confidence": 0.9,
+      "image_file": "panel_072.png",
+      "output_width": 800,
+      "output_height": 6164,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        54
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=8696.01",
+        "edge_density=43.82",
+        "entropy=4.82",
+        "color_spread=69.33",
+        "fg_ratio=0.4091"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "076",
+      "panel_index": 28,
+      "y_start": 87024,
+      "y_end": 89133,
+      "narration": "A white space features dark red claw marks striking the center. A masked figure with glowing red eyes looks down ominously.",
+      "dialogue": "",
+      "panel_type": "transition_gutter",
+      "confidence": 0.85,
+      "image_file": "panel_076.png",
+      "output_width": 800,
+      "output_height": 2109,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        54,
+        133
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=8584.85",
+        "edge_density=22.47",
+        "entropy=2.73",
+        "color_spread=157.17",
+        "fg_ratio=0.3034"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "078",
+      "panel_index": 29,
+      "y_start": 89133,
+      "y_end": 92144,
+      "narration": "Glowing green blades slash through the air. A monstrous dragon with glowing eyes roars as green energy slashes through its body.",
+      "dialogue": "",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_078.png",
+      "output_width": 800,
+      "output_height": 3011,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        133,
+        64
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=6737.44",
+        "edge_density=47.54",
+        "entropy=4.97",
+        "color_spread=69.23",
+        "fg_ratio=0.5703"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "080",
+      "panel_index": 30,
+      "y_start": 92144,
+      "y_end": 95070,
+      "narration": "A blond man falls on his back in the rain while shouting a warning to others. A close-up shows a hand gripping a weapon with a sharp impact effect nearby.",
+      "dialogue": "IT'S GONNA UNLEASH ITS BREATH! EVERYONE, FALL BACK!!! NO NEED.",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_080.png",
+      "output_width": 800,
+      "output_height": 2926,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        64,
+        0
+      ],
+      "snap_measured": [
+        true,
+        false
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=9521.55",
+        "edge_density=39.89",
+        "entropy=3.2",
+        "color_spread=153.24",
+        "fg_ratio=0.3221"
+      ],
+      "context_only": false
+    }
+  ]
+}

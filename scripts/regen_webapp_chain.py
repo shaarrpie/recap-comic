@@ -23,7 +23,7 @@ This script replays the webapp's own pipeline for an existing chain:
    save_outputs -> create_editor_project.
 
 Usage:
-    python scripts/regen_webapp_chain.py SESSION [--tts edge|none] [--keep-jobs]
+    python scripts/regen_webapp_chain.py SESSION [--tts kokoro|none] [--keep-jobs]
 
 Examples:
     python scripts/regen_webapp_chain.py 135ab2689a88
@@ -79,7 +79,7 @@ def _recut_session(session: str) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("session", help="latest session id of the chain")
-    ap.add_argument("--tts", default="edge", choices=["edge", "none"])
+    ap.add_argument("--tts", default="kokoro", choices=["kokoro", "none"])
     ap.add_argument("--skip-recut", action="store_true",
                     help="only replay the generate job (panels already ok)")
     args = ap.parse_args()
@@ -106,7 +106,7 @@ def main() -> None:
                       if (d / "strip.webp").is_file() else "strip.png",
         "order": None,
         "tts": args.tts,
-        "voice": "en-US-AriaNeural",
+        "voice": "af_heart",
         "style": "recap",
         "rate": 0,
         "pitch": 0,

@@ -1,0 +1,324 @@
+{
+  "filter_version": 4,
+  "input_file": "panels.json",
+  "input_mtime": 1789608076.353547,
+  "input_size": 35627,
+  "out_file": "panels_filtered.json",
+  "strip_found": true,
+  "total": 30,
+  "kept": 29,
+  "context_only": 1,
+  "removed_blank": 0,
+  "rescued": 0,
+  "thresholds": {
+    "method": "adaptive",
+    "n_panels": 30,
+    "text_color_threshold": 0.15,
+    "white_dominance_cutoff": 0.49874,
+    "text_edge_floor": 0.003,
+    "is_bw_session": false
+  },
+  "decisions": [
+    {
+      "id": "001",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.20613,
+        "color_ratio": 0.8114,
+        "edge_density": 0.01486
+      }
+    },
+    {
+      "id": "005",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.33436,
+        "color_ratio": 0.82589,
+        "edge_density": 0.014787
+      }
+    },
+    {
+      "id": "007",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.18333,
+        "color_ratio": 0.69812,
+        "edge_density": 0.024054
+      }
+    },
+    {
+      "id": "011",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.26108,
+        "color_ratio": 0.86186,
+        "edge_density": 0.015069
+      }
+    },
+    {
+      "id": "014",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.58961,
+        "color_ratio": 0.65608,
+        "edge_density": 0.017108
+      }
+    },
+    {
+      "id": "018",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.55417,
+        "color_ratio": 0.88597,
+        "edge_density": 0.023344
+      }
+    },
+    {
+      "id": "020",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.46473,
+        "color_ratio": 0.74584,
+        "edge_density": 0.01366
+      }
+    },
+    {
+      "id": "022",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.51099,
+        "color_ratio": 0.28954,
+        "edge_density": 0.014162
+      }
+    },
+    {
+      "id": "025",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.18598,
+        "color_ratio": 0.75625,
+        "edge_density": 0.020834
+      }
+    },
+    {
+      "id": "028a",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.36583,
+        "color_ratio": 0.72723,
+        "edge_density": 0.011675
+      }
+    },
+    {
+      "id": "028b",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.29725,
+        "color_ratio": 0.54009,
+        "edge_density": 0.016318
+      }
+    },
+    {
+      "id": "030",
+      "decision": "context_only",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.97301,
+        "color_ratio": 0.00043,
+        "edge_density": 0.008729
+      }
+    },
+    {
+      "id": "031",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.37606,
+        "color_ratio": 0.4182,
+        "edge_density": 0.019024
+      }
+    },
+    {
+      "id": "034",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.42483,
+        "color_ratio": 0.70703,
+        "edge_density": 0.028916
+      }
+    },
+    {
+      "id": "035",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.55296,
+        "color_ratio": 0.6553,
+        "edge_density": 0.010436
+      }
+    },
+    {
+      "id": "037",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.20814,
+        "color_ratio": 0.65813,
+        "edge_density": 0.015993
+      }
+    },
+    {
+      "id": "041a",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.30721,
+        "color_ratio": 0.72331,
+        "edge_density": 0.017206
+      }
+    },
+    {
+      "id": "041ba",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.49107,
+        "color_ratio": 0.6024,
+        "edge_density": 0.015334
+      }
+    },
+    {
+      "id": "041bb",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.39299,
+        "color_ratio": 0.53194,
+        "edge_density": 0.013739
+      }
+    },
+    {
+      "id": "049",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.50693,
+        "color_ratio": 0.49818,
+        "edge_density": 0.013474
+      }
+    },
+    {
+      "id": "052",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.33549,
+        "color_ratio": 0.37358,
+        "edge_density": 0.01029
+      }
+    },
+    {
+      "id": "055",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.36485,
+        "color_ratio": 0.45468,
+        "edge_density": 0.015794
+      }
+    },
+    {
+      "id": "057",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.13455,
+        "color_ratio": 0.74933,
+        "edge_density": 0.015387
+      }
+    },
+    {
+      "id": "060",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.51608,
+        "color_ratio": 0.65903,
+        "edge_density": 0.014567
+      }
+    },
+    {
+      "id": "062",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.09064,
+        "color_ratio": 0.53059,
+        "edge_density": 0.026336
+      }
+    },
+    {
+      "id": "070",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.4196,
+        "color_ratio": 0.54786,
+        "edge_density": 0.013562
+      }
+    },
+    {
+      "id": "072",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.25408,
+        "color_ratio": 0.62266,
+        "edge_density": 0.018962
+      }
+    },
+    {
+      "id": "076",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.554,
+        "color_ratio": 0.7605,
+        "edge_density": 0.009056
+      }
+    },
+    {
+      "id": "078",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.22502,
+        "color_ratio": 0.77778,
+        "edge_density": 0.023438
+      }
+    },
+    {
+      "id": "080",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.50225,
+        "color_ratio": 0.54665,
+        "edge_density": 0.018319
+      }
+    }
+  ],
+  "filter_hash": "e809e5462d7b"
+}

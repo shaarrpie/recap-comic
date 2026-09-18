@@ -18,7 +18,6 @@ import logging
 import re
 from itertools import pairwise
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -106,8 +105,8 @@ def build_backend(name: str, api_key: str | None = None,
                   model: str | None = None, base_url: str | None = None,
                   timeout: int = 120, cf_account_id: str | None = None
                   ) -> sa.VisionBackend | None:
-    """Backend factory. "none" means no AI call at all (offline fallback).
-    "local" uses Ollama's POST /api/generate (llava/qwen2-vl)."""
+    """Backend factory. Agnes AI is the sole analysis provider; "none"
+    means no AI call at all (offline fallback)."""
     name = name.lower()
     if name in ("none", "deterministic", "cv", "manual", "no-ai", "noai"):
         # Pure deterministic CV path: uniform blank-color rows -> gutters ->
@@ -119,71 +118,25 @@ def build_backend(name: str, api_key: str | None = None,
     if name == "fixture":
         log.debug("backend=fixture offline test backend")
         return sa.FixtureVisionBackend()
-    if name == "gemini":
-        kw: dict[str, object] = {"api_key": api_key}
-        if model:
-            kw["model"] = model
-        backend: Any = sa.GeminiVisionBackend(**kw)  # type: ignore[arg-type]
-        log.info("backend=gemini model=%s", backend.model)
-        return backend
-    if name == "openai":
-        if not model:
-            raise ValueError("--model is required for the openai backend")
-        kw = {"model": model, "api_key": api_key}
-        if base_url:
-            kw["base_url"] = base_url
-        log.info("backend=openai model=%s", model)
-        return sa.OpenAIVisionBackend(**kw)  # type: ignore[arg-type]
-    if name == "anthropic":
-        if not model:
-            raise ValueError("--model is required for the anthropic backend")
-        kw = {"model": model, "api_key": api_key}
-        if base_url:
-            kw["base_url"] = base_url
-        log.info("backend=anthropic model=%s", model)
-        return sa.AnthropicVisionBackend(**kw)  # type: ignore[arg-type]
-    if name in ("local", "ollama"):
-        kw = {"model": model or "llava", "timeout": timeout}
-        if base_url:
-            kw["base_url"] = base_url
-        log.info("backend=ollama model=%s", kw["model"])
-        return sa.OllamaVisionBackend(**kw)  # type: ignore[arg-type]
-    if name in ("xkiro", "qwen", "qwen3.5", "qwen3_5"):
+    if name in ("agnes", "xkiro", "qwen", "mistral", "gemini", "openai",
+                "anthropic", "local", "ollama", "cloudflare"):
+        # Legacy backend names map to Agnes (sole provider). "local"/other
+        # offline-ish names no longer have dedicated adapters; they resolve
+        # here so old commands/configs keep working against Agnes.
         from adapters import ai_models as _ai
-        kw = {}
+        kw: dict[str, object] = {}
         if model:
             kw["primary_model"] = model
         if api_key:
             kw["api_key"] = api_key
         kw["base_url"] = base_url or _ai.DEFAULT_BASE_URL
         kw["timeout"] = timeout
-        backend = sa.XkiroVisionBackend(**kw)  # type: ignore[arg-type]
-        log.info("[AI] backend=xkiro primary=%s fallback=%s",
+        backend = sa.AgnesVisionBackend(**kw)  # type: ignore[arg-type]
+        log.info("[AI] backend=agnes primary=%s fallback=%s",
                  backend.primary_model, backend.fallback_model)
         return backend
-    if name == "mistral":
-        from adapters import ai_models as _ai
-        kw = {"primary_model": model or _ai.FALLBACK_MODEL,
-              "fallback_model": _ai.PRIMARY_MODEL}
-        if api_key:
-            kw["api_key"] = api_key
-        kw["base_url"] = base_url or _ai.DEFAULT_BASE_URL
-        kw["timeout"] = timeout
-        backend = sa.XkiroVisionBackend(**kw)  # type: ignore[arg-type]
-        log.info("[AI] backend=mistral primary=%s fallback=%s",
-                 backend.primary_model, backend.fallback_model)
-        return backend
-    if name == "cloudflare":
-        kw = {"api_key": api_key}
-        if model:
-            kw["model"] = model
-        if cf_account_id:
-            kw["account_id"] = cf_account_id
-        log.info("backend=cloudflare model=%s", kw.get("model", sa.CloudflareWorkersAIBackend.DEFAULT_MODEL))
-        return sa.CloudflareWorkersAIBackend(**kw)  # type: ignore[arg-type]
     raise ValueError(
-        f"unknown backend {name!r}; supported: xkiro, qwen, mistral, "
-        "gemini, openai, anthropic, ollama, cloudflare, fixture, "
+        f"unknown backend {name!r}; supported: agnes, fixture, "
         "deterministic (aliases: none, cv, manual), none")
 
 

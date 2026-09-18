@@ -59,6 +59,12 @@ class StyleConfig:
     vignette: bool = True           # strong dark vignette around the edges
     vignette_angle: str = "PI/2.5"  # ffmpeg angle expr; smaller = stronger
     blur_sigma: float = 40.0        # gblur sigma for the background branch
+    # Ken-Burns push-in strength as a fraction of the panel's fitted size:
+    # the foreground grows from its fitted size to (1 + zoom_strength)x over
+    # the clip, so a 0.5 yields a 1.5x push-in by the last frame. Applies to
+    # both the blur-background foreground and the plain zoom_in/zoom_out
+    # kinds. 0 disables the animation (static fitted frame).
+    zoom_strength: float = 0.5
 
 
 def _style_post_filters(style: StyleConfig | None) -> list[str]:
@@ -81,14 +87,40 @@ def _style_post_filters(style: StyleConfig | None) -> list[str]:
     return post
 
 
-def _blur_bg_chain(i: int, w: int, h: int, sigma: float) -> str:
+def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
+                   zoom: float = 0.0, dur: float = 1.0) -> str:
     """One panel composited onto a blurred, slightly darkened full-frame
-    copy of itself. The foreground is contain-fitted (the whole panel stays
-    visible); the background covers the canvas and fills the letterbox.
+    copy of itself.
+
+    Background branch: cover-scaled to the canvas and centre-cropped BEFORE
+    the blur, so the blurred copy always fills the whole w x h frame (the
+    YouTube-standard canvas) edge to edge — the blur is never letterboxed.
+
+    Foreground branch: at t=0 the panel is contain-fitted (the whole panel
+    stays visible and the blur shows around it), then it is pushed in over
+    the clip until it COVERS the frame, reaching (cover x (1 + zoom)) by the
+    last frame. The centre-ing + overflow clipping is done by the overlay
+    (it handles both the smaller-than-canvas and larger-than-canvas cases),
+    so there is no crop filter to go out of bounds.
+
+    zoom=0 (or dur<=0) reproduces the legacy static contain-fit.
 
     Returns the chain WITHOUT the trailing label; the caller appends
     transitions/setsar/fps/[vN] exactly as for the plain scale+crop chain.
     """
+    if zoom > 0 and dur > 0:
+        # Per-frame scale factor: contain-fit at t=0 -> cover x (1+zoom) at
+        # the end. iw/ih are the panel PNG dims; w/h the canvas literals.
+        contain = f"min({w}/iw,{h}/ih)"
+        cover = f"max({w}/iw,{h}/ih)"
+        zexpr = (f"({contain}+({cover}*(1+{zoom:g})-{contain})*t/{dur:.3f})")
+        fg = (f"[fgr{i}]"
+              f"scale=w='iw*{zexpr}':h='ih*{zexpr}':eval=frame:flags=lanczos"
+              f"[fg{i}]")
+    else:
+        fg = (f"[fgr{i}]"
+              f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos"
+              f"[fg{i}]")
     return (
         f"split=2[bgr{i}][fgr{i}];"
         f"[bgr{i}]"
@@ -97,20 +129,20 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float) -> str:
         f"gblur=sigma={sigma:g},"
         f"eq=brightness=-0.10:saturation=1.3"
         f"[bg{i}];"
-        f"[fgr{i}]"
-        f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos"
-        f"[fg{i}];"
+        f"{fg};"
         f"[bg{i}][fg{i}]overlay=x=(W-w)/2:y=(H-h)/2"
     )
 
 
 def _scale_crop(kind: str, sw: int, sh: int, dur: float, t: str = "t",
-                w: int = WIDTH, h: int = HEIGHT) -> str:
+                w: int = WIDTH, h: int = HEIGHT,
+                zoom: float = 0.3) -> str:
     """Build the scale+crop filter segment for one panel on a w x h canvas.
 
     The canvas defaults to 1080x1920 (9:16); callers pass the timeline's own
     dimensions so landscape timelines render landscape and draft (540x960)
-    renders actually render at draft size.
+    renders actually render at draft size. ``zoom`` is the push-in strength
+    for the zoom_in/zoom_out kinds (0.3 = up to 1.3x).
     """
     pad = "" if (sw >= w and sh >= h) else \
           f"pad={max(w,sw)}:{max(h,sh)}:(ow-iw)/2:(oh-ih)/2:color=black,"
@@ -127,13 +159,13 @@ def _scale_crop(kind: str, sw: int, sh: int, dur: float, t: str = "t",
         return (f"scale={sw}:{sh},{pad}crop={w}:{h}:"
                 f"x=0:y='(ih-{h})*(1-{t}/{dur:.3f})'")
     if kind == "zoom_in":
-        zw = f"{w}*(1+0.3*{t}/{dur:.3f})"
-        zh = f"{h}*(1+0.3*{t}/{dur:.3f})"
+        zw = f"{w}*(1+{zoom:g}*{t}/{dur:.3f})"
+        zh = f"{h}*(1+{zoom:g}*{t}/{dur:.3f})"
         return (f"scale=w={zw}:h={zh}:eval=frame,crop={w}:{h}:"
                 f"x='(iw-{w})/2':y='(ih-{h})/2'")
     if kind == "zoom_out":
-        zw = f"{w}*(1.3-0.3*{t}/{dur:.3f})"
-        zh = f"{h}*(1.3-0.3*{t}/{dur:.3f})"
+        zw = f"{w}*(1+{zoom:g}-{zoom:g}*{t}/{dur:.3f})"
+        zh = f"{h}*(1+{zoom:g}-{zoom:g}*{t}/{dur:.3f})"
         return (f"scale=w={zw}:h={zh}:eval=frame,crop={w}:{h}:"
                 f"x='(iw-{w})/2':y='(ih-{h})/2'")
     return f"scale={sw}:{sh},{pad}crop={w}:{h}:x=0:y=0"
@@ -177,11 +209,15 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
         if kind in ("zoom_in", "zoom_out"):
             sw, sh = tw, th
         if style is not None and style.blur_background:
-            # The whole panel stays visible (contain-fit) over a blurred
-            # full-frame background; there is no pan to express here.
-            vf = _blur_bg_chain(i, tw, th, style.blur_sigma)
+            # The whole panel stays visible at t=0 (contain-fit over the
+            # blurred background) and is pushed in over the clip until it
+            # covers the frame; there is no pan to express here.
+            vf = _blur_bg_chain(i, tw, th, style.blur_sigma,
+                                zoom=style.zoom_strength,
+                                dur=e.duration_seconds)
         else:
-            vf = _scale_crop(kind, sw, sh, e.duration_seconds, w=tw, h=th)
+            vf = _scale_crop(kind, sw, sh, e.duration_seconds, w=tw, h=th,
+                             zoom=style.zoom_strength if style else 0.3)
         # fade transition filters
         if transitions and not use_xfade:
             prev_tr = transitions[i - 1] if i > 0 else None
@@ -236,6 +272,10 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
             "-pix_fmt", "yuv420p", "-r", str(timeline.fps),
             "-c:a", "aac", "-b:a", "192k", "-max_muxing_queue_size", "9999",
+            # Faststart in the encode itself: the moov atom is placed at the
+            # head so web playback can start immediately. Doing it here
+            # avoids a second full-file read+write copy pass afterwards.
+            "-movflags", "+faststart",
             str(out_path)]
     return cmd
 
@@ -295,6 +335,7 @@ def _build_xfade_command(cmd: list[str], timeline: TimelineArtifact,
             "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
             "-pix_fmt", "yuv420p", "-r", str(timeline.fps),
             "-c:a", "aac", "-b:a", "192k", "-max_muxing_queue_size", "9999",
+            "-movflags", "+faststart",
             str(out_path)]
     return cmd
 
@@ -355,7 +396,12 @@ def build_command_chunked(timeline: TimelineArtifact, out_path: Path,
         segs.append((cmd, seg))
     list_file.write_text("".join(f"file '{s.resolve()}'\n" for _, s in segs))
     concat_cmd = [ffmpeg_exe, "-y", "-nostdin", "-f", "concat", "-safe", "0",
-                  "-i", str(list_file), "-c", "copy", str(out_path)]
+                  "-i", str(list_file), "-c", "copy",
+                  # moov at the head for immediate web playback; the per-segment
+                  # .ts files are stream copies, so this is the only place it
+                  # matters for the final mp4.
+                  "-movflags", "+faststart",
+                  str(out_path)]
     return segs, concat_cmd, tmp
 
 

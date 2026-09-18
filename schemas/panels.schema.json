@@ -39,6 +39,11 @@
       "items": {
         "$ref": "#/$defs/cutPanel"
       }
+    },
+    "blank_detection_skipped": {
+      "type": "boolean",
+      "default": false,
+      "description": "True when a blank-detection safety layer raised mid-run and was skipped (the cut continues without it rather than failing). The webapp warns the user; blank regions may appear as panels in that run. Absent on legacy artifacts (treated as false)."
     }
   },
   "$defs": {
@@ -197,7 +202,7 @@
         "context_only": {
           "type": "boolean",
           "default": false,
-          "description": "Text-bubble-only panel set by panel_filter: dialogue kept for story context, but skipped by narration, TTS and the video timeline (no audio, no frame)."
+          "description": "Text-bubble-only panel set by panel_filter: dialogue kept for story context, but skipped by narration, TTS and the video timeline (no audio, no frame). The narration field is intentionally retained as context data; it is simply never spoken. Contradictory with blank_flag=blank (blank panels are removed, never demoted) -- enforced by guided_cutter.CutPanel."
         }
       }
     }

@@ -48,6 +48,7 @@ def test_style_config_defaults_match_the_shipped_patch():
     assert s.vignette is True
     assert s.vignette_angle == "PI/2.5"
     assert s.blur_sigma == pytest.approx(40.0)
+    assert s.zoom_strength == pytest.approx(0.5)
 
 
 def test_video_config_style_defaults_match_style_config():
@@ -60,6 +61,7 @@ def test_video_config_style_defaults_match_style_config():
     assert cfg.vignette is True
     assert cfg.vignette_angle == "PI/2.5"
     assert cfg.blur_sigma == pytest.approx(40.0)
+    assert cfg.zoom_strength == pytest.approx(0.5)
 
 
 # ------------------------------------------------------------- post filters
@@ -116,6 +118,64 @@ def test_blur_sigma_reaches_the_chain():
     chain = _blur_bg_chain(2, 540, 960, 12.5)
     assert "gblur=sigma=12.5" in chain
     assert "scale=540:960" in chain  # honours the declared (draft) canvas
+
+
+def test_blur_bg_background_branch_covers_the_full_canvas():
+    """The blurred background must cover+crop to the canvas so the blur
+    fills the entire frame edge to edge (never letterboxed)."""
+    chain = _blur_bg_chain(0, 1080, 1920, 40.0, zoom=0.5, dur=2.0)
+    # the background branch is between [bgr0] and [bg0]; split on [bg0] and
+    # take the part after the [bgr0] that follows the split=2[bgr0][fgr0]
+    bg = chain.split("[bg0]")[0].split("[fgr0];")[1]
+    assert "scale=1080:1920:force_original_aspect_ratio=increase" in bg
+    assert "crop=1080:1920:(iw-1080)/2:(ih-1920)/2" in bg
+
+
+def test_blur_bg_foreground_zooms_from_contain_to_cover():
+    """zoom>0: the foreground starts contain-fitted (whole panel visible)
+    and is pushed in until it covers the frame, reaching cover x (1+zoom)
+    on the last frame. Must be a per-frame animated scale, not a static fit."""
+    chain = _blur_bg_chain(0, 1080, 1920, 40.0, zoom=0.5, dur=2.0)
+    assert "eval=frame" in chain
+    # the static contain-fit is replaced by the animated expression
+    assert "force_original_aspect_ratio=decrease" not in chain
+    # t=0 term: contain-fit min(canvas/iw, canvas/ih)
+    assert "min(1080/iw,1920/ih)" in chain
+    # end term: cover x (1 + zoom)
+    assert "max(1080/iw,1920/ih)*(1+0.5)" in chain
+    # animates across the whole clip
+    assert "*t/2.000" in chain
+
+
+def test_blur_bg_zero_zoom_is_the_legacy_static_contain_fit():
+    chain = _blur_bg_chain(0, 1080, 1920, 40.0, zoom=0.0, dur=2.0)
+    assert "eval=frame" not in chain
+    assert "scale=1080:1920:force_original_aspect_ratio=decrease" in chain
+
+
+def test_blur_bg_zero_duration_falls_back_to_static():
+    """A degenerate clip must not build a division-by-t expression."""
+    chain = _blur_bg_chain(0, 1080, 1920, 40.0, zoom=0.5, dur=0.0)
+    assert "eval=frame" not in chain
+    assert "force_original_aspect_ratio=decrease" in chain
+
+
+def test_zoom_strength_reaches_the_blur_foreground():
+    tl = _tl(pan_kind="static")
+    cmd = build_command(tl, Path("out.mp4"),
+                        style=StyleConfig(zoom_strength=0.8))
+    assert "max(1080/iw,1920/ih)*(1+0.8)" in _fc(cmd)
+
+
+def test_zoom_strength_reaches_the_plain_zoom_path():
+    """With the blur OFF, the zoom_in kind must honour zoom_strength
+    instead of the old hardcoded 0.3."""
+    tl = _tl(pan_kind="zoom_in", travel=0)
+    cmd = build_command(tl, Path("out.mp4"),
+                        style=StyleConfig(blur_background=False, vignette=False,
+                                          zoom_strength=0.7))
+    expr = next(a for a in cmd if "scale=w=" in a)
+    assert "1080*(1+0.7" in expr and "1920*(1+0.7" in expr
 
 
 # ------------------------------------------------------------- build_command

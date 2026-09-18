@@ -9,7 +9,7 @@ import subprocess
 import sys
 from importlib.metadata import version
 
-PKGS = ["opencv-python-headless", "numpy", "pillow", "edge-tts", "moviepy",
+PKGS = ["opencv-python-headless", "numpy", "pillow", "kokoro-onnx", "moviepy",
         "imageio-ffmpeg", "pytesseract", "pydantic", "typer", "google-genai",
         "kokoro-onnx", "easyocr", "manga-ocr", "pytest"]
 

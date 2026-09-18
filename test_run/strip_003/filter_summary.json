@@ -1,0 +1,54 @@
+{
+  "filter_version": 4,
+  "input_file": "panels.json",
+  "input_mtime": 1789735771.9162216,
+  "input_size": 4365,
+  "out_file": "panels.json",
+  "strip_found": false,
+  "total": 3,
+  "kept": 3,
+  "context_only": 0,
+  "removed_blank": 0,
+  "rescued": 0,
+  "thresholds": {
+    "method": "fixed",
+    "n_panels": 3,
+    "text_color_threshold": 0.05,
+    "white_dominance_cutoff": 0.8,
+    "text_edge_floor": 0.003,
+    "is_bw_session": false
+  },
+  "decisions": [
+    {
+      "id": "001",
+      "decision": "keep",
+      "method": "padding_stripped",
+      "scores": {
+        "white_of_content": 0.17535,
+        "color_ratio": 0.69812,
+        "edge_density": 0.024289
+      }
+    },
+    {
+      "id": "004a",
+      "decision": "keep",
+      "method": "padding_stripped",
+      "scores": {
+        "white_of_content": 0.27297,
+        "color_ratio": 0.86186,
+        "edge_density": 0.014827
+      }
+    },
+    {
+      "id": "004b",
+      "decision": "keep",
+      "method": "padding_stripped",
+      "scores": {
+        "white_of_content": 0.90444,
+        "color_ratio": 0.23861,
+        "edge_density": 0.034449
+      }
+    }
+  ],
+  "filter_hash": "57f18287f08c"
+}

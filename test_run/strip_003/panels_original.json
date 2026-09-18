@@ -1,0 +1,141 @@
+{
+  "source": "003.webp",
+  "width": 800,
+  "height": 9455,
+  "plan_hash": "dedf737d089d8df3332f5d3ff3bf35ae3f9af444503844574ce33f900df7d73b",
+  "config": {
+    "tolerance": 80,
+    "max_panel_height": 1600,
+    "variance_threshold": 6.0,
+    "edge_threshold": 30.0,
+    "bubble_pad": 8,
+    "use_edge_density": true,
+    "min_gutter_run": 4,
+    "blur_sigma": 0.5,
+    "min_panel_height": 150,
+    "output_width": 390,
+    "min_output_height": 760,
+    "max_output_height": 800,
+    "normalize_output": true,
+    "preserve_boundaries": false,
+    "blank_detection": true,
+    "blank_preset": "conservative"
+  },
+  "panels": [
+    {
+      "id": "001",
+      "panel_index": 1,
+      "y_start": 0,
+      "y_end": 5120,
+      "narration": "Armored soldiers stand in formation while snow falls around them. A blond man in a dark fur-collared coat stands in a snowy setting with armored figures behind him. A figure stands amid heavy rain and speed lines.",
+      "dialogue": "!",
+      "panel_type": "single",
+      "confidence": 0.92,
+      "image_file": "panel_001.png",
+      "output_width": 800,
+      "output_height": 5120,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [
+        1,
+        2,
+        3
+      ],
+      "snap_distances": [
+        0,
+        0
+      ],
+      "snap_measured": [
+        false,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=6549.17",
+        "edge_density=63.32",
+        "entropy=4.97",
+        "color_spread=88.05",
+        "fg_ratio=0.4006"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "004a",
+      "panel_index": 4,
+      "y_start": 5120,
+      "y_end": 8228,
+      "narration": "Soldiers watch from behind as a figure raises a fist in a snowy, mountainous landscape. A dark object crashes through the night sky with a loud impact sound, followed by a character declaring their mission to take down the 8th floor's guardian. A character declares their mission to defeat the guardian of the 8th floor.",
+      "dialogue": "スッ 터커\n\nTODAY,\n\nWE'RE HERE TO DO THE UNPRECEDENTED. TO TAKE DOWN THE 8TH FLOOR'S GUARDIAN. WE'RE HERE TO DO THE UNPRECEDENTED. TO TAKE DOWN THE 8TH FLOOR'S GUARDIAN.",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_004a.png",
+      "output_width": 800,
+      "output_height": 3108,
+      "strip_width": null,
+      "split_of": "004",
+      "merged_with": [
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ],
+      "snap_measured": [
+        true,
+        false
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=6997.62",
+        "edge_density=33.56",
+        "entropy=4.55",
+        "color_spread=74.06",
+        "fg_ratio=0.3661"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "004b",
+      "panel_index": 4,
+      "y_start": 8228,
+      "y_end": 9455,
+      "narration": "Soldiers watch from behind as a figure raises a fist in a snowy, mountainous landscape. A dark object crashes through the night sky with a loud impact sound, followed by a character declaring their mission to take down the 8th floor's guardian. A character declares their mission to defeat the guardian of the 8th floor.",
+      "dialogue": "スッ 터커\n\nTODAY,\n\nWE'RE HERE TO DO THE UNPRECEDENTED. TO TAKE DOWN THE 8TH FLOOR'S GUARDIAN. WE'RE HERE TO DO THE UNPRECEDENTED. TO TAKE DOWN THE 8TH FLOOR'S GUARDIAN.",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_004b.png",
+      "output_width": 390,
+      "output_height": 760,
+      "strip_width": null,
+      "split_of": "004",
+      "merged_with": [
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        0
+      ],
+      "snap_measured": [
+        true,
+        false
+      ],
+      "blank_score": 0.192,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=1975.02",
+        "edge_density=41.52",
+        "entropy=1.23",
+        "color_spread=82.16",
+        "fg_ratio=0.062"
+      ],
+      "context_only": false
+    }
+  ],
+  "blank_detection_skipped": false
+}

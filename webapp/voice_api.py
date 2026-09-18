@@ -1,40 +1,66 @@
 # webapp/voice_api.py
-"""Narrator / voice studio support.
+"""Narrator / voice studio support (local Kokoro speech, offline).
 
 Per-session voice configuration is persisted to `<session>/voice.json` and
-merged (not clobbered) when a project is reopened.  Edge TTS exposes a live
-voice catalogue, so `list_voices` pulls it on demand.  Voice *previews* are
-synthesised to the session under `.previews/ui-<hash>.mp3` and content-hashed,
+merged (not clobbered) when a project is reopened. Kokoro voices are a
+fixed local catalogue (no network), so `list_voices` serves a static list.
+Voice *previews* are synthesised to the session under `.previews/ui-<hash>.mp3`
+(via webapp.tts_helpers: Kokoro WAV transcoded to MP3) and content-hashed,
 so re-previewing wins a cache hit and previews never accumulate.
 
-Rate/Pitch are native edge-tts values ("+0%", "+0Hz").  `speed` is a reserved
-multiplier for providers that expose it; edge maps speed onto rate, so the
-studio folds it into `rate` and does not pretend edge has an independent speed.
+Kokoro takes a `speed` multiplier (0.5-2.0) and a voice id (default
+af_heart). The legacy `rate`/`pitch` knobs are still accepted in stored
+configs for backward compatibility but are inert.
 """
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import hashlib
 import json
 import os
 from pathlib import Path
 
-import edge_tts
 from fastapi import HTTPException
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = Path(os.environ.get("RECAP_OUTPUT_DIR") or BASE_DIR / "webapp_output")
-PROVIDERS = ("edge", "none")
+PROVIDERS = ("kokoro", "none")
 
 DEFAULT_VOICE = {
-    "provider": "edge",
-    "voice": "en-US-AriaNeural",
-    "rate": 0,       # edge-tts rate offset in % (e.g. +8)
-    "pitch": 0,      # edge-tts pitch offset in Hz
-    "speed": 1.0,    # reserved multiplier (edge folds this into rate)
+    "provider": "kokoro",
+    "voice": "af_heart",
+    "rate": 0,       # legacy edge-tts knob: accepted, ignored by Kokoro
+    "pitch": 0,      # legacy edge-tts knob: accepted, ignored by Kokoro
+    "speed": 1.0,    # kokoro speed multiplier
     "style": "recap",
 }
+
+# Static Kokoro voice catalogue (Kokoro-82M voice pack: American/British
+# female/male). Served without any network call.
+KOKORO_VOICES = [
+    {"id": "af_heart", "shortname": "af_heart", "gender": "Female",
+     "locale": "en-US", "language": "en"},
+    {"id": "af_bella", "shortname": "af_bella", "gender": "Female",
+     "locale": "en-US", "language": "en"},
+    {"id": "af_nicole", "shortname": "af_nicole", "gender": "Female",
+     "locale": "en-US", "language": "en"},
+    {"id": "af_sarah", "shortname": "af_sarah", "gender": "Female",
+     "locale": "en-US", "language": "en"},
+    {"id": "af_sky", "shortname": "af_sky", "gender": "Female",
+     "locale": "en-US", "language": "en"},
+    {"id": "am_adam", "shortname": "am_adam", "gender": "Male",
+     "locale": "en-US", "language": "en"},
+    {"id": "am_michael", "shortname": "am_michael", "gender": "Male",
+     "locale": "en-US", "language": "en"},
+    {"id": "bf_emma", "shortname": "bf_emma", "gender": "Female",
+     "locale": "en-GB", "language": "en"},
+    {"id": "bf_isabella", "shortname": "bf_isabella", "gender": "Female",
+     "locale": "en-GB", "language": "en"},
+    {"id": "bm_george", "shortname": "bm_george", "gender": "Male",
+     "locale": "en-GB", "language": "en"},
+    {"id": "bm_lewis", "shortname": "bm_lewis", "gender": "Male",
+     "locale": "en-GB", "language": "en"},
+]
 
 SAMPLE_TEXT = ("The protagonist suddenly realizes something is wrong. "
                "The city will never be the same again.")
@@ -59,7 +85,7 @@ def _session_dir(session: str, *, create: bool = False) -> Path:
 def _coerce_voice_value(k: str, v) -> object:
     """Validate/coerce one voice config value. A string rate/pitch/speed
     in voice.json or a request body must not raise a raw 500 deep in
-    _rate_args — coerce valid numeric strings, 400 anything else."""
+    synthesis — coerce valid numeric strings, 400 anything else."""
     if k == "provider":
         if v not in PROVIDERS:
             raise HTTPException(400, f"unknown provider {v!r}")
@@ -107,6 +133,12 @@ def get_voice(session: str) -> dict:
                 if k in loaded:
                     with contextlib.suppress(HTTPException):
                         cfg[k] = _coerce_voice_value(k, loaded[k])
+    # Migrate legacy cloud providers to local Kokoro on read (never persist
+    # here; put_voice normalizes on the next save).
+    if cfg.get("provider") not in PROVIDERS:
+        cfg["provider"] = "kokoro"
+    if not (cfg.get("voice") or "").strip():
+        cfg["voice"] = DEFAULT_VOICE["voice"]
     return cfg
 
 
@@ -133,73 +165,43 @@ def put_voice(session: str, cfg: dict) -> dict:
     return cur
 
 
-async def list_voices(provider: str = "edge") -> dict:
-    if provider != "edge":
+async def list_voices(provider: str = "kokoro") -> dict:
+    if provider != "kokoro":
         raise HTTPException(400, f"provider {provider!r} exposes no catalogue")
-    try:
-        raw = await edge_tts.list_voices()
-    except Exception as exc:  # network / auth
-        raise HTTPException(503, f"could not fetch voice list: {exc}") from exc
-    voices = [{
-        "id": v["Name"],
-        "shortname": v.get("ShortName", ""),
-        "gender": v.get("Gender", ""),
-        "locale": v.get("Locale", ""),
-        "language": v.get("Language", ""),
-    } for v in raw]
-    voices.sort(key=lambda v: (v["language"], v["shortname"]))
+    voices = sorted(KOKORO_VOICES,
+                    key=lambda v: (v["language"], v["shortname"]))
     return {"provider": provider, "count": len(voices), "voices": voices}
 
 
-def _rate_args(cfg: dict) -> dict:
-    """Map the studio config onto edge-tts rate/pitch strings. Values come
-    from put_voice-validated storage, but preview bodies pass cfg directly
-    — coerce here too so a bad type can never raise a raw 500."""
+def _speed_value(cfg: dict) -> float:
+    """Kokoro speed multiplier from a studio config (clamped)."""
     try:
-        rate = int(float(cfg.get("rate", 0) or 0))
         speed = float(cfg.get("speed", 1.0) or 1.0)
-        pitch = int(float(cfg.get("pitch", 0) or 0))
     except (TypeError, ValueError):
-        raise HTTPException(400, "rate/pitch/speed must be numbers") from None
-    rate = max(-100, min(100, rate))
-    speed = max(0.5, min(2.0, speed))
-    pitch = max(-100, min(100, pitch))
-    # edge has a single speech-rate control; fold the speed multiplier in
-    # as a percentage offset so speed=1.0 is neutral (rate*speed would be
-    # stuck at 0% whenever rate is 0).
-    combined = rate + round((speed - 1.0) * 100)
-    return {"rate": f"+{combined}%" if combined >= 0 else f"{combined}%",
-            "pitch": f"+{pitch}Hz" if pitch >= 0 else f"{pitch}Hz"}
+        raise HTTPException(400, "speed must be a number") from None
+    return max(0.5, min(2.0, round(speed, 2)))
 
 
 async def _preview_mp3(session: str, cfg: dict, text: str) -> Path:
+    from . import tts_helpers
+
     d = _session_dir(session, create=True)
     pre = d / ".previews"
     pre.mkdir(exist_ok=True)
+    voice = (cfg.get("voice") or DEFAULT_VOICE["voice"]).strip()
+    speed = _speed_value(cfg)
+    text = (text or "").strip() or SAMPLE_TEXT
     key = hashlib.sha1(
-        f"{cfg.get('voice')}|{text}|{cfg.get('rate')}|{cfg.get('pitch')}|{cfg.get('speed')}".encode()
+        f"kokoro|{voice}|{speed}|{text}".encode()
     ).hexdigest()[:16]
     out = pre / f"ui-{key}.mp3"
     if out.is_file():
         return out
-    rate_cfg = _rate_args(cfg)
-    voice = cfg.get("voice") or DEFAULT_VOICE["voice"]
     try:
-        text = text.strip() or SAMPLE_TEXT
-        import edge_tts as et
-        comm = et.Communicate(text, voice=voice,
-                              rate=rate_cfg["rate"], pitch=rate_cfg["pitch"],
-                              boundary="WordBoundary")
-        audio = bytearray()
-        async def _pull():
-            async for msg in comm.stream():
-                if msg["type"] == "audio":
-                    audio.extend(msg["data"])
-        await asyncio.wait_for(_pull(), timeout=45)
-        if not audio:
-            raise RuntimeError("no audio for this voice/text")
-        out.with_suffix(".tmp").write_bytes(bytes(audio))
-        out.with_suffix(".tmp").replace(out)
+        # tts_helpers resolves Kokoro weights (or raises with fetch
+        # instructions).
+        await tts_helpers.synth_one(text, voice, out, speed=speed,
+                                    timeout_s=180)
     except Exception as exc:
         raise HTTPException(502, f"preview synthesis failed: {exc}") from exc
     # prune old previews (keep newest 30 by mtime)
@@ -211,8 +213,8 @@ async def _preview_mp3(session: str, cfg: dict, text: str) -> Path:
 
 
 async def make_preview(session: str, cfg: dict, text: str) -> dict:
-    if (cfg.get("provider") or "edge") == "none":
+    if (cfg.get("provider") or "kokoro") == "none":
         raise HTTPException(400, "no voice preview for provider='none'")
     pre = await _preview_mp3(session, cfg, text)
     return {"session": session, "url": f"/api/jobs/{session}/files/.previews/{pre.name}",
-            "voice": cfg.get("voice"), "rate_cfg": _rate_args(cfg)}
+            "voice": cfg.get("voice"), "speed": _speed_value(cfg)}

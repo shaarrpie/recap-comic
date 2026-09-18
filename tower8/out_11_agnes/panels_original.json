@@ -1,0 +1,65 @@
+{
+  "source": "strip_11.webp",
+  "width": 800,
+  "height": 5600,
+  "plan_hash": "59073f834db16169c69b87fe81f1ea04d44c46f3e89a5a3373bc85db83e7f69b",
+  "config": {
+    "tolerance": 80,
+    "max_panel_height": 1600,
+    "variance_threshold": 6.0,
+    "edge_threshold": 30.0,
+    "bubble_pad": 8,
+    "use_edge_density": true,
+    "min_gutter_run": 4,
+    "blur_sigma": 0.5,
+    "min_panel_height": 150,
+    "output_width": 390,
+    "min_output_height": 760,
+    "max_output_height": 800,
+    "normalize_output": true,
+    "preserve_boundaries": false,
+    "blank_detection": true,
+    "blank_preset": "conservative"
+  },
+  "panels": [
+    {
+      "id": "001",
+      "panel_index": 1,
+      "y_start": 0,
+      "y_end": 5600,
+      "narration": "A character looks up at a towering dark figure wreathed in lightning, with small dragon-like creatures at their feet. A swordsman in dark clothing faces a massive ice dragon creature in a dramatic battle scene. Armored figures clash amid lightning and debris in a frozen battlefield.",
+      "dialogue": "WHAT ARE YOU TALKING ABOUT...? 까악 까악",
+      "panel_type": "tall_scenic",
+      "confidence": 0.88,
+      "image_file": "panel_001.png",
+      "output_width": 800,
+      "output_height": 5600,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [
+        1,
+        2,
+        3
+      ],
+      "snap_distances": [
+        0,
+        0
+      ],
+      "snap_measured": [
+        false,
+        false
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=3733.04",
+        "edge_density=41.88",
+        "entropy=5.4",
+        "color_spread=67.52",
+        "fg_ratio=0.5054"
+      ],
+      "context_only": false
+    }
+  ],
+  "blank_detection_skipped": false
+}

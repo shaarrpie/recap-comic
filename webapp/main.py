@@ -113,13 +113,11 @@ _last_config_state: dict | None = None
 
 
 def _default_backend() -> str:
-    """Return the backend for uploads: 'xkiro' (Qwen+Mistral) if any AI
+    """Return the backend for uploads: 'agnes' (Agnes AI) if an AI
     key is configured, else 'none' (offline deterministic CV only)."""
-    if (os.environ.get("XKIRO_API_KEY", "").strip()
-            or os.environ.get("XKIRO_API_KEYS", "").strip()
-            or os.environ.get("GEMINI_API_KEYS", "").strip()
-            or os.environ.get("GEMINI_API_KEY", "").strip()):
-        return "xkiro"
+    from adapters import ai_models as _ai
+    if _ai.api_key_from_env():
+        return "agnes"
     return "none"
 
 
@@ -134,8 +132,8 @@ async def index():
 SETTINGS_FIELDS = ("backend", "model", "api_key", "endpoint", "cf_account_id",
                    "tts", "voice", "style", "mode")
 _SETTINGS_DEFAULTS = {
-    "backend": "xkiro", "model": "", "api_key": "", "endpoint": "",
-    "cf_account_id": "", "tts": "edge", "voice": "en-US-AriaNeural",
+    "backend": "agnes", "model": "", "api_key": "", "endpoint": "",
+    "cf_account_id": "", "tts": "kokoro", "voice": "af_heart",
     "style": "recap", "mode": "automation",
 }
 
@@ -178,13 +176,13 @@ def _settings_api_key() -> str:
 
 
 class SettingsBody(BaseModel):
-    backend: str = "xkiro"
+    backend: str = "agnes"
     model: str = ""
     api_key: str = ""
     endpoint: str = ""
     cf_account_id: str = ""
-    tts: str = "edge"
-    voice: str = "en-US-AriaNeural"
+    tts: str = "kokoro"
+    voice: str = "af_heart"
     style: str = "recap"
     mode: str = "automation"
 
@@ -220,20 +218,16 @@ async def settings_post(body: SettingsBody):
 @app.get("/api/config")
 async def config():
     global _last_config_state
-    key_src = os.environ.get("GEMINI_API_KEYS", "").strip()
-    single_key = os.environ.get("GEMINI_API_KEY", "").strip()
-    xkiro_key = (os.environ.get("XKIRO_API_KEY", "").strip()
-                 or os.environ.get("XKIRO_API_KEYS", "").strip())
-    configured = bool(key_src or single_key or xkiro_key)
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     from adapters import ai_models as _ai
+    configured = bool(_ai.api_key_from_env())
+    model = os.environ.get("AGNES_PRIMARY_MODEL", _ai.PRIMARY_MODEL)
     state = {"gemini_configured": configured, "model": model,
              "ai_configured": configured,
              "primary_model": _ai.PRIMARY_MODEL,
              "fallback_model": _ai.FALLBACK_MODEL,
-             "backend": "xkiro" if configured else "none"}
+             "backend": "agnes" if configured else "none"}
     if state != _last_config_state:
-        log.info("config check gemini_configured=%s model=%s",
+        log.info("config check ai_configured=%s model=%s",
                  configured, model)
         _last_config_state = state
     return state
@@ -365,14 +359,14 @@ async def upload(file: UploadFile = File(...), run: int = 0):  # noqa: B008
 class RunRequest(BaseModel):
     session: str
     order: list[str] | None = None
-    tts: str = "edge"
-    voice: str = "en-US-AriaNeural"
-    rate: int = 0    # edge-tts rate offset in %
-    pitch: int = 0   # edge-tts pitch offset in Hz
+    tts: str = "kokoro"
+    voice: str = "af_heart"
+    rate: int = 0    # legacy knob (ignored by Kokoro)
+    pitch: int = 0   # legacy knob (ignored by Kokoro)
     style: str = "recap"
-    # CLI parity: guided run defaults to xkiro (Qwen+Mistral). "none" is
+    # CLI parity: guided run defaults to agnes (Agnes AI). "none" is
     # offline deterministic CV only. Empty string means "use saved settings".
-    backend: str = "xkiro"
+    backend: str = "agnes"
     api_key: str = ""
     model: str = ""
     endpoint: str = ""
@@ -459,18 +453,14 @@ async def run(body: RunRequest):
     saved = _read_settings()
     backend = (body.backend or "").strip() or saved.get("backend", "") or _default_backend()
     backend = backend.lower()
-    if backend == "local":
-        backend = "ollama"
+    # Legacy provider names resolve to Agnes (sole provider) so old
+    # clients and saved settings keep working.
+    if backend in ("xkiro", "qwen", "mistral", "gemini", "openai",
+                   "anthropic", "local", "ollama", "cloudflare"):
+        backend = "agnes"
     model = (body.model or "").strip() or saved.get("model", "")
     endpoint = (body.endpoint or "").strip() or saved.get("endpoint", "")
     cf_account_id = (body.cf_account_id or "").strip() or saved.get("cf_account_id", "")
-    # Frontend may still send legacy "gemini" default with no key while the
-    # server has an xkiro key configured (CLI .env flow). Prefer the working
-    # backend over a guaranteed validate_config failure.
-    if backend == "gemini" and not (body.api_key or saved.get("api_key", "").strip()):
-        from adapters import ai_models as _ai
-        if _ai.api_key_from_env():
-            backend = _default_backend()
     job = store.create("generate", {
         "session": session,
         "strip_file": strip_file,
@@ -669,26 +659,23 @@ async def manual_crop_strip(session: str):
 # dynamic /api/voice/{session} route, or "preview" is captured as a session
 # id and the request 400s.
 @app.get("/api/voice/preview")
-async def voice_preview(voice: str, rate: str = "+0%", pitch: str = "+0Hz",
+async def voice_preview(voice: str = "af_heart", speed: float = 1.0,
                         text: str = "This is how your recap will sound."):
     import contextlib
     import hashlib
 
     from . import tts_helpers
 
-    # The cache key MUST hash exactly the text that gets synthesized: the
-    # old key hashed text[:80] while synth received text[:160], so two
-    # prompts identical for the first 80 chars shared one cache file and
-    # the FIRST one's audio was served for both.
+    # The cache key MUST hash exactly the text that gets synthesized.
     snippet = text[:160]
-    key = hashlib.sha1(f"{voice}|{rate}|{pitch}|{snippet}".encode()).hexdigest()[:12]
+    key = hashlib.sha1(f"kokoro|{voice}|{speed}|{snippet}".encode()).hexdigest()[:12]
     cache = BASE_DIR / ".cache" / "voice_preview"
     cache.mkdir(parents=True, exist_ok=True)
     out = cache / f"{key}.mp3"
     if not out.is_file():
         try:
             await tts_helpers.synth_one(snippet, voice, out,
-                                        rate=rate, pitch=pitch, timeout_s=20)
+                                        speed=speed, timeout_s=180)
         except Exception as exc:
             raise HTTPException(502, f"preview failed: {exc}") from exc
         # Keep the preview cache bounded (matches voice_api._preview_mp3):
@@ -712,7 +699,7 @@ async def voice_put(session: str, body: dict):
 
 
 @app.get("/api/voices")
-async def voices_list(provider: str = "edge"):
+async def voices_list(provider: str = "kokoro"):
     return await _voice_api.list_voices(provider)
 
 
@@ -779,7 +766,7 @@ class NarrGenAllBody(BaseModel):
 
 @app.post("/api/narration/{session}/generate")
 async def narration_generate_all(session: str, body: NarrGenAllBody):
-    """START button for post-crop AI narration (Qwen -> Mistral fallback).
+    """START button for post-crop AI narration (Agnes primary -> fallback).
 
     Cropping itself needs no AI (deterministic blank-row cut); this fills
     narration/dialogue for the already-cropped panel PNGs. Runs as a
@@ -986,10 +973,10 @@ class StepRunRequest(BaseModel):
     stage: str | None = None          # single stage name (Run Next Step)
     from_stage: str | None = None      # Run Until: start (default: next)
     until_stage: str | None = None     # Run Until: stop after this stage
-    tts: str = "edge"
-    voice: str = "en-US-AriaNeural"
+    tts: str = "kokoro"
+    voice: str = "af_heart"
     style: str = "recap"
-    backend: str = "xkiro"
+    backend: str = "agnes"
     api_key: str = ""
     model: str = ""
     endpoint: str = ""
@@ -1086,14 +1073,16 @@ def _resolve_step_config(body: StepRunRequest) -> dict:
     """Merge step request with saved Settings (CLI parity).
 
     Empty backend/model/endpoint fall back to server settings.json, then to
-    the xkiro default. The frontend always sends explicit values, but direct
-    API calls and older browsers may omit them.
+    the agnes default. The frontend always sends explicit values, but direct
+    API calls and older browsers may omit them. Legacy provider names map
+    to Agnes (sole provider).
     """
     saved = _read_settings()
     backend = (body.backend or "").strip() or saved.get("backend", "") or _default_backend()
     backend = backend.lower()
-    if backend == "local":
-        backend = "ollama"
+    if backend in ("xkiro", "qwen", "mistral", "gemini", "openai",
+                   "anthropic", "local", "ollama", "cloudflare"):
+        backend = "agnes"
     return {
         "backend": backend,
         "model": (body.model or "").strip() or saved.get("model", ""),

@@ -3,10 +3,8 @@
 
 Contract: manual webapp key (webapp_output/settings.json "api_key")
 wins over .env / env-var keys; explicit caller key wins over everything.
-The chain after the manual key: XKIRO_API_KEY, XKIRO_API_KEYS (pool,
-first), GEMINI_API_KEYS (pool, first), GEMINI_API_KEY. OpenAI /
-Anthropic backends in strip_analyzer fall back to the manual key when
-their env vars are unset. Key values must never be logged.
+The chain after the manual key: AGNES_API_KEY, AGNES_API_KEYS (pool,
+first). Agnes is the sole AI provider. Key values must never be logged.
 """
 from __future__ import annotations
 
@@ -21,10 +19,7 @@ from adapters import ai_models as ai
 @pytest.fixture()
 def clean_env(monkeypatch: pytest.MonkeyPatch):
     """No key env vars, no manual settings file influence."""
-    for var in ("XKIRO_API_KEY", "XKIRO_API_KEYS",
-                "GEMINI_API_KEYS", "GEMINI_API_KEY",
-                "OPENAI_API_KEY", "ANTHROPIC_API_KEY",
-                "XKIRO_ALLOW_GEMINI_KEY"):
+    for var in ("AGNES_API_KEY", "AGNES_API_KEYS"):
         monkeypatch.delenv(var, raising=False)
     yield monkeypatch
 
@@ -48,66 +43,33 @@ def fake_settings(tmp_path, monkeypatch: pytest.MonkeyPatch):
 
 def test_explicit_param_beats_everything(clean_env, fake_settings) -> None:
     fake_settings({"api_key": "manual"})
-    clean_env.setenv("XKIRO_API_KEY", "env-key")
+    clean_env.setenv("AGNES_API_KEY", "env-key")
     assert ai.api_key_from_env("explicit-key") == "explicit-key"
 
 
 def test_manual_key_wins_over_env(clean_env, fake_settings) -> None:
     fake_settings({"api_key": "from-settings-json"})
-    clean_env.setenv("XKIRO_API_KEY", "from-env")
-    clean_env.setenv("OPENAI_API_KEY", "from-env-openai")
+    clean_env.setenv("AGNES_API_KEY", "from-env")
     assert ai.api_key_from_env() == "from-settings-json"
 
 
 def test_env_used_when_no_manual_key(clean_env, fake_settings) -> None:
     fake_settings(None)
-    clean_env.setenv("XKIRO_API_KEY", "xkiro-env")
-    assert ai.api_key_from_env() == "xkiro-env"
+    clean_env.setenv("AGNES_API_KEY", "agnes-env")
+    assert ai.api_key_from_env() == "agnes-env"
 
 
-def test_xkiro_pool_first_entry_taken(clean_env, fake_settings) -> None:
+def test_agnes_pool_first_entry_taken(clean_env, fake_settings) -> None:
     fake_settings(None)
-    clean_env.setenv("XKIRO_API_KEYS", "k1, k2 ,k3")
+    clean_env.setenv("AGNES_API_KEYS", "k1, k2 ,k3")
     assert ai.api_key_from_env() == "k1"
 
 
-def test_gemini_key_not_used_against_proxy_by_default(clean_env, fake_settings) -> None:
-    """A GEMINI_* key must NOT be sent to the third-party proxy by default.
-
-    api_key_from_env() returns None (rather than silently forwarding the
-    Google credential to api.xkiro.com) unless the caller opts in.
-    """
+def test_single_key_beats_pool(clean_env, fake_settings) -> None:
     fake_settings(None)
-    clean_env.setenv("GEMINI_API_KEYS", "g1,g2")
-    assert ai.api_key_from_env() is None
-    clean_env.delenv("GEMINI_API_KEYS")
-    clean_env.setenv("GEMINI_API_KEY", "g-single")
-    assert ai.api_key_from_env() is None
-
-
-def test_gemini_key_used_against_proxy_when_opted_in(clean_env, fake_settings) -> None:
-    """XKIRO_ALLOW_GEMINI_KEY=1 opts in to forwarding a GEMINI_* key."""
-    fake_settings(None)
-    clean_env.setenv("GEMINI_API_KEY", "g-single")
-    clean_env.setenv("XKIRO_ALLOW_GEMINI_KEY", "1")
-    assert ai.api_key_from_env() == "g-single"
-
-
-def test_gemini_pool_and_single_key_in_chain(clean_env, fake_settings) -> None:
-    fake_settings(None)
-    clean_env.setenv("GEMINI_API_KEYS", "g1,g2")
-    clean_env.setenv("XKIRO_ALLOW_GEMINI_KEY", "1")
-    assert ai.api_key_from_env() == "g1"
-    clean_env.delenv("GEMINI_API_KEYS")
-    clean_env.setenv("GEMINI_API_KEY", "g-single")
-    assert ai.api_key_from_env() == "g-single"
-
-
-def test_chain_order_xkiro_before_gemini(clean_env, fake_settings) -> None:
-    fake_settings(None)
-    clean_env.setenv("XKIRO_API_KEYS", "xk")
-    clean_env.setenv("GEMINI_API_KEY", "gm")
-    assert ai.api_key_from_env() == "xk"
+    clean_env.setenv("AGNES_API_KEY", "single")
+    clean_env.setenv("AGNES_API_KEYS", "pool1,pool2")
+    assert ai.api_key_from_env() == "single"
 
 
 def test_no_key_returns_none(clean_env, fake_settings) -> None:
@@ -117,7 +79,7 @@ def test_no_key_returns_none(clean_env, fake_settings) -> None:
 
 def test_malformed_settings_json_is_tolerated(clean_env, fake_settings) -> None:
     (ai.OUTPUT_DIR / "settings.json").write_text("{not json", "utf-8")
-    clean_env.setenv("XKIRO_API_KEY", "env-fallback")
+    clean_env.setenv("AGNES_API_KEY", "env-fallback")
     assert ai.api_key_from_env() == "env-fallback"
 
 
@@ -135,32 +97,35 @@ def test_require_api_key_error_mentions_chain(clean_env, fake_settings) -> None:
     with pytest.raises(RuntimeError) as ei:
         ai.require_api_key()
     msg = str(ei.value)
-    assert "XKIRO_API_KEY" in msg and "GEMINI_API_KEY" in msg
+    assert "AGNES_API_KEY" in msg
 
 
-def test_openai_backend_falls_back_to_manual_key(
+def test_agnes_backend_explicit_key_wins(
         clean_env, fake_settings) -> None:
     import strip_analyzer as sa
-    fake_settings({"api_key": "manual-openai"})
-    b = sa.OpenAIVisionBackend(model="gpt-4o-mini")
-    assert b._api_key == "manual-openai"
+    fake_settings({"api_key": "manual-agnes"})
+    clean_env.setenv("AGNES_API_KEY", "env-agnes")
+    b = sa.AgnesVisionBackend(api_key="explicit-agnes",
+                              request_fn=lambda *a: ("{}", None))
+    assert b._api_key == "explicit-agnes"
 
 
-def test_openai_backend_env_beats_manual_key(
+def test_agnes_backend_falls_back_to_manual_key(
         clean_env, fake_settings) -> None:
     import strip_analyzer as sa
-    fake_settings({"api_key": "manual-openai"})
-    clean_env.setenv("OPENAI_API_KEY", "env-openai")
-    b = sa.OpenAIVisionBackend(model="gpt-4o-mini")
-    assert b._api_key == "env-openai"
+    fake_settings({"api_key": "manual-agnes"})
+    b = sa.AgnesVisionBackend(request_fn=lambda *a: ("{}", None))
+    assert b._api_key == "manual-agnes"
 
 
-def test_anthropic_backend_falls_back_to_manual_key(
+def test_agnes_backend_manual_beats_env(
         clean_env, fake_settings) -> None:
     import strip_analyzer as sa
-    fake_settings({"api_key": "manual-anthropic"})
-    b = sa.AnthropicVisionBackend(model="claude-3-5-sonnet-latest")
-    assert b._api_key == "manual-anthropic"
+    fake_settings({"api_key": "manual-agnes"})
+    clean_env.setenv("AGNES_API_KEY", "env-agnes")
+    # NOTE: manual settings key wins over env by contract.
+    b = sa.AgnesVisionBackend(request_fn=lambda *a: ("{}", None))
+    assert b._api_key == "manual-agnes"
 
 
 def test_key_never_logged(caplog: pytest.LogCaptureFixture,
@@ -169,3 +134,44 @@ def test_key_never_logged(caplog: pytest.LogCaptureFixture,
     with caplog.at_level(logging.DEBUG, logger="adapters.ai_models"):
         ai.api_key_from_env()
     assert "secret-manual-key" not in caplog.text
+
+
+def test_api_key_pool_explicit_wins_alone(clean_env, fake_settings) -> None:
+    fake_settings({"api_key": "manual"})
+    clean_env.setenv("AGNES_API_KEY", "env-key")
+    clean_env.setenv("AGNES_API_KEYS", "p1,p2")
+    assert ai.api_key_pool("explicit-key") == ["explicit-key"]
+
+
+def test_api_key_pool_order_and_dedupe(clean_env, fake_settings) -> None:
+    fake_settings({"api_key": "manual"})
+    clean_env.setenv("AGNES_API_KEY", "single")
+    clean_env.setenv("AGNES_API_KEYS", "single, p1, manual, p2, p1")
+    assert ai.api_key_pool() == ["manual", "single", "p1", "p2"]
+
+
+def test_api_key_pool_empty(clean_env, fake_settings) -> None:
+    fake_settings(None)
+    assert ai.api_key_pool() == []
+
+
+def test_pool_start_index_round_robins() -> None:
+    ai._pool_cursor = 0
+    assert [ai.pool_start_index(3) for _ in range(4)] == [0, 1, 2, 0]
+    assert ai.pool_start_index(1) == 0
+
+
+def test_is_rate_limit_error() -> None:
+    assert ai.is_rate_limit_error(None) is False
+    assert ai.is_rate_limit_error(ValueError("429 Too Many Requests")) is True
+    assert ai.is_rate_limit_error(
+        RuntimeError("rate_limit_exceeded, retry later")) is True
+    assert ai.is_rate_limit_error(
+        RuntimeError("RESOURCE_EXHAUSTED quota hit")) is True
+    assert ai.is_rate_limit_error(ValueError("invalid JSON")) is False
+    wrapped = ai.AIFallbackError(
+        "op", ValueError("429 boom"), ValueError("other"))
+    assert ai.is_rate_limit_error(wrapped) is True
+    wrapped_ok = ai.AIFallbackError(
+        "op", ValueError("bad json"), ValueError("empty"))
+    assert ai.is_rate_limit_error(wrapped_ok) is False

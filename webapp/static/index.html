@@ -512,7 +512,7 @@ cinematic
       <button class="proj" id="projBtn" title="Current session">no session</button>
       <span class="pill" id="statusPill" data-status="idle"><span class="dot"></span><span id="statusTxt">idle</span></span>
       <span class="spacer"></span>
-      <span class="gbadge" id="gBadge" title="Gemini configuration (from /api/config)">gemini: …</span>
+      <span class="gbadge" id="gBadge" title="AI configuration (from /api/config)">AI: …</span>
       <button class="btn acc" id="ctxBtn" style="display:none">Run Automation</button>
     </header>
     <main id="view" aria-live="polite"></main>
@@ -603,7 +603,7 @@ const api={
   narrGenerateAll:(s)=>req(`/api/narration/${s}/generate`,jbody({api_key:store.settings.api_key,model:store.settings.model})),
   voiceGet:    s=>req(`/api/voice/${s}`),
   voicePut:    (s,cfg)=>req(`/api/voice/${s}`,jbody(cfg)),
-  voiceList:   p=>req(`/api/voices?provider=${encodeURIComponent(p||"edge")}`),
+  voiceList:   p=>req(`/api/voices?provider=${encodeURIComponent(p||"kokoro")}`),
   voicePreview:(s,cfg,text)=>req(`/api/voice/${s}/preview`,jbody({cfg,text})),
   /* Step-by-Step pipeline / checkpoints */
   pipeState:   s=>req(`/api/pipeline/${s}`),
@@ -619,13 +619,13 @@ const api={
 /* ---------------- store (persisted) ---------------- */
 const store=Object.assign({
   session:null, recent:[], order:{}, genJob:{}, names:{}, queue:[],
-  settings:{backend:"xkiro",model:"",tts:"edge",voice:"en-US-AriaNeural",style:"recap",
+  settings:{backend:"agnes",model:"",tts:"kokoro",voice:"af_heart",style:"recap",
             api_key:"",endpoint:"",cf_account_id:"",mode:"automation"}
 }, JSON.parse(localStorage.getItem("rc.studio.v1")||"{}"));
 const save=()=>localStorage.setItem("rc.studio.v1",JSON.stringify(store));
-// CLI parity: older browsers may have persisted backend=gemini from before
-// xkiro became the default. Migrate once so automation uses the working key.
-if(store.settings&&store.settings.backend==="gemini"){store.settings.backend="xkiro";save();}
+// CLI parity: older browsers may have persisted a legacy backend from before
+// agnes became the sole provider. Migrate once so automation uses it.
+if(store.settings&&["gemini","xkiro","qwen","mistral","openai","anthropic","ollama","local","cloudflare"].includes(store.settings.backend)){store.settings.backend="agnes";save();}
 /* pipeline stages — the real spine from webapp/pipeline.py (generate) */
 const STAGES=[
   ["validate_config","Check config"],["load_images","Load images"],
@@ -987,7 +987,7 @@ async function vStudio(){
     const ok=c.ai_configured||c.gemini_configured;
     $("#stG").textContent=ok?"✓":"—";
     $("#stG").style.color=ok?"var(--acc)":"var(--coral)";
-    $("#sysModel").textContent=ok?`Active backend: ${c.backend||"xkiro"}`:"No AI key configured — add one in Settings or .env.";
+    $("#sysModel").textContent=ok?`Active backend: ${c.backend||"agnes"}`:"No AI key configured — add one in Settings or .env.";
     const b=$("#gBadge");b.textContent=`AI: ${ok?(c.backend||c.model):"not set"}`;b.classList.toggle("ok",!!ok);
   }).catch(()=>{});
   /* dropzone wiring */
@@ -1866,7 +1866,7 @@ async function vNarrate(session){
     <div style="display:flex;gap:8px;align-items:center">
       <label class="field" style="flex-direction:row;align-items:center;gap:8px"><span class="lbl">style</span>
         <select id="nrStyle">${["recap","literal"].map(s=>`<option ${s===NR.data.style?"selected":""}>${s}</option>`).join("")}</select></label>
-      <button class="btn" id="nrRunAI" title="AI narration for the already-cropped panels (Qwen, Mistral fallback). Cropping is never touched.">Generate narration (AI)</button>
+      <button class="btn" id="nrRunAI" title="AI narration for the already-cropped panels (Agnes fallback). Cropping is never touched.">Generate narration (AI)</button>
       <button class="btn acc" id="nrToVoice">Narrator Studio →</button>
     </div>
   </div>
@@ -1919,7 +1919,7 @@ function drawNrPanel(){
     <div class="auto" style="margin-top:6px">AI wrote: <b>${esc(p.ai_text)||"—"}</b></div>
     <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
       <button class="btn acc sm" id="nrSave">Save</button>
-      <button class="btn sm" id="nrRegen" title="Rewrite with Gemini (needs API key)">↻ Regenerate</button>
+      <button class="btn sm" id="nrRegen" title="Rewrite with AI (needs API key)">↻ Regenerate</button>
       <button class="btn ghost sm" id="nrReset" ${p.edited?"":"disabled"}>↺ Restore AI text</button>
     </div>`;
   const save=async()=>{
@@ -1952,9 +1952,9 @@ async function vVoice(session){
   <div class="vs-grid">
     <section class="panel lift">
       <div class="field"><span class="lbl">provider</span>
-        <select id="vsProvider"><option value="edge">Edge TTS</option><option value="none">None (silent)</option></select></div>
+        <select id="vsProvider"><option value="kokoro">Kokoro (offline)</option><option value="none">None (silent)</option></select></div>
       <div class="field" style="margin-top:12px"><span class="lbl">voice <span id="vsCount"></span></span>
-        <input id="vsSearch" placeholder="search voices (e.g. Aria, en-US)…" style="margin-bottom:6px">
+        <input id="vsSearch" placeholder="search voices (e.g. heart, en-US)…" style="margin-bottom:6px">
         <select id="vsVoice" size="9" style="min-height:190px"></select></div>
       <div class="field" style="margin-top:12px"><span class="lbl">rate <b id="vsRateV" style="color:var(--acc)">+0%</b></span>
         <input type="range" id="vsRate" min="-50" max="50" step="1" value="0"></div>
@@ -1962,7 +1962,7 @@ async function vVoice(session){
         <input type="range" id="vsPitch" min="-50" max="50" step="1" value="0"></div>
       <div class="field" style="margin-top:12px"><span class="lbl">speed <b id="vsSpeedV" style="color:var(--acc)">1.0×</b></span>
         <input type="range" id="vsSpeed" min="0.5" max="1.6" step="0.05" value="1">
-        <p class="auto">Edge TTS has one speech-rate control — speed is folded into rate on synth.</p></div>
+        <p class="auto">Kokoro is fully offline — only voice + speed apply (rate/pitch are kept but ignored).</p></div>
       <div class="lbl" style="margin-top:16px">presets</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px" id="vsPresets">
         ${VOICE_PRESETS.map(p=>`<button class="btn sm" data-preset="${p[0]}">${p[0]}</button>`).join("")}
@@ -1994,7 +1994,7 @@ async function vVoice(session){
   $("#vsBack").onclick=()=>nav("narrate",session);
   $("#vsNext").onclick=()=>nav("generate",session);
   const paint=()=>{
-    $v("#vsProvider").value=VS.cfg.provider||"edge";
+    $v("#vsProvider").value=VS.cfg.provider||"kokoro";
     $v("#vsRate").value=VS.cfg.rate??0; $v("#vsPitch").value=VS.cfg.pitch??0; $v("#vsSpeed").value=VS.cfg.speed??1;
     $v("#vsRateV").textContent=(VS.cfg.rate>=0?"+":"")+(VS.cfg.rate??0)+"%";
     $v("#vsPitchV").textContent=(VS.cfg.pitch>=0?"+":"")+(VS.cfg.pitch??0)+"Hz";
@@ -2003,7 +2003,7 @@ async function vVoice(session){
   };
   const paintVoiceList=()=>{
     const sel=$v("#vsVoice"),q=($v("#vsSearch").value||"").toLowerCase();
-    const all=VS.voices||[],cur=VS.cfg.voice||"en-US-AriaNeural";
+    const all=VS.voices||[],cur=VS.cfg.voice||"af_heart";
     if(!all.length){sel.innerHTML=`<option selected>${esc(cur)}</option>`;
       $v("#vsCount").textContent="(catalogue unavailable — manual id)";return}
     const filtered=q?all.filter(v=>(v.shortname+" "+v.locale).toLowerCase().includes(q))
@@ -2021,7 +2021,7 @@ async function vVoice(session){
       const r=await api.voicePreview(VS.session,cfg,$v("#vsText").value);
       $v("#vsAudio").src=r.url+"?t="+Date.now();$v("#vsAudioWrap").style.display="block";
       $v("#vsAudio").play().catch(()=>{});
-      $v("#vsState").textContent=`preview ready · ${r.rate_cfg.rate} ${r.rate_cfg.pitch}`;
+      $v("#vsState").textContent=`preview ready · ${r.voice} · ${r.speed}×`;
     }catch(e){$v("#vsState").textContent="";toast(e.message,"err")}
   };
   /* wiring */
@@ -2043,16 +2043,16 @@ async function vVoice(session){
     try{VS.cfg=await api.voicePut(VS.session,VS.cfg);toast(`Voice saved: ${VS.cfg.voice}`)}
     catch(e){toast(e.message,"err")}};
   /* comparison: popular English voices, one ▶ per row — short cached clips only */
-  const cmp=["en-US-AriaNeural","en-US-JennyNeural","en-US-GuyNeural","en-GB-RyanNeural"];
+  const cmp=["af_heart","af_sky","am_adam","bf_emma"];
   $v("#vsCompare").innerHTML=cmp.map(v=>`
     <div style="display:flex;align-items:center;gap:8px">
       <button class="btn sm" data-cmp="${esc(v)}">▶</button>
-      <span class="chip">${esc(v.replace("Neural",""))}</span>
+      <span class="chip">${esc(v)}</span>
     </div>`).join("");
   $v("#vsCompare").addEventListener("click",e=>{
     const v=e.target.dataset.cmp;if(!v)return;preview(Object.assign({},VS.cfg,{voice:v}))});
   paint();
-  api.voiceList("edge").then(r=>{VS.voices=r.voices;paintVoiceList()}).catch(()=>paintVoiceList());
+  api.voiceList("kokoro").then(r=>{VS.voices=r.voices;paintVoiceList()}).catch(()=>paintVoiceList());
 }
 /* ================================================================
    VIEW — Generate (stage machine + run/cancel/retry)
@@ -2077,7 +2077,7 @@ async function vGenerate(session){
     </section>
     <aside class="panel lift" style="position:sticky;top:78px">
       <div class="lbl">What happens</div>
-      <p style="margin-top:10px;font-size:13px;color:var(--txt2)">Segment → Gemini narration → script → timeline → render → editor project. Cached stages are skipped on re-runs, so retries are cheap.</p>
+      <p style="margin-top:10px;font-size:13px;color:var(--txt2)">Segment → AI narration → script → timeline → render → editor project. Cached stages are skipped on re-runs, so retries are cheap.</p>
       <hr class="cutline">
       <div class="lbl">Config in use</div>
       <div style="margin-top:10px;display:grid;gap:6px;font-family:var(--mono);font-size:11.5px;color:var(--txt2)">
@@ -2724,12 +2724,12 @@ async function vSettings(){
   <h2 class="h-disp" style="font-size:28px;margin:4px 0 18px">Automation config</h2>
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px;max-width:980px">
     <label class="field"><span class="lbl">backend</span>
-      <select id="sBackend">${["xkiro","qwen","mistral","gemini","openai","anthropic","ollama","cloudflare","none"].map(b=>`<option ${b===s.backend?"selected":""}>${b}</option>`).join("")}</select></label>
-    <label class="field"><span class="lbl">model</span><input id="sModel" value="${esc(s.model)}" placeholder="e.g. qwen/qwen3.5-397b-a17b:free"></label>
+      <select id="sBackend">${["agnes","none"].map(b=>`<option ${b===s.backend?"selected":""}>${b}</option>`).join("")}</select></label>
+    <label class="field"><span class="lbl">model</span><input id="sModel" value="${esc(s.model)}" placeholder="e.g. agnes-2.5-flash"></label>
     <label class="field"><span class="lbl">api key (saved server-side)</span><input id="sKey" type="password" value="${esc(s.api_key)}" autocomplete="off"></label>
     <label class="field"><span class="lbl">endpoint / base url</span><input id="sEp" value="${esc(s.endpoint)}" placeholder="http://localhost:11434"></label>
     <label class="field"><span class="lbl">cloudflare account id</span><input id="sCf" value="${esc(s.cf_account_id)}"></label>
-    <label class="field"><span class="lbl">tts</span><select id="sTts">${["edge","kokoro","none"].map(b=>`<option ${b===s.tts?"selected":""}>${b}</option>`).join("")}</select></label>
+    <label class="field"><span class="lbl">tts</span><select id="sTts">${["kokoro","none"].map(b=>`<option ${b===s.tts?"selected":""}>${b}</option>`).join("")}</select></label>
     <label class="field"><span class="lbl">voice</span><input id="sVoice" value="${esc(s.voice)}"></label>
     <label class="field"><span class="lbl">narration style</span><select id="sStyle">${["recap","literal"].map(b=>`<option ${b===s.style?"selected":""}>${b}</option>`).join("")}</select></label>
   </div>
@@ -2809,7 +2809,7 @@ const CIN = {
 const CIN_STAGES = [
   { id: 'segment_panels',    name: 'Panel Detection',  desc: 'AI segments the strip into panels', emoji: '🔍' },
   { id: 'gemini_narration',  name: 'AI Narration',     desc: 'AI writes narration scripts',  emoji: '✍️' },
-  { id: 'tts_audio',         name: 'TTS Voice',        desc: 'Edge/Google TTS renders audio',    emoji: '🎤' },
+  { id: 'tts_audio',         name: 'TTS Voice',        desc: 'Kokoro offline TTS renders audio',    emoji: '🎤' },
   { id: 'render_video',      name: 'Base Render',      desc: 'FFmpeg assembles the base video',  emoji: '🖥' },
   { id: 'cinematic_render',  name: 'Cinematic Pass',   desc: 'Adds effects, grade, transitions', emoji: '🎬' },
 ];
@@ -3010,7 +3010,7 @@ async function cinRunStage(stageId) {
     tts: settings.tts || 'edge',
     voice: settings.voice || 'en-US-AriaNeural',
     style: settings.style || 'recap',
-    backend: settings.backend || 'xkiro',
+    backend: settings.backend || 'agnes',
   };
 
   try {
@@ -3062,10 +3062,10 @@ async function cinRunFull() {
     headers: {'Content-Type':'application/json'},
     body: JSON.stringify({
       session: CIN.session,
-      tts: settings.tts || 'edge',
-      voice: settings.voice || 'en-US-AriaNeural',
+      tts: settings.tts || 'kokoro',
+      voice: settings.voice || 'af_heart',
       style: settings.style || 'recap',
-      backend: settings.backend || 'xkiro',
+      backend: settings.backend || 'agnes',
     }),
   }).catch(() => null);
   if (!r || !r.ok) { toast('Pipeline start failed', true); return; }

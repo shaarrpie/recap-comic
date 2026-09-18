@@ -12,7 +12,7 @@ Overrides always win over the AI text, are surfaced with their original
 beside them (restore = delete the override), and invalidate only the
 affected panel's TTS clip (`audio/<panel_id>.mp3`), never the chapter.
 
-Per-panel regeneration reuses adapters.narrate_gemini.generate with a
+Per-panel regeneration uses the central Agnes text fallback with a
 single-panel OcrArtifact reconstructed from the panel's stored dialogue,
 so one bad sentence never reruns the whole chapter.
 """
@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import os
 import re
 import threading
 import time
@@ -237,10 +236,9 @@ def regenerate(session: str, panel_id: str, *, api_key: str = "",
                model: str = "") -> dict:
     """Regenerate ONE panel's narration; stores it as an override.
 
-    Default path uses the central Qwen3.5-397B-A17B -> Mistral Medium 3.5
-    fallback (OpenAI-compatible Xkiro endpoint). A `model` starting with
-    "gemini" preserves the legacy Gemini adapter explicitly. Fails loudly
-    (no fake text) when no key is configured or both models fail.
+    Uses the central Agnes primary -> fallback text path (OpenAI-compatible
+    Agnes endpoint). Fails loudly (no fake text) when no key is configured
+    or both models fail.
     """
     if panel_id not in _all_panels(session, _read_edit(session)):
         raise HTTPException(404, f"unknown panel {panel_id}")
@@ -249,14 +247,11 @@ def regenerate(session: str, panel_id: str, *, api_key: str = "",
     if panel is None:
         raise HTTPException(404, "panel is deleted; restore it first")
 
-    if (model or "").lower().startswith("gemini"):
-        return _regenerate_gemini(session, panel_id, panel, api_key, model)
-
     from adapters import ai_models as _ai
     key = api_key or _ai.api_key_from_env() or ""
     if not key:
         raise HTTPException(400,
-            "no AI key: set XKIRO_API_KEY in .env or pass api_key")
+            "no AI key: set AGNES_API_KEY in .env or pass api_key")
 
     from adapters.schemas import BBox, Meta, OcrArtifact, OcrRegion
     # Reconstruct a minimal OCR artifact from the panel's stored dialogue so
@@ -279,15 +274,17 @@ def regenerate(session: str, panel_id: str, *, api_key: str = "",
                '"text": "..."}]} with exactly 1 entry.')
     import json as _json
 
-    from adapters.narrate_gemini import NarrationArtifact
-
     def _parse(text: str):
         data = _json.loads(text)
-        narration = NarrationArtifact.model_validate(
-            {**data, "mode": "narrator", "meta": ocr.meta})
-        if [e.panel_id for e in narration.entries] != [panel_id]:
+        raw_entries = data.get("entries")
+        if not isinstance(raw_entries, list) or len(raw_entries) != 1:
+            raise ValueError("expected exactly 1 narration entry")
+        entry = raw_entries[0]
+        if not isinstance(entry, dict) or entry.get("panel_id") != panel_id:
             raise ValueError("panel ids/order do not match panels.json")
-        return narration
+        if not (entry.get("text") or "").strip():
+            raise ValueError("regeneration returned no narration text")
+        return entry
 
     with _regenerate_lock:
         try:
@@ -305,11 +302,7 @@ def regenerate(session: str, panel_id: str, *, api_key: str = "",
         except Exception as exc:
             raise HTTPException(502, f"regeneration failed: {exc}") from exc
 
-    entries = [e for e in plan.entries if (e.text or "").strip()]
-    if not entries:
-        raise HTTPException(502, "regeneration returned no narration text")
-    text = "\n".join(e.text for e in entries)
-    return set_text(session, panel_id, text)   # stores override + invalidates TTS
+    return set_text(session, panel_id, plan["text"])   # stores override + invalidates TTS
 
 
 def _run_generate_all(job_id: str, session: str,
@@ -346,7 +339,8 @@ def _run_generate_all(job_id: str, session: str,
 
 def generate_all(session: str, *, api_key: str = "",
                  model: str = "") -> dict:
-    """START button: narrate every cropped panel with Qwen -> Mistral.
+    """START button: narrate every cropped panel with Agnes (primary ->
+    fallback).
 
     Cropping must already exist (panels.json + panel PNGs), produced with
     or without AI — typically the deterministic blank-row cut. Only words
@@ -362,46 +356,11 @@ def generate_all(session: str, *, api_key: str = "",
     key = api_key or _ai.api_key_from_env() or ""
     if not key:
         raise HTTPException(400,
-            "no AI key: set XKIRO_API_KEY in .env or pass api_key")
+            "no AI key: set AGNES_API_KEY in .env or pass api_key")
     job = store.create("ai_narration", {"session": session})
     threading.Thread(target=_run_generate_all,
                      args=(job.id, session, api_key, model),
                      daemon=True).start()
     return {"job_id": job.id, "status": job.status.value}
-
-
-def _regenerate_gemini(session: str, panel_id: str, panel: dict,
-                       api_key: str, model: str) -> dict:
-    """Legacy explicit-Gemini path (only when model starts with 'gemini')."""
-    from adapters._gemini_keys import from_env
-    key = api_key or os.environ.get("GEMINI_API_KEY", "")
-    if not key:
-        raise HTTPException(400,
-            "no Gemini key: set GEMINI_API_KEY in .env or pass api_key")
-
-    from adapters.schemas import BBox, Meta, OcrArtifact, OcrRegion
-    lines = [ln.strip() for ln in panel["dialogue"].splitlines() if ln.strip()]
-    regions = [OcrRegion(id=f"{panel_id}-{i}", panel_id=panel_id, page=1,
-                         bbox=BBox(x=0, y=0, w=0, h=0), text=ln,
-                         confidence=1.0, kind="dialogue")
-               for i, ln in enumerate(lines)]
-    ocr = OcrArtifact(meta=Meta(schema_version=1, generator="narration_api",
-                                config_hash="", input_hashes={}),
-                      backend="webapp", regions=regions)
-    request = (f"Write the recap narration for panel {panel_id} only. "
-               f"Match the chapter's style and keep it self-contained.")
-
-    with _regenerate_lock:
-        from_env()  # raises when still unconfigured (env key required)
-        import adapters.narrate_gemini as ng
-        plan = ng.generate(request, ocr, [panel_id],
-                           model=model or "gemini-2.0-flash",
-                           api_key=api_key or None)
-
-    entries = [e for e in plan.entries if (e.text or "").strip()]
-    if not entries:
-        raise HTTPException(502, "regeneration returned no narration text")
-    text = "\n".join(e.text for e in entries)
-    return set_text(session, panel_id, text)   # stores override + invalidates TTS
 
 

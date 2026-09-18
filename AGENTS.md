@@ -60,7 +60,7 @@ pytest tests -q
 The live accuracy check is:
 
 ```bash
-python scripts/smoke_test_live.py samples/real_strip_01.png --backend gemini
+python scripts/smoke_test_live.py samples/real_strip_01.png --backend agnes
 ```
 
 The smoke test needs the sample and an API key. Do not tune thresholds to hide

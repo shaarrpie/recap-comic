@@ -2,7 +2,7 @@
 """Post-crop AI narration: deterministic cut first, AI words after.
 
 Geometry must NEVER change; only narration/dialogue are filled, via
-Qwen -> Mistral with per-panel caching.
+Agnes (2.5 Flash primary -> 2.0 Flash fallback) with per-panel caching.
 """
 from __future__ import annotations
 
@@ -84,15 +84,15 @@ def test_primary_fail_uses_fallback(tmp_path: Path) -> None:
 
     def _fake(model: str, prompt: str, b64: str) -> str:
         seen.append(model)
-        if "qwen" in model:
-            raise TimeoutError("qwen down")
+        if "2.5-flash" in model:
+            raise TimeoutError("primary down")
         return json.dumps({"narration": "Fallback words.", "dialogue": ""})
     summary = ain.narrate_cropped_panels(d, api_key="test", gap_s=0,
                                          cache_dir=tmp_path / "cache",
                                          request_fn=_fake)
     assert summary["narrated"] == 1
-    assert seen[0] == "qwen/qwen3.5-397b-a17b:free"
-    assert seen[-1] == "mistralai/mistral-medium-3.5"
+    assert seen[0] == "agnes-2.5-flash"
+    assert seen[-1] == "agnes-2.0-flash"
     data = json.loads((d / "panels.json").read_text("utf-8"))
     assert data["panels"][0]["narration"] == "Fallback words."
 

@@ -217,7 +217,11 @@ def _default_cache_dir() -> Path:
     return Path.home() / ".cache" / "recap-comic"
 
 
-_VALID_BACKENDS = {"xkiro", "qwen", "mistral", "gemini", "openai", "anthropic", "ollama", "local", "cloudflare", "fixture", "deterministic", "cv", "manual", "none"}
+_VALID_BACKENDS = {"agnes", "fixture", "deterministic", "cv", "manual", "none"}
+# Removed providers resolve to Agnes (sole provider) so old commands,
+# configs and saved settings keep working.
+_LEGACY_BACKEND_ALIASES = {"xkiro", "qwen", "mistral", "gemini", "openai",
+                           "anthropic", "ollama", "local", "cloudflare"}
 _VALID_TTS = {"edge", "kokoro", "none"}
 _VALID_STYLES = {"recap", "literal"}
 _VALID_BLANK_SENS = {"low", "conservative", "high"}
@@ -225,11 +229,13 @@ _VALID_BLANK_SENS = {"low", "conservative", "high"}
 
 def _validate_backend(name: str) -> str:
     n = name.lower()
+    # Legacy provider names resolve to Agnes (sole provider) so old
+    # commands, configs and saved settings keep working.
+    if n in _LEGACY_BACKEND_ALIASES:
+        return "agnes"
     if n not in _VALID_BACKENDS:
         raise typer.BadParameter(
             f"unknown backend {name!r}; choose from: {', '.join(sorted(_VALID_BACKENDS))}")
-    if n == "local":
-        n = "ollama"
     return n
 
 
@@ -300,13 +306,12 @@ def guided_plan(
     out_plan: Path | None = typer.Option(
         None, "--out-plan", help="also write the plan JSON here"),
     backend: str = typer.Option(
-        "xkiro", "--backend",
-        help="xkiro (Qwen3.5-397B-A17B + Mistral Medium 3.5 fallback, default)|qwen|mistral|gemini|openai|anthropic|ollama|local|cloudflare|fixture|deterministic (blank-row CV cut, no AI)|none"),
+        "agnes", "--backend",
+        help="agnes (Agnes 2.5 Flash + 2.0 Flash fallback, default)|fixture|deterministic (blank-row CV cut, no AI)|none"),
     model: str | None = typer.Option(
         None, "--model",
-        help="vision model id (xkiro defaults to Qwen3.5-397B-A17B; "
-             "gemini defaults to gemini-2.5-flash; "
-             "required for openai/anthropic/local)"),
+        help="vision model id (agnes defaults to agnes-2.5-flash; "
+             "agnes-2.0-flash is the automatic fallback)"),
     chunk_height: int = typer.Option(2000, "--chunk-height",
                                      help="reading-chunk height in px"),
     overlap: int = typer.Option(200, "--overlap",
@@ -465,13 +470,12 @@ def guided_run(
                                  help="tall strip image or CBZ/ZIP archive"),
     out_dir: Path = typer.Option("guided_out", "--out-dir"),
     backend: str = typer.Option(
-        "xkiro", "--backend",
-        help="xkiro (Qwen3.5-397B-A17B + Mistral Medium 3.5 fallback, default)|qwen|mistral|gemini|openai|anthropic|ollama|local|cloudflare|fixture|deterministic (blank-row CV cut, no AI)|none"),
+        "agnes", "--backend",
+        help="agnes (Agnes 2.5 Flash + 2.0 Flash fallback, default)|fixture|deterministic (blank-row CV cut, no AI)|none"),
     model: str | None = typer.Option(
         None, "--model",
-        help="vision model id (xkiro defaults to Qwen3.5-397B-A17B; "
-             "gemini defaults to gemini-2.5-flash; "
-             "required for openai/anthropic/local)"),
+        help="vision model id (agnes defaults to agnes-2.5-flash; "
+             "agnes-2.0-flash is the automatic fallback)"),
     plan_path: Path | None = typer.Option(
         None, "--plan", help="reuse an existing plan JSON from 'guided plan'"),
     chunk_height: int = typer.Option(2000, "--chunk-height"),
@@ -684,8 +688,8 @@ def guided_narrate_ai(
              "typically produced by the deterministic --backend deterministic cut"),
     model: str | None = typer.Option(
         None, "--model",
-        help="vision model id (default Qwen3.5-397B-A17B with Mistral "
-             "Medium 3.5 fallback; bare names resolved automatically)"),
+        help="vision model id (default agnes-2.5-flash with agnes-2.0-flash "
+             "fallback; bare names resolved automatically)"),
     force: bool = typer.Option(
         False, "--force", help="re-narrate even cached panels"),
     log_level: str = typer.Option("INFO", "--log-level"),
@@ -693,7 +697,8 @@ def guided_narrate_ai(
     """START button (CLI): AI narration for ALREADY-CROPPED panels.
 
     Cropping needs no AI; this fills narration/dialogue per panel PNG via
-    Qwen -> Mistral. Panel geometry (y ranges, files) is never modified.
+    Agnes (2.5 Flash -> 2.0 Flash). Panel geometry (y ranges, files) is
+    never modified.
     """
     _configure_logging(log_level)
     try:
@@ -726,19 +731,19 @@ def guided_video(
         None, "--out",
         help="output mp4 (default: <panels dir>/recap.mp4)"),
     tts: str = typer.Option(
-        "edge", "--tts", help="edge (default, needs internet) | kokoro (offline) | none (silent)"),
+        "edge", "--tts", help="edge (cloud, default) | kokoro (offline) | none (silent)"),
     voice: str = typer.Option(
-        "en-US-AriaNeural", "--voice",
-        help="edge-tts / kokoro voice id"),
-    rate: str = typer.Option("+0%", "--rate", help="speech rate, e.g. +10%"),
-    pitch: str = typer.Option("+0Hz", "--pitch", help="speech pitch, e.g. -2Hz"),
-    speed: float = typer.Option(1.0, "--speed", help="kokoro speed multiplier (edge-tts ignores this)"),
+        "af_heart", "--voice",
+        help="kokoro voice id (e.g. af_heart, am_adam, bf_emma)"),
+    rate: str = typer.Option("+0%", "--rate", help="legacy option, ignored by kokoro"),
+    pitch: str = typer.Option("+0Hz", "--pitch", help="legacy option, ignored by kokoro"),
+    speed: float = typer.Option(1.0, "--speed", help="kokoro speed multiplier (0.5-2.0)"),
     kokoro_model_path: Path | None = typer.Option(
         None, "--kokoro-model-path",
-        help="path to kokoro-v1.0.onnx (required for --tts kokoro)"),
+        help="path to kokoro-v1.0.onnx (else KOKORO_MODEL_PATH or ./models/)"),
     kokoro_voices_path: Path | None = typer.Option(
         None, "--kokoro-voices-path",
-        help="path to voices-v1.0.bin (required for --tts kokoro)"),
+        help="path to voices-v1.0.bin (else KOKORO_VOICES_PATH or ./models/)"),
     dialogue: bool = typer.Option(
         True, "--dialogue/--no-dialogue",
         help="also read each panel's dialogue after its narration"),
@@ -789,7 +794,7 @@ def guided_video(
 ) -> None:
     """Phase 3: panels.json -> recap.mp4 (narrated, captioned).
 
-    Reads the per-panel narration, synthesises speech with edge-tts (or none),
+    Reads the per-panel narration, synthesises speech with kokoro (or none),
     builds a drift-free timeline from MEASURED clip durations, pans each
     panel (Ken-Burns) and renders one mp4 with ffmpeg. Also writes recap.srt,
     timeline.json, audio/ and narration.json next to the mp4.

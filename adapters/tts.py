@@ -2,8 +2,9 @@
 """TTS provider dispatcher.
 
 Providers:
-  - edge   : adapters.tts_edge (cloud, default)
-  - kokoro : adapters.tts_kokoro (offline, CPU)
+  - edge   : adapters.tts_edge (cloud, Microsoft Edge TTS; default)
+  - kokoro : adapters.tts_kokoro (offline, CPU; needs kokoro-v1.0.onnx +
+             voices-v1.0.bin, see README "Offline speech")
   - none   : silent, no audio generated
 
 The dispatcher selects the provider, passes the correct kwargs, and
@@ -11,14 +12,20 @@ returns a uniform (AudioEntry | None, error | None) tuple.
 """
 from __future__ import annotations
 
+import logging
+import re
 from pathlib import Path
 
 from .schemas import AudioEntry, NarrationEntry
+from .tts_kokoro import resolve_model_files
+from .tts_kokoro import synthesize as kokoro_synth
+
+log = logging.getLogger(__name__)
 
 
 def synthesize_entry(entry: NarrationEntry, out_dir: Path, *,
-                     provider: str = "edge",
-                     voice: str = "en-US-AriaNeural",
+                     provider: str = "kokoro",
+                     voice: str = "af_heart",
                      rate: str = "+0%",
                      pitch: str = "+0Hz",
                      speed: float = 1.0,
@@ -38,7 +45,7 @@ def synthesize_entry(entry: NarrationEntry, out_dir: Path, *,
             from .tts_edge import synthesize_entry as edge_synth
         except ImportError as exc:
             return None, RuntimeError(
-                f"edge-tts not installed: {exc}. pip install edge-tts "
+                f"edge-tts not installed: {exc}. `pip install edge-tts` "
                 f"or use --tts kokoro / --tts none")
         try:
             result = edge_synth(
@@ -49,13 +56,15 @@ def synthesize_entry(entry: NarrationEntry, out_dir: Path, *,
             return None, exc
 
     if provider == "kokoro":
-        if kokoro_model_path is None or kokoro_voices_path is None:
-            return None, RuntimeError(
-                "kokoro requires --kokoro-model-path and "
-                "--kokoro-voices-path")
+        try:
+            model_path, voices_path = resolve_model_files(
+                kokoro_model_path, kokoro_voices_path)
+        except RuntimeError as exc:
+            return None, exc
         if rate != "+0%" or pitch != "+0Hz":
-            log.warning("kokoro ignores edge-tts rate/pitch options "
-                        "(rate=%r pitch=%r); using defaults", rate, pitch)
+            log.warning("kokoro ignores edge-style rate/pitch options "
+                        "(rate=%r pitch=%r); using speed=%r instead",
+                        rate, pitch, speed)
         if retries != 3:
             log.warning("kokoro performs a single synthesis attempt; "
                         "ignoring retries=%r", retries)
@@ -71,8 +80,8 @@ def synthesize_entry(entry: NarrationEntry, out_dir: Path, *,
         try:
             dur = kokoro_synth(
                 entry.text, out_path,
-                model_path=kokoro_model_path,
-                voices_path=kokoro_voices_path,
+                model_path=model_path,
+                voices_path=voices_path,
                 voice=voice, speed=speed,
                 probe_duration=probe_duration)
             return AudioEntry(entry_id=entry.id, path=out_path.name,

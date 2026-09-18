@@ -3,12 +3,10 @@
 
 Usage:
     python scripts/smoke_test_live.py samples/real_strip_01.png \
-        --backend gemini [--model gemini-2.5-flash] \
+        --backend agnes [--model agnes-2.5-flash] \
         --overlay smoke_overlay.png --plan-out smoke_plan.json
 
-Reads GEMINI_API_KEY / OPENAI_API_KEY / ANTHROPIC_API_KEY from .env (or the
-environment) per backhchoice; also works with --backend ollama (local, free;
-runs against http://localhost:11434 by default, OLLAMA_BASE_URL to override).
+Reads AGNES_API_KEY from .env (or the environment).
 
 Prints the numbers requested for honest model-accuracy measurement:
   - number of panels found,
@@ -105,8 +103,8 @@ def token_summary(usage_log: list[dict]) -> dict:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("strip", help="path to the real manhwa strip image")
-    ap.add_argument("--backend", default="gemini",
-                    choices=["gemini", "openai", "anthropic", "ollama"])
+    ap.add_argument("--backend", default="agnes",
+                    choices=["agnes"])
     ap.add_argument("--model", default=None)
     ap.add_argument("--chunk-height", type=int, default=2000)
     ap.add_argument("--overlap", type=int, default=200)

@@ -21,7 +21,7 @@ _tl = threading.local()
 
 # Sensitive-key detection, shared with webapp/jobs.py so the two redaction
 # implementations cannot drift. Key names are matched as WORDS (camelCase and
-# separators both split) so "apiKey"/"xkiro_api_key" hit while innocent names
+# separators both split) so "apiKey"/"agnes_api_key" hit while innocent names
 # like "author" do not; the markers catch compounds ("authkey") by substring.
 _WORD_RE = re.compile(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|[0-9]+")
 
@@ -43,7 +43,7 @@ SENSITIVE_KEYS = frozenset({
 def is_sensitive_key(key: Any) -> bool:
     """True if a dict key name looks like it holds a credential.
 
-    Exact word matching handles "apiKey", "xkiro_api_key", "GEMINI_API_KEY";
+    Exact word matching handles "apiKey", "agnes_api_key", "AGNES_API_KEY";
     the marker substring pass catches compounds like "authkey"; the
     innocents list keeps "author" (blanked by the old "auth" marker).
     """

@@ -1,0 +1,34 @@
+{
+  "filter_version": 4,
+  "input_file": "panels.json",
+  "input_mtime": 1789725414.2237778,
+  "input_size": 1848,
+  "out_file": "panels.json",
+  "strip_found": true,
+  "total": 1,
+  "kept": 1,
+  "context_only": 0,
+  "removed_blank": 0,
+  "rescued": 0,
+  "thresholds": {
+    "method": "fixed",
+    "n_panels": 1,
+    "text_color_threshold": 0.05,
+    "white_dominance_cutoff": 0.8,
+    "text_edge_floor": 0.003,
+    "is_bw_session": false
+  },
+  "decisions": [
+    {
+      "id": "001",
+      "decision": "keep",
+      "method": "strip_crop",
+      "scores": {
+        "white_of_content": 0.04257,
+        "color_ratio": 0.55995,
+        "edge_density": 0.017555
+      }
+    }
+  ],
+  "filter_hash": "6b09af2a15ea"
+}

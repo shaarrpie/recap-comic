@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import shutil
 import subprocess
@@ -21,6 +22,8 @@ from .jobs import CancelledError, Job, JobStatus, store
 BASE_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = Path(os.environ.get("RECAP_OUTPUT_DIR") or BASE_DIR / "webapp_output")
 
+_log = logging.getLogger(__name__)
+
 # We run the whole pipeline inside the server process: switch the CLI
 # progress bars off. Ten concurrent jobs each drawing a rich.Progress
 # spinner into the shared uvicorn console garble the log output (the
@@ -35,7 +38,10 @@ _recap_video.EMBEDDED_MODE = True
 STAGE_TIMEOUT_S = {
     "validate_config": 5,
     "load_images": 30,
-    "segment_panels": 300,
+    # Large strips (10-20kpx) become ~10+ sequential vision-LLM chunk calls
+    # on the first, uncached pass; 300s was too tight there and cost legitimate
+    # big-strip jobs. Raise per deployment with MANHWA_SEGMENT_TIMEOUT_S.
+    "segment_panels": int(os.environ.get("MANHWA_SEGMENT_TIMEOUT_S", "600")),
     "panel_validation": 120,
     "apply_confirmed": 5,
     "merge_continuation": 60,
@@ -142,17 +148,16 @@ def _stage_continue_on_fail(job: Job, name: str, fn: Callable[..., Any]) -> Any:
 
 
 def _validate_config(job: Job, **kwargs: Any) -> None:
-    backend = job.config.get("backend", "xkiro")
+    backend = job.config.get("backend", "agnes")
     from adapters import ai_models as _ai
     api_key = (kwargs.get("api_key") or job.config.get("api_key", "")
-               or _ai.api_key_from_env()
-               or os.environ.get("GEMINI_API_KEY", ""))
+               or _ai.api_key_from_env())
     job.log("INFO",
             f"backend={backend} api_key={'set' if api_key else 'missing'}",
             "validate_config")
     if backend != "none" and not api_key:
         raise RuntimeError(
-            f"{backend.upper()}_API_KEY not set; set XKIRO_API_KEY in .env "
+            f"{backend.upper()}_API_KEY not set; set AGNES_API_KEY in .env "
             "or use --backend none for offline mode")
 
 
@@ -173,11 +178,13 @@ def _segment_panels(job: Job, **kwargs: Any) -> None:
     strip = session_dir / job.config["strip_file"]
     cache = BASE_DIR / ".cache" / "recap-comic"
     cache.mkdir(parents=True, exist_ok=True)
-    backend_name = job.config.get("backend", "xkiro")
+    backend_name = job.config.get("backend", "agnes")
+    if backend_name in ("xkiro", "qwen", "mistral", "gemini", "openai",
+                        "anthropic", "local", "ollama", "cloudflare"):
+        backend_name = "agnes"  # legacy provider names resolve to Agnes
     from adapters import ai_models as _ai
     api_key = (kwargs.get("api_key") or job.config.get("api_key", "")
-               or _ai.api_key_from_env()
-               or os.environ.get("GEMINI_API_KEY", ""))
+               or _ai.api_key_from_env())
     model = kwargs.get("model") or job.config.get("model", "") or None
     base_url = kwargs.get("base_url") or job.config.get("endpoint", "") or None
     cf_account_id = kwargs.get("cf_account_id") or job.config.get("cf_account_id", "") or None
@@ -201,11 +208,25 @@ def _segment_panels(job: Job, **kwargs: Any) -> None:
             job.log("WARNING",
                     "AI pre-read unavailable (no key/quota/low confidence) — "
                     "used deterministic gutter detector; narration will be empty. "
-                    "Re-run with backend=xkiro and a valid key for narration.",
+                    "Re-run with backend=agnes and a valid key for narration.",
                     "segment_panels")
     except Exception:
         pass
     assert artifact is not None
+    # Phase-1 coverage: if the AI plan stops well short of the strip's
+    # bottom edge the tail's panels/narration are missing (truncated model
+    # output). strip_analyzer only logs this to stderr; mirror it into the
+    # job log so a webapp user is never left looking at a silently
+    # shortened recap with no explanation. Threshold matches analyze_strip.
+    if plan is not None and getattr(plan, "entries", None):
+        last_bottom = max(e.y_end for e in plan.entries)
+        if last_bottom < plan.height * 0.95:
+            job.log("WARNING",
+                    f"phase-1 coverage: AI plan ends at y={last_bottom} "
+                    f"({last_bottom / plan.height * 100:.0f}% of strip height "
+                    f"{plan.height}) — the strip tail may be missing panels "
+                    f"and narration (truncated model output)",
+                    "segment_panels")
     # Phase 2.5: deterministic panel-content filter (blank removal +
     # text-only demotion to context_only). Runs on EVERY build, inside the
     # segmentation stage (no checkpoint STEP_SEQUENCE change), and never
@@ -224,6 +245,14 @@ def _segment_panels(job: Job, **kwargs: Any) -> None:
             (session_dir / "panels.json").read_text("utf-8"))
     except Exception as exc:  # noqa: BLE001
         job.log("WARNING", f"panel filter skipped ({exc})", "segment_panels")
+    # A blank-detection safety layer that raised mid-cut is recorded on the
+    # artifact; surface it so a "safety layer was off" run is never silent.
+    if getattr(artifact, "blank_detection_skipped", False):
+        job.log("WARNING",
+                "blank detection failed and was skipped this run — blank "
+                "regions may appear as panels; review the panel list before "
+                "rendering",
+                "segment_panels")
     job.panels = [{
         "id": p.id, "panel_index": p.panel_index,
         "y_start": p.y_start, "y_end": p.y_end,
@@ -346,8 +375,12 @@ def _write_confirmed_artifact(job: Job, panels: list[CutPanelLike] | None = None
             ordered.append(cp)
     if not ordered:
         ordered = list(artifact.panels)
-    for i, cp in enumerate(ordered, 1):
-        cp.panel_index = i
+    # Renumber 1..n via model_copy, never in-place mutation: mutating a
+    # Pydantic field silently propagates to every other reference to that
+    # object (the AI-baseline artifact here). strip_analyzer renumbers the
+    # same way; model_copy keeps the baseline panels.json immutable.
+    ordered = [cp.model_copy(update={"panel_index": i})
+               for i, cp in enumerate(ordered, 1)]
     # bake narration overrides so the render sees them (panels.json keeps
     # the AI baseline; narration_edit.json stays the source of truth)
     from .narration_api import apply_overrides_to_cut
@@ -748,7 +781,7 @@ def _build_script(job: Job, **kwargs: Any) -> None:
     if not script.strip():
         job.log("WARNING",
                 "narration script is empty (offline fallback or no AI text). "
-                "Video will be silent; re-run segmentation with backend=xkiro "
+                "Video will be silent; re-run segmentation with backend=agnes "
                 "and a valid key, or add narration in Narration Studio.",
                 "build_script")
 
@@ -818,8 +851,8 @@ def _render_video(job: Job, **kwargs: Any) -> None:
         v = job.config.get(key)
         return default if v is None else v
     cfg = VideoConfig(
-        tts=voice_cfg.get("provider") or job.config.get("tts", "edge"),
-        voice=voice_cfg.get("voice") or job.config.get("voice", "en-US-AriaNeural"),
+        tts=voice_cfg.get("provider") or job.config.get("tts", "kokoro"),
+        voice=voice_cfg.get("voice") or job.config.get("voice", "af_heart"),
         rate=_pct("rate", 0) if voice_cfg else "+0%",
         pitch=_pct("pitch", 0) if voice_cfg else "+0Hz",
         speed=float(voice_cfg.get("speed", 1.0) or 1.0),
@@ -827,7 +860,8 @@ def _render_video(job: Job, **kwargs: Any) -> None:
         color_grade=_style("color_grade", VideoConfig.color_grade),
         vignette=_style("vignette", VideoConfig.vignette),
         vignette_angle=_style("vignette_angle", VideoConfig.vignette_angle),
-        blur_sigma=_style("blur_sigma", VideoConfig.blur_sigma))
+        blur_sigma=_style("blur_sigma", VideoConfig.blur_sigma),
+        zoom_strength=_style("zoom_strength", VideoConfig.zoom_strength))
     job.log("INFO",
             f"render input={panels_json.name} tts={cfg.tts} "
             f"voice={cfg.voice} rate={cfg.rate} pitch={cfg.pitch} "
@@ -837,7 +871,7 @@ def _render_video(job: Job, **kwargs: Any) -> None:
     # TTS + timeline + captions FIRST (synchronous, cache-friendly): a
     # missing ffmpeg must not prevent timeline.json / recap.srt from
     # landing on disk — everything except the video survives a render
-    # outage. If TTS itself fails (network/edge outage), rebuild the
+    # outage. If TTS itself fails (missing Kokoro weights, bad voice), rebuild the
     # timeline silently; the user can retry the render later.
     # NOTE: dry-run against the FINAL out path — make_recap_video derives
     # the SRT sidecar from out_path (recap.mp4 -> recap.srt). Passing the
@@ -1013,13 +1047,24 @@ def _cleanup_partial_render(out_tmp: Path) -> None:
     the .partial.mp4 and its recap.partial_parts/ segment directory
     (chunked renders regenerate all of them on retry)."""
     import shutil as _shutil
-    with contextlib.suppress(OSError):
-        if out_tmp.is_file():
+    # Best-effort, but never silent: a leftover (a file locked by another
+    # process on Windows raises PermissionError, an OSError subclass) would
+    # otherwise accumulate on disk across repeated failed renders with no
+    # trace in the logs.
+    if out_tmp.is_file():
+        try:
             out_tmp.unlink()
+        except OSError as exc:
+            _log.warning("could not remove partial render %s: %s",
+                         out_tmp, exc)
     parts = out_tmp.parent / (out_tmp.stem + "_parts")
-    with contextlib.suppress(OSError):
-        if parts.is_dir():
+    if parts.is_dir():
+        try:
             _shutil.rmtree(parts)
+        except OSError as exc:
+            _log.warning("could not remove partial render parts %s: %s "
+                         "(left on disk; regenerated on retry)",
+                         parts, exc)
 
 
 def _run_render_subprocess(job_id: str, cmd: list[str]) -> None:

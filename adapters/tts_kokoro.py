@@ -1,5 +1,5 @@
 # adapters/tts_kokoro.py
-"""Kokoro TTS adapter (offline alternative to edge-tts).
+"""Kokoro TTS adapter (offline speech synthesis).
 
 kokoro-onnx (thewh1teagle/kokoro-onnx, MIT code + Apache-2.0 model, 2.7k
 stars) runs the Kokoro-82M model fully offline on CPU via onnxruntime.
@@ -20,6 +20,42 @@ from pathlib import Path
 from typing import Any
 
 _KOKORO_CACHE: dict[tuple[str, str], Any] = {}
+
+
+def resolve_model_files(model_path: Path | None = None,
+                        voices_path: Path | None = None
+                        ) -> tuple[Path, Path]:
+    """Locate the Kokoro weights, or raise a RuntimeError telling the user
+    exactly how to get them.
+
+    Order: explicit args -> KOKORO_MODEL_PATH / KOKORO_VOICES_PATH env vars
+    -> ./models/kokoro-v1.0.onnx + ./models/voices-v1.0.bin (repo root).
+    The weights (~300MB, or ~80MB quantized) are fetched once by the user
+    per the README ("Offline speech") links; they are never downloaded
+    implicitly, so an offline machine fails here with instructions instead
+    of hanging on a network fetch.
+    """
+    import os
+
+    root = Path(__file__).resolve().parent.parent
+    model = Path(model_path) if model_path else None
+    voices = Path(voices_path) if voices_path else None
+    if model is None:
+        env = os.environ.get("KOKORO_MODEL_PATH", "").strip()
+        model = Path(env) if env else root / "models" / "kokoro-v1.0.onnx"
+    if voices is None:
+        env = os.environ.get("KOKORO_VOICES_PATH", "").strip()
+        voices = Path(env) if env else root / "models" / "voices-v1.0.bin"
+    missing = [str(p) for p in (model, voices) if not p.is_file()]
+    if missing:
+        raise RuntimeError(
+            "Kokoro voice weights not found: "
+            + ", ".join(missing)
+            + ". Fetch kokoro-v1.0.onnx + voices-v1.0.bin once (see README "
+            "'Offline speech' for the links), place them in ./models/, or "
+            "point KOKORO_MODEL_PATH / KOKORO_VOICES_PATH at them — "
+            "or re-run with --tts none for a silent video.")
+    return model, voices
 
 
 def synthesize(text: str, out_path: Path, *, model_path: Path,

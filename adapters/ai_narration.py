@@ -5,7 +5,7 @@ Workflow this serves:
     1. Deterministic CV cut first (backend "deterministic"/"none": uniform
        blank-color rows -> gutters -> panel PNGs). NO AI involved.
     2. The user presses "Generate narration (AI)" -> THIS module sends each
-       cropped panel PNG to Qwen3.5-397B-A17B (Mistral Medium 3.5 fallback)
+       cropped panel PNG to Agnes (2.5 Flash primary, 2.0 Flash fallback)
        for narration + dialogue extraction ONLY.
 
 Hard rule: geometry is NEVER touched here. The prompt asks for no
@@ -110,7 +110,8 @@ def narrate_cropped_panels(
     cache_dir: str | Path | None = None,
     request_fn: Callable[..., str] | None = None,
 ) -> dict[str, Any]:
-    """Fill narration/dialogue for cropped panels via Qwen -> Mistral.
+    """Fill narration/dialogue for cropped panels via Agnes (primary ->
+    fallback).
 
     Reads panels.json + each panel_*.png in `session_dir`, writes words
     back (geometry byte-identical). Per-panel results are cached keyed by
@@ -139,7 +140,7 @@ def narrate_cropped_panels(
     key = api_key or _ai.api_key_from_env()
     if not key and request_fn is None:
         raise RuntimeError(
-            "XKIRO_API_KEY is not set; set it in .env or pass api_key")
+            "AGNES_API_KEY is not set; set it in .env or pass api_key")
 
     # --- Story memory: ONE seed pass over all panel text before the loop.
     # Includes context_only panels (their dialogue is exactly the story

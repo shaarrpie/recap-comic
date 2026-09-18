@@ -166,8 +166,7 @@ def test_manual_key_wins_over_env(monkeypatch, tmp_path):
         json.dumps({"api_key": "from-settings-json"}), "utf-8")
 
     monkeypatch.setattr(ai_models, "OUTPUT_DIR", fake_out, raising=False)
-    monkeypatch.setenv("XKIRO_API_KEY", "from-env")
-    monkeypatch.setenv("OPENAI_API_KEY", "from-env-openai")
+    monkeypatch.setenv("AGNES_API_KEY", "from-env")
 
     src_has_fallback = "settings.json" in Path(
         ai_models.__file__).read_text("utf-8")

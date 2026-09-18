@@ -1,0 +1,7 @@
+file 'strip_002/recap.mp4'
+file 'strip_003/recap.mp4'
+file 'strip_004/recap.mp4'
+file 'strip_005/recap.mp4'
+file 'strip_006/recap.mp4'
+file 'strip_007/recap.mp4'
+file 'strip_008/recap.mp4'

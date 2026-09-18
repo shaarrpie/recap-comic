@@ -22,12 +22,10 @@ single logical panel across two cut images. This module implements the
 * Phase-1 results are cached keyed by the strip file's SHA-256 + a config
   hash, so a later cut run does not re-spend tokens.
 
-The vision backend is pluggable through the VisionBackend protocol: Gemini
-(default, google-genai 2.22.0 verified), OpenAI (openai 3.8.0 signature-checked:
-chat.completions.create(..., response_format, ...)), Anthropic (anthropic
-1.4.0 signature-checked: messages.create(model, max_tokens, messages, ...),
-image blocks verified against the vision docs), and a deterministic Fixture
-backend for offline tests. "local" (Ollama etc.) is a TODO adapter.
+The vision backend is pluggable through the VisionBackend protocol: Agnes
+(Agnes AI gateway, OpenAI-compatible chat.completions.create(...,
+response_format, ...) with image_url input) and a deterministic Fixture
+backend for offline tests.
 """
 from __future__ import annotations
 
@@ -38,8 +36,7 @@ import logging
 import os
 import re
 import time
-import urllib.error
-import urllib.request
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Protocol
 
@@ -47,7 +44,6 @@ import numpy as np
 from PIL import Image
 from pydantic import BaseModel, Field, PrivateAttr, ValidationError, model_validator
 
-from adapters._logging import sanitize
 from adapters.schemas import BBox
 
 # Set to True by the webapp (webapp.pipeline) before running jobs. The
@@ -67,6 +63,13 @@ log = logging.getLogger(__name__)
 
 DEFAULT_CHUNK_HEIGHT = 2000
 DEFAULT_CHUNK_OVERLAP = 200
+# Speculative-prefetch depth for the vision chunk loop. Each chunk is
+# submitted with the freshest context available at submit time (the most
+# recent chunk whose result has already landed), so with depth K chunk i's
+# context is roughly from chunk i-K — slightly stale continuity, but panel
+# boundaries come from each chunk's own image, not the context. Set 1 to
+# serialize exactly as before. Tunable via MANHWA_CHUNK_CONCURRENCY.
+CHUNK_CONCURRENCY = max(1, int(os.environ.get("MANHWA_CHUNK_CONCURRENCY", "8")))
 MAX_ATTEMPTS = 3
 
 # Bump this whenever the prompt template, the JSON schema, or the
@@ -74,52 +77,6 @@ MAX_ATTEMPTS = 3
 # changes in a way that would make a previously cached plan stale. The
 # value is folded into the Phase-1 cache key so old plans are not reused.
 PROMPT_VERSION = "2026-09-06c"
-
-_PANEL_RESPONSE_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "panels": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "panel_index": {"type": "integer"},
-                    "y_start": {"type": "integer"},
-                    "y_end": {"type": "integer"},
-                    "narration": {"type": "string"},
-                    "dialogue": {"type": "string"},
-                    "panel_type": {
-                        "type": "string",
-                        "enum": [
-                            "single", "tall_scenic", "transition_gutter",
-                            "multi_sub_panel", "unknown",
-                        ],
-                    },
-                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
-                    "bubble_boxes": {
-                        "type": "array",
-                        "items": {
-                            "type": "array",
-                            "items": {"type": "integer"},
-                            "minItems": 4,
-                            "maxItems": 4,
-                        },
-                    },
-                },
-                "required": [
-                    "panel_index", "y_start", "y_end",
-                    "narration", "dialogue", "panel_type",
-                    "confidence", "bubble_boxes",
-                ],
-            },
-        },
-        "characters": {
-            "type": "array",
-            "items": {"type": "string"},
-        },
-    },
-    "required": ["panels", "characters"],
-}
 
 PANEL_TYPES = frozenset({
     "single", "tall_scenic", "transition_gutter", "multi_sub_panel", "unknown",
@@ -160,10 +117,8 @@ class TruncatedResponseError(ValueError):
 
 
 # Provider finish/stop reasons that mean "output token ceiling reached":
-#   Gemini  FinishReason.MAX_TOKENS (enum -> name is what matters)
-#   OpenAI + OpenAI-compatible endpoints  "length"
-#   Anthropic  "max_tokens"
-#   Ollama  done_reason "length" | Cloudflare  "length"
+#   OpenAI-compatible endpoints (incl. Agnes)  "length" / "max_tokens"
+#   (other reason strings are matched defensively; see _TRUNCATION_REASONS)
 _TRUNCATION_REASONS = frozenset({
     "length",
     "max_tokens",
@@ -237,17 +192,6 @@ def _first_choice(resp: object) -> object | None:
 def _openai_finish_reason(resp: object | None) -> object | None:
     choice = _first_choice(resp) if resp is not None else None
     return getattr(choice, "finish_reason", None)
-
-
-def _gemini_finish_reason(resp: object) -> object | None:
-    """resp.candidates[0].finish_reason for the google-genai SDK."""
-    candidates = getattr(resp, "candidates", None)
-    if not candidates:
-        return None
-    try:
-        return getattr(candidates[0], "finish_reason", None)
-    except (IndexError, TypeError):
-        return None
 
 
 class PanelPlanEntry(BaseModel):
@@ -769,13 +713,18 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
             progress_ctx = None
             task_id = None
         try:
-            for idx, (base, chunk) in enumerate(chunks):
-                if chunk_dir_p is not None:
-                    chunk_dir_p.mkdir(parents=True, exist_ok=True)
-                    chunk.save(chunk_dir_p / f"chunk_{idx:02d}.png", "PNG")
-                context = build_context(prev_entries, characters)
-                log.debug("chunk %d/%d base_y=%d size=%dx%d context_len=%d",
-                           idx + 1, len(chunks), base, chunk.width, chunk.height, len(context))
+            # Speculative prefetch: submit up to CHUNK_CONCURRENCY chunks at
+            # once. Each is given the freshest context known at submit time
+            # (the most recent chunk already folded), so context lags by up
+            # to the pool depth — panel boundaries come from each chunk's own
+            # image, so this only slightly relaxes narration continuity.
+            pool = ThreadPoolExecutor(max_workers=CHUNK_CONCURRENCY,
+                                      thread_name_prefix="phase1-chunk")
+            inflight: list[tuple[int, int, Path | None, Future, str]] = []
+            collected: dict[int, tuple[int, list[PanelPlanEntry], list[str]]] = {}
+
+            def _submit(idx: int, base: int, chunk: Image.Image,
+                        context: str) -> str:
                 context_hash = _config_hash({"context": context})
                 image_hash = hashlib.sha256(chunk.tobytes()).hexdigest()
                 chunk_cache_path: Path | None = None
@@ -790,41 +739,75 @@ def analyze_strip(strip_path: str | Path, backend: VisionBackend, *,
                         context_hash=context_hash, image_hash=image_hash))
                 if cached_chunk is not None:
                     # Resume: this chunk already succeeded in an earlier run.
-                    # Re-sending it would re-spend tokens for the same answer.
                     entries, new_chars = cached_chunk
                     log.info("phase-1 chunk %d/%d cache hit panels=%d",
                              idx + 1, len(chunks), len(entries))
-                else:
-                    try:
-                        entries, new_chars = _call_with_retry(
-                            backend, chunk, attempts=attempts,
-                            previous_context=context)
-                    except Exception as exc:
-                        done = len(results)
-                        hint = (""
-                                if not (chunk_cache_root is not None and done)
-                                else f"; {done} earlier chunk(s) succeeded and "
-                                     "are cached — re-run (without --force) to "
-                                     "resume and re-spend tokens only on the "
-                                     "failed chunk(s)")
-                        raise VisionAnalysisError(
-                            f"chunk {idx} (absolute y0={base}) failed after "
-                            f"{attempts} attempt(s): {exc}{hint}") from exc
-                    if chunk_cache_path is not None:
-                        _write_chunk_cache(chunk_cache_path, ChunkCacheRecord(
-                            chunk_height=chunk_height,
-                            context_hash=context_hash, image_hash=image_hash,
-                            entries=entries, characters=new_chars))
-                log.info("chunk %d/%d panels=%d new_chars=%s",
-                         idx + 1, len(chunks), len(entries), new_chars)
-                prev_entries = entries
+                    collected[idx] = (base, entries, new_chars)
+                    return context_hash
+                fut = pool.submit(_call_with_retry, backend, chunk,
+                                  attempts=attempts, previous_context=context)
+                inflight.append((idx, base, chunk_cache_path, fut, context_hash))
+                return context_hash
+
+            def _fold(idx: int, base: int, entries: list[PanelPlanEntry],
+                      new_chars: list[str]) -> None:
+                nonlocal prev_entries
+                collected[idx] = (base, entries, new_chars)
                 for name in new_chars:
                     if name not in characters:
                         characters.append(name)
-                results.append(entries)
-                bases.append(base)
+                prev_entries = entries
                 if progress_ctx is not None and task_id is not None:
                     progress_ctx.update(task_id, advance=1)
+
+            def _drain_one() -> None:
+                """Wait for the oldest in-flight chunk and fold its result."""
+                idx, base, chunk_cache_path, fut, context_hash = inflight.pop(0)
+                try:
+                    entries, new_chars = fut.result()
+                except Exception as exc:
+                    done = len(collected)
+                    hint = (""
+                            if not (chunk_cache_root is not None and done)
+                            else f"; {done} earlier chunk(s) succeeded and "
+                                 "are cached — re-run (without --force) to "
+                                 "resume and re-spend tokens only on the "
+                                 "failed chunk(s)")
+                    raise VisionAnalysisError(
+                        f"chunk {idx} (absolute y0={base}) failed after "
+                        f"{attempts} attempt(s): {exc}{hint}") from exc
+                if chunk_cache_path is not None:
+                    _write_chunk_cache(chunk_cache_path, ChunkCacheRecord(
+                        chunk_height=chunk_height,
+                        context_hash=context_hash,
+                        image_hash=hashlib.sha256(
+                            chunks[idx][1].tobytes()).hexdigest(),
+                        entries=entries, characters=new_chars))
+                log.info("chunk %d/%d panels=%d new_chars=%s",
+                         idx + 1, len(chunks), entries, new_chars)
+                _fold(idx, base, entries, new_chars)
+
+            for idx, (base, chunk) in enumerate(chunks):
+                if chunk_dir_p is not None:
+                    chunk_dir_p.mkdir(parents=True, exist_ok=True)
+                    chunk.save(chunk_dir_p / f"chunk_{idx:02d}.png", "PNG")
+                context = build_context(prev_entries, characters)
+                log.debug("chunk %d/%d base_y=%d size=%dx%d context_len=%d",
+                           idx + 1, len(chunks), base, chunk.width,
+                           chunk.height, len(context))
+                _submit(idx, base, chunk, context)
+                # Keep the pool saturated but bounded: fold the oldest
+                # result before submitting the next chunk.
+                while len(inflight) >= CHUNK_CONCURRENCY:
+                    _drain_one()
+            while inflight:
+                _drain_one()
+            pool.shutdown(wait=False)
+            # Emit in chunk order (stitch_chunk_results is order-sensitive).
+            for idx in sorted(collected):
+                base, entries, _chars = collected[idx]
+                results.append(entries)
+                bases.append(base)
         finally:
             if progress_ctx is not None:
                 progress_ctx.stop()
@@ -915,9 +898,8 @@ def build_context(last_entries: list[PanelPlanEntry],
 
 def _capture_usage(resp: object) -> dict | None:
     """Best-effort token-usage capture. Defensive getattr against the
-    standard SDK usage objects (Gemini UsageMetadata, OpenAI Usage,
-    Anthropic Usage, Ollama dict). Attribute shapes are standard training
-    knowledge and were NOT verified against a live API in this session."""
+    standard OpenAI-compatible usage objects (verified live against the
+    Agnes gateway, which returns OpenAI Usage shape)."""
     meta = getattr(resp, "usage_metadata", None)
     if meta is None:
         meta = getattr(resp, "usage", None)
@@ -1018,232 +1000,27 @@ def _chunk_prompt(height: int, width: int | None = None, previous_context: str =
         "empty list. Never invent names.\n"
     )
 
-_GEMINI_RESPONSE_SCHEMA = None  # lazily built in analyze_chunk
+class AgnesVisionBackend:
+    """OpenAI-compatible vision backend: Agnes 2.5 Flash primary + 2.0 Flash
+    fallback.
 
-
-def _build_gemini_response_schema():
-    """Build a strict JSON schema for Gemini's response_schema to enforce
-    valid JSON output (response_mime_type alone is insufficient)."""
-    global _GEMINI_RESPONSE_SCHEMA
-    if _GEMINI_RESPONSE_SCHEMA is not None:
-        return _GEMINI_RESPONSE_SCHEMA
-    from google.genai import types
-    panel_entry = types.Schema(
-        type="object",
-        properties={
-            "panel_index": types.Schema(type="integer"),
-            "y_start": types.Schema(type="integer"),
-            "y_end": types.Schema(type="integer"),
-            "narration": types.Schema(type="string"),
-            "dialogue": types.Schema(type="string"),
-            "panel_type": types.Schema(type="string"),
-            "confidence": types.Schema(type="number"),
-            "bubble_boxes": types.Schema(
-                type="array",
-                items=types.Schema(
-                    type="array",
-                    items=types.Schema(type="integer"),
-                ),
-            ),
-        },
-    )
-    _GEMINI_RESPONSE_SCHEMA = types.Schema(
-        type="object",
-        properties={
-            "panels": types.Schema(type="array", items=panel_entry),
-            "characters": types.Schema(type="array", items=types.Schema(type="string")),
-        },
-    )
-    return _GEMINI_RESPONSE_SCHEMA
-
-
-class GeminiVisionBackend:
-    """Gemini backend (default). Verified in this session:
-    - google-genai==2.22.0 import-checked: types.Part.from_bytes / from_text
-      and types.GenerateContentConfig all exist;
-    - generate_content(model=..., contents=[...], config=...) with
-      response_mime_type="application/json" is the documented JSON mode
-      (ai.google.dev/gemini-api/docs/json-mode, updated 2026-09-02).
-    NOT executed against the API in this session (no API key available)."""
-    name = "gemini"
-
-    def __init__(self, model: str = "gemini-2.5-flash",
-                 api_key: str | None = None) -> None:
-        self.model = model
-        from adapters._gemini_keys import KeyRotator, from_env
-        # An explicit key (webapp settings UI, --api-key) wins over env, the
-        # same chain the OpenAI/Anthropic/Xkiro backends use. It used to be
-        # silently dropped here, so a key entered in the UI never reached
-        # the Gemini client and the run failed with "not set".
-        if api_key and api_key.strip():
-            self._rotator = KeyRotator([api_key.strip()])
-        else:
-            self._rotator = from_env()
-        self.usage_log: list[dict] = []
-        self.last_usage: dict | None = None
-        try:
-            from google import genai  # noqa: F401
-        except ImportError as exc:
-            raise ImportError(
-                "Gemini backend requires google-genai; "
-                "install with: pip install -e .[gemini]"
-            ) from exc
-
-    def analyze_chunk(self, image: Image.Image,
-                      previous_context: str = "",
-                      retry_feedback: str = ""
-                      ) -> tuple[list[PanelPlanEntry], list[str]]:
-        from google import genai  # optional dependency, imported lazily
-        from google.genai import types
-
-        buf = io.BytesIO()
-        image.save(buf, format="PNG")
-        prompt = _chunk_prompt(image.size[1], image.size[0], previous_context,
-                               retry_feedback=retry_feedback)
-        log.info("gemini request start model=%s image=%dx%d prompt_len=%d keys=%d",
-                 self.model, image.width, image.height, len(prompt),
-                 self._rotator.total)
-        t0 = time.time()
-        last_exc: Exception | None = None
-        attempts = 0
-        max_attempts = self._rotator.total + 1  # allow one retry across all keys
-        while attempts < max_attempts:
-            api_key = self._rotator.current()
-            try:
-                client = genai.Client(api_key=api_key)
-                resp = client.models.generate_content(
-                    model=self.model,
-                    contents=[  # type: ignore[arg-type]  # SDK stub list-variance quirk
-                        types.Part.from_text(text=prompt),
-                        types.Part.from_bytes(
-                            data=buf.getvalue(), mime_type="image/png"),
-                    ],
-config=types.GenerateContentConfig(
-                           temperature=0.0,
-                           response_mime_type="application/json",
-                           response_schema=_build_gemini_response_schema(),
-                           max_output_tokens=4096,
-                       ),
-                )
-                elapsed = time.time() - t0
-                # Truncation check BEFORE parsing: a MAX_TOKENS answer is cut
-                # mid-JSON and must not be mistaken for a parse error.
-                raise_if_truncated(
-                    _gemini_finish_reason(resp), backend="gemini",
-                    model=self.model, max_tokens=4096, image_size=image.size)
-                raw = resp.text
-                if raw is None:
-                    raw = ""
-                self.last_usage = _capture_usage(resp)
-                self.usage_log.append(self.last_usage or {})
-                log.info("gemini request complete duration=%.2fs response_len=%d usage=%s",
-                         elapsed, len(raw), sanitize(self.last_usage))
-                return parse_entries_from_json(raw, image.size[1],
-                                              chunk_width=image.size[0])
-            except Exception as exc:  # noqa: BLE001 - retry on quota/transient
-                last_exc = exc
-                msg = str(exc).lower()
-                is_quota = (
-                    "429" in msg
-                    or "resource_exhausted" in msg
-                    or "quota" in msg
-                )
-                if is_quota and attempts + 1 < max_attempts:
-                    self._rotator.advance()
-                    log.warning(
-                        "gemini quota/429 on key ending %s; rotating to next key (%d/%d)",
-                        api_key[-4:], attempts + 2, max_attempts
-                    )
-                    attempts += 1
-                    continue
-                raise
-        raise last_exc  # type: ignore[misc]
-
-
-class OpenAIVisionBackend:
-    """OpenAI backend. Verified in this session (openai==3.8.0): the SDK
-    exposes client.chat.completions.create(messages, model, max_tokens,
-    response_format, ...) and client.chat.completions.parse. NOT executed
-    against the API in this session (no key). The parse+retry loop below is
-    the safety net for any response_format quirk on specific model families."""
-    name = "openai"
-
-    def __init__(self, model: str, api_key: str | None = None) -> None:
-        if not model or not model.strip():
-            raise ValueError("--model is required for the openai backend")
-        self.model = model
-        # Key chain: caller api_key -> OPENAI_API_KEY env -> manual webapp
-        # settings.json key (shared helper in adapters.ai_models; no
-        # duplicated file-read logic here).
-        from adapters.ai_models import manual_key
-        self._api_key = (api_key or os.environ.get("OPENAI_API_KEY")
-                         or manual_key())
-        if not self._api_key:
-            raise RuntimeError(
-                "OPENAI_API_KEY is not set; pass api_key or set the env var")
-        self.usage_log: list[dict] = []
-        self.last_usage: dict | None = None
-
-    def analyze_chunk(self, image: Image.Image,
-                      previous_context: str = "",
-                      retry_feedback: str = ""
-                      ) -> tuple[list[PanelPlanEntry], list[str]]:
-        import base64
-
-        import openai  # optional dependency, imported lazily
-
-        buf = io.BytesIO()
-        image.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        client = openai.OpenAI(api_key=self._api_key)
-        prompt = _chunk_prompt(image.size[1], image.size[0], previous_context,
-                               retry_feedback=retry_feedback)
-        resp = client.chat.completions.create(
-            model=self.model,
-            max_tokens=4096,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system",
-                 "content": prompt},
-                {"role": "user",
-                 "content": [{"type": "image_url", "image_url": {
-                     "url": f"data:image/png;base64,{b64}"}}]},
-            ],
-        )
-        # Truncation check BEFORE parsing: a "length" answer is cut mid-JSON.
-        raise_if_truncated(_openai_finish_reason(resp), backend="openai",
-                           model=self.model, max_tokens=4096,
-                           image_size=image.size)
-        raw_text = resp.choices[0].message.content
-        if raw_text is None:
-            raw_text = ""
-        self.last_usage = _capture_usage(resp)
-        self.usage_log.append(self.last_usage or {})
-        return parse_entries_from_json(raw_text, image.size[1],
-                                      chunk_width=image.size[0])
-
-
-class XkiroVisionBackend:
-    """OpenAI-compatible vision backend: Qwen primary + Mistral fallback.
-
-    Default endpoint https://api.xkiro.com/v1 (XKIRO_BASE_URL override),
+    Default endpoint https://apihub.agnes-ai.com/v1 (AGNES_BASE_URL override),
     key from adapters.ai_models.api_key_from_env: explicit param, then
-    manual webapp settings.json, then XKIRO_API_KEY / XKIRO_API_KEYS /
-    GEMINI_API_KEYS / GEMINI_API_KEY.
+    manual webapp settings.json, then AGNES_API_KEY / AGNES_API_KEYS.
 
     The SAME prompt + SAME chunk image is sent to both models; the input /
     output contract (parse_entries_from_json) is identical, so task
     compatibility is preserved. Empty / invalid-JSON / image-rejection /
-    timeout / HTTP errors from Qwen all trigger the Mistral retry via the
-    shared adapters.ai_models wrapper. If both fail, VisionAnalysisError
-    surfaces both causes (never fabricated panels).
+    timeout / HTTP errors from the primary all trigger the fallback retry
+    via the shared adapters.ai_models wrapper. If both fail,
+    VisionAnalysisError surfaces both causes (never fabricated panels).
 
     AI scope: semantic panel understanding only. Physical crop coordinates
     remain advisory here — guided_cutter snaps every boundary to
     deterministically detected gutters and blank_detector stays pure CV.
     """
 
-    name = "xkiro"
+    name = "agnes"
 
     def __init__(self, model: str | None = None,
                  api_key: str | None = None,
@@ -1263,10 +1040,11 @@ class XkiroVisionBackend:
         # Cache key must distinguish the model pair (plus prompt/image,
         # which analyze_strip already folds in via input/config hashes).
         self.model = f"{self.primary_model}=>{self.fallback_model}"
-        self._api_key = api_key or _ai.api_key_from_env()
+        self._explicit_key = api_key.strip() if api_key and api_key.strip() else None
+        self._api_key = self._explicit_key or _ai.api_key_from_env()
         if not self._api_key and request_fn is None:
             raise RuntimeError(
-                "XKIRO_API_KEY is not set; set it in .env or pass api_key "
+                "AGNES_API_KEY is not set; set it in .env or pass api_key "
                 "(use --backend none for offline mode)")
         self._base_url = (base_url or _ai.DEFAULT_BASE_URL).rstrip("/")
         self.timeout = timeout
@@ -1279,7 +1057,7 @@ class XkiroVisionBackend:
         self.last_primary_error: Exception | None = None
 
     def _request_once(self, model_id: str, prompt: str, b64: str,
-                      image: Image.Image):
+                      image: Image.Image, api_key: str | None = None):
         """Single raw request for `model_id`. Raises on any failure,
         including empty or non-JSON responses (callers treat as fallback
         triggers, never as usable output)."""
@@ -1290,7 +1068,8 @@ class XkiroVisionBackend:
             return raw_text, None
         import openai  # optional dependency, imported lazily
 
-        client = openai.OpenAI(api_key=self._api_key, base_url=self._base_url,
+        client = openai.OpenAI(api_key=api_key or self._api_key,
+                               base_url=self._base_url,
                                timeout=self.timeout)
         resp = client.chat.completions.create(
             model=model_id,
@@ -1308,16 +1087,17 @@ class XkiroVisionBackend:
             raise ValueError(f"model {model_id} returned an empty response")
         # Truncation check BEFORE parsing: a "length" answer is cut mid-JSON
         # and would otherwise surface as a misleading parse failure. It is
-        # raised as a response-quality error, so the Mistral fallback model
+        # raised as a response-quality error, so the fallback model
         # gets its own chance at the same chunk.
-        raise_if_truncated(_openai_finish_reason(resp), backend="xkiro",
+        raise_if_truncated(_openai_finish_reason(resp), backend="agnes",
                            model=model_id, max_tokens=self.max_tokens,
                            image_size=image.size)
         return raw_text, resp
 
     def _analyze_with(self, model_id: str, image: Image.Image,
-                      prompt: str, b64: str):
-        raw_text, resp = self._request_once(model_id, prompt, b64, image)
+                      prompt: str, b64: str, api_key: str | None = None):
+        raw_text, resp = self._request_once(model_id, prompt, b64, image,
+                                            api_key=api_key)
         if resp is not None:
             self.last_usage = _capture_usage(resp)
             self.usage_log.append(self.last_usage or {})
@@ -1346,322 +1126,75 @@ class XkiroVisionBackend:
         b64 = base64.b64encode(buf.getvalue()).decode("ascii")
         prompt = _chunk_prompt(image.size[1], image.size[0], previous_context,
                                retry_feedback=retry_feedback)
-        operation = f"xkiro-analyze-chunk:{image.size[0]}x{image.size[1]}"
-        try:
-            outcome = _ai.call_ai_with_fallback(
-                operation,
-                lambda: self._analyze_with(self.primary_model, image,
-                                           prompt, b64),
-                lambda: self._analyze_with(self.fallback_model, image,
-                                           prompt, b64),
-                primary_model=self.primary_model,
-                fallback_model=self.fallback_model)
-        except _ai.AIFallbackError as exc:
-            # Both models returned VALID but EMPTY panel lists: a
-            # legitimately blank chunk (white space between scenes), not a
-            # failure. Accept it — the whole-strip coverage check and the
-            # fallback ratio decide downstream whether the plan is usable.
-            # Anything else is a real failure: surface it so the caller can
-            # degrade to the gutter detector with an honest reason.
-            if (isinstance(exc.primary_error, EmptyChunkResult)
-                    and isinstance(exc.fallback_error, EmptyChunkResult)):
-                return [], []
+        operation = f"agnes-analyze-chunk:{image.size[0]}x{image.size[1]}"
+        # Key pool: rotate across AGNES_API_KEY(S) so one rate-limited key
+        # degrades to the next instead of failing the chunk. The start key
+        # round-robins per chunk so parallel chunks spread load (3 keys x
+        # 20 RPM each). Key values never appear in logs (index only).
+        keys = _ai.api_key_pool(self._explicit_key)
+        if not keys and self._request_fn is None:
             raise VisionAnalysisError(
-                f"xkiro vision failed (primary {self.primary_model}: "
-                f"{exc.primary_error}; fallback {self.fallback_model}: "
-                f"{exc.fallback_error})") from exc
-        self.last_model_used = outcome.model_used
-        self.fallback_used = outcome.fallback_used
-        self.last_primary_error = outcome.primary_error
-        return outcome.result
-
-
-class AnthropicVisionBackend:
-    """Anthropic backend. Verified in this session (anthropic==1.4.0):
-    messages.create(model, max_tokens, messages, ...) — image content blocks
-    with source type "base64" are recorded in the current vision docs.
-    Structured JSON is enforced by the strict prompt + parse/retry loop here
-    (no output_config usage, so no unverified SDK surface is invoked).
-    NOT executed against the API in this session (no key)."""
-    name = "anthropic"
-
-    def __init__(self, model: str, api_key: str | None = None) -> None:
-        if not model or not model.strip():
-            raise ValueError("--model is required for the anthropic backend")
-        self.model = model
-        # Key chain: caller api_key -> ANTHROPIC_API_KEY env -> manual webapp
-        # settings.json key (shared helper in adapters.ai_models; no
-        # duplicated file-read logic here).
-        from adapters.ai_models import manual_key
-        self._api_key = (api_key or os.environ.get("ANTHROPIC_API_KEY")
-                         or manual_key())
-        if not self._api_key:
-            raise RuntimeError(
-                "ANTHROPIC_API_KEY is not set; pass api_key or set the env var")
-        self.usage_log: list[dict] = []
-        self.last_usage: dict | None = None
-
-    def analyze_chunk(self, image: Image.Image,
-                      previous_context: str = "",
-                      retry_feedback: str = ""
-                      ) -> tuple[list[PanelPlanEntry], list[str]]:
-        import base64
-
-        import anthropic  # optional dependency, imported lazily
-
-        buf = io.BytesIO()
-        image.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        client = anthropic.Anthropic(api_key=self._api_key)
-        prompt = _chunk_prompt(image.size[1], image.size[0], previous_context,
-                               retry_feedback=retry_feedback)
-        resp = client.messages.create(
-            model=self.model,
-            max_tokens=4096,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image",
-                     "source": {"type": "base64",
-                                "media_type": "image/png",
-                                "data": b64}},
-                    {"type": "text",
-                     "text": prompt},
-                ],
-            }],
-        )
-        # Truncation check BEFORE parsing: stop_reason "max_tokens" means the
-        # JSON was cut off and must be retried, not parsed.
-        raise_if_truncated(getattr(resp, "stop_reason", None),
-                           backend="anthropic", model=self.model,
-                           max_tokens=4096, image_size=image.size)
-        text = "".join(
-            str(getattr(block, "text", None) or "")
-            for block in resp.content)
-        self.last_usage = _capture_usage(resp)
-        self.usage_log.append(self.last_usage or {})
-        return parse_entries_from_json(text, image.size[1],
-                                      chunk_width=image.size[0])
-
-
-class OllamaVisionBackend:
-    """Local, free, offline backend via Ollama's POST /api/generate.
-
-    Verified against the Ollama API docs (fetched 2026-09-05):
-    - request params: model (required), prompt, images (list of base64),
-      format ("json" enables JSON mode — docs: "Enable JSON mode by setting
-      the format parameter to json"), stream (false -> a single response
-      object);
-    - response object carries the generated "response" text.
-    Structured outputs (JSON schema in `format`) are documented too; we use
-    the simpler json mode plus the strict parse/retry safety net.
-    NOT executed in this session (no local Ollama server/model available).
-    """
-    name = "ollama"
-
-    def __init__(self, model: str = "llava", base_url: str | None = None,
-                 timeout: int = 120) -> None:
-        if not model or not model.strip():
-            raise ValueError("--model is required for the ollama backend")
-        self.model = model
-        self.base_url = (base_url or os.environ.get("OLLAMA_BASE_URL")
-                         or "http://localhost:11434").rstrip("/")
-        self.timeout = timeout
-        self.usage_log: list[dict] = []
-        self.last_usage: dict | None = None
-
-    def _build_payload(self, image: Image.Image, prompt: str) -> dict:
-        import base64
-        buf = io.BytesIO()
-        image.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        return {"model": self.model, "prompt": prompt, "images": [b64],
-                "stream": False, "format": "json"}
-
-    def analyze_chunk(self, image: Image.Image,
-                      previous_context: str = "",
-                      retry_feedback: str = ""
-                      ) -> tuple[list[PanelPlanEntry], list[str]]:
-        import urllib.request
-
-        prompt = _chunk_prompt(image.size[1], image.size[0], previous_context,
-                               retry_feedback=retry_feedback)
-        payload = self._build_payload(image, prompt)
-        req = urllib.request.Request(
-            f"{self.base_url}/api/generate",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        # Ollama reports done_reason "length" when the output was cut off by
-        # the context/num_predict limit — that answer is incomplete JSON.
-        raise_if_truncated(data.get("done_reason"), backend="ollama",
-                           model=self.model, image_size=image.size)
-        text = data.get("response", "")
-        self.last_usage = _capture_usage(data)
-        self.usage_log.append(self.last_usage or {})
-        return parse_entries_from_json(text, image.size[1],
-                                      chunk_width=image.size[0])
-
-
-class CloudflareWorkersAIBackend:
-    """Cloudflare Workers AI backend (default: Llama 3.2 11B Vision).
-
-    Uses the Workers AI REST API:
-    POST https://api.cloudflare.com/client/v4/accounts/{account_id}/ai/run/
-         @cf/meta/llama-3.2-11b-vision-instruct
-
-    The first call sends `{"prompt":"agree"}` to accept Meta's license; the
-    real request then follows in the same retry loop.
-
-    Requires CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID env vars
-    (or pass them as api_key / account_id). The account_id is embedded in
-    the URL path; the token goes in the Authorization header.
-    """
-    name = "cloudflare"
-    DEFAULT_MODEL = "@cf/meta/llama-3.2-11b-vision-instruct"
-
-    def __init__(self, model: str = DEFAULT_MODEL,
-                 api_key: str | None = None,
-                 account_id: str | None = None,
-                 endpoint: str | None = None) -> None:
-        self.model = model
-        self._api_key = api_key or os.environ.get("CLOUDFLARE_API_TOKEN")
-        if not self._api_key:
-            raise RuntimeError(
-                "CLOUDFLARE_API_TOKEN is not set; pass api_key or set the env var")
-        self._account_id = account_id or os.environ.get("CLOUDFLARE_ACCOUNT_ID")
-        if not self._account_id:
-            raise RuntimeError(
-                "CLOUDFLARE_ACCOUNT_ID is not set; pass account_id or set the env var")
-        self._endpoint = (endpoint or "").rstrip("/")
-        self.usage_log: list[dict] = []
-        self.last_usage: dict | None = None
-        self._agreed_to_license: bool = False
-
-    def _post(self, url: str, payload: dict,
-              headers: dict) -> dict:
-        req = urllib.request.Request(
-            url,
-            data=json.dumps(payload).encode("utf-8"),
-            headers=headers,
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=120) as resp:
-                return json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as exc:
-            if exc.code == 403:
-                raw = exc.read().decode("utf-8", errors="replace")
+                "agnes vision failed: no API key available "
+                "(set AGNES_API_KEY or use --backend none)")
+        if not keys:
+            keys = [""]
+        start = _ai.pool_start_index(len(keys))
+        wait_s, rounds = _ai._rate_wait_config()
+        last_exc: _ai.AIFallbackError | None = None
+        for rnd in range(rounds + 1):
+            for attempt in range(len(keys)):
+                key = keys[(start + attempt) % len(keys)]
                 try:
-                    data = json.loads(raw)
-                except json.JSONDecodeError:
+                    outcome = _ai.call_ai_with_fallback(
+                        operation,
+                        lambda key=key: self._analyze_with(
+                            self.primary_model, image, prompt, b64,
+                            api_key=key or None),
+                        lambda key=key: self._analyze_with(
+                            self.fallback_model, image, prompt, b64,
+                            api_key=key or None),
+                        primary_model=self.primary_model,
+                        fallback_model=self.fallback_model)
+                except _ai.AIFallbackError as exc:
+                    # Both models returned VALID but EMPTY panel lists: a
+                    # legitimately blank chunk (white space between scenes),
+                    # not a failure. Accept it — the whole-strip coverage
+                    # check and the fallback ratio decide downstream whether
+                    # the plan is usable.
+                    if (isinstance(exc.primary_error, EmptyChunkResult)
+                            and isinstance(exc.fallback_error, EmptyChunkResult)):
+                        return [], []
+                    last_exc = exc
+                    if _ai.is_rate_limit_error(exc):
+                        if attempt + 1 < len(keys):
+                            log.warning(
+                                "agnes rate-limit on key %d/%d; rotating to "
+                                "next key", attempt + 1, len(keys))
+                            continue
+                        break  # whole pool throttled: wait below, or fail
                     raise VisionAnalysisError(
-                        f"Cloudflare Workers AI 403: {raw[:500]}") from exc
-                return data
-            raise
-
-    def analyze_chunk(self, image: Image.Image,
-                      previous_context: str = "",
-                      retry_feedback: str = ""
-                      ) -> tuple[list[PanelPlanEntry], list[str]]:
-        import base64
-
-        buf = io.BytesIO()
-        image.save(buf, format="PNG")
-        b64 = base64.b64encode(buf.getvalue()).decode("ascii")
-        url = (
-            f"{self._endpoint}/accounts/"
-            f"{self._account_id}/ai/run/{self.model}"
-        ) if self._endpoint else (
-            f"https://api.cloudflare.com/client/v4/accounts/"
-            f"{self._account_id}/ai/run/{self.model}"
-        )
-        headers = {
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-        }
-        last_err = retry_feedback  # seed with the outer retry loop's error
-        for attempt in range(1, 4):
-            prompt = _chunk_prompt(image.size[1], image.size[0], previous_context,
-                                   retry_feedback=last_err)
-            if not self._agreed_to_license:
-                agree_payload = {"prompt": "agree"}
-                data = self._post(url, agree_payload, headers)
-                if data.get("success"):
-                    self._agreed_to_license = True
-                    log.debug("Cloudflare: accepted Meta license for %s",
-                              self.model)
-                elif data.get("errors"):
-                    err_msg = str(data["errors"])
-                    last_err = f"license agreement failed: {err_msg}"
-                    log.warning("Cloudflare license attempt %d/3: %s",
-                                attempt, err_msg)
-                    time.sleep(attempt)
-                    continue
-            payload = {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{b64}"
-                                },
-                            },
-                        ],
-                    }
-                ],
-                "max_tokens": 4096,
-                "temperature": 0.1,
-                "response_format": {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "panel_plan",
-                        "strict": True,
-                        "schema": _PANEL_RESPONSE_SCHEMA,
-                    },
-                },
-            }
-            data = self._post(url, payload, headers)
-            if not data.get("success", False):
-                errors = data.get("errors", [data])
-                if any("JSON Mode couldn't be met" in str(e) for e in errors):
-                    raise VisionAnalysisError(
-                        "Cloudflare JSON Mode couldn't be met; the model "
-                        "could not comply with the requested schema")
-                raise VisionAnalysisError(
-                    f"Cloudflare Workers AI error: {errors}")
-            if "response" in data and isinstance(data["response"], dict):
-                text = json.dumps(data["response"])
-                usage_src = data
-            else:
-                result = data.get("result", {})
-                text = (result.get("response", "")
-                        if isinstance(result, dict) else str(result))
-                if not isinstance(text, str):
-                    log.debug("Cloudflare raw result: %s", result)
-                    text = json.dumps(text) if isinstance(text, dict) else str(text)
-                usage_src = result
-            # Best-effort truncation gate: Workers AI surfaces finish_reason
-            # on the result object. A truncated answer is cut mid-JSON and
-            # must be retried, never parsed.
-            raise_if_truncated(
-                (usage_src.get("finish_reason")
-                 if isinstance(usage_src, dict) else None),
-                backend="cloudflare", model=self.model, max_tokens=4096,
-                image_size=image.size)
-            try:
-                entries, new_chars = parse_entries_from_json(
-                    text, image.size[1], chunk_width=image.size[0])
-                self.last_usage = _capture_usage(usage_src)
-                self.usage_log.append(self.last_usage or {})
-                return entries, new_chars
-            except Exception as exc:  # noqa: BLE001 - retried then re-raised
-                last_err = str(exc)
-                log.warning("Cloudflare chunk attempt %d/3 failed: %s",
-                            attempt, exc)
-                time.sleep(attempt)
+                        f"agnes vision failed (primary {self.primary_model}: "
+                        f"{exc.primary_error}; fallback {self.fallback_model}: "
+                        f"{exc.fallback_error})") from exc
+                self.last_model_used = outcome.model_used
+                self.fallback_used = outcome.fallback_used
+                self.last_primary_error = outcome.primary_error
+                return outcome.result
+            # Whole pool throttled this round: Agnes free tier recovers by
+            # waiting ("pause a few minutes and retry"), so sleep with linear
+            # backoff instead of failing the chunk — unless out of rounds.
+            assert last_exc is not None  # loop always runs >= 1 key
+            if rnd >= rounds:
+                break
+            delay = wait_s * (rnd + 1)
+            log.warning("agnes pool throttled (all %d key(s)); waiting %.0fs "
+                        "(round %d/%d, %s)", len(keys), delay, rnd + 1,
+                        rounds, operation)
+            time.sleep(delay)
+        assert last_exc is not None
         raise VisionAnalysisError(
-            "Cloudflare Workers AI failed after 3 attempts")
+            f"agnes vision failed on all {len(keys)} key(s): {last_exc}") \
+            from last_exc
+
+
+

@@ -1,0 +1,100 @@
+{
+  "source": "002.webp",
+  "width": 800,
+  "height": 8230,
+  "plan_hash": "711f24c86d475bc2d5931e6755e02aa9872e879b53725385f6988e7ea756df84",
+  "config": {
+    "tolerance": 80,
+    "max_panel_height": 1600,
+    "variance_threshold": 6.0,
+    "edge_threshold": 30.0,
+    "bubble_pad": 8,
+    "use_edge_density": true,
+    "min_gutter_run": 4,
+    "blur_sigma": 0.5,
+    "min_panel_height": 150,
+    "output_width": 390,
+    "min_output_height": 760,
+    "max_output_height": 800,
+    "normalize_output": true,
+    "preserve_boundaries": false,
+    "blank_detection": true,
+    "blank_preset": "conservative"
+  },
+  "panels": [
+    {
+      "id": "001",
+      "panel_index": 1,
+      "y_start": 0,
+      "y_end": 6395,
+      "narration": "A stormy view of Tower Floor 8 with glowing energy lines and dark structures. A snowy mountain landscape with towering glowing blue structures embedded in dark rock faces, with small figures visible at the bottom. A barren frozen wasteland under a snowy sky; the words 'THE DEADLANDS' label the bleak terrain of dark jagged rocks and glowing blue crystals, with a distant dark mass of figures on the horizon. A glowing ring hovers in the dark sky as debris falls around it.",
+      "dialogue": "TOWER, FLOOR 8. THE DEADLANDS ザッ",
+      "panel_type": "transition_gutter",
+      "confidence": 0.98,
+      "image_file": "panel_001.png",
+      "output_width": 800,
+      "output_height": 6395,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "snap_distances": [
+        0,
+        15
+      ],
+      "snap_measured": [
+        false,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=5913.87",
+        "edge_density=33.64",
+        "entropy=5.56",
+        "color_spread=61.95",
+        "fg_ratio=0.4634"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "005",
+      "panel_index": 5,
+      "y_start": 6395,
+      "y_end": 8230,
+      "narration": "Armored figures stand still in a cold, snowy landscape.",
+      "dialogue": "",
+      "panel_type": "single",
+      "confidence": 0.82,
+      "image_file": "panel_005.png",
+      "output_width": 800,
+      "output_height": 1835,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        15,
+        0
+      ],
+      "snap_measured": [
+        true,
+        false
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=8050.49",
+        "edge_density=31.76",
+        "entropy=3.84",
+        "color_spread=65.33",
+        "fg_ratio=0.3004"
+      ],
+      "context_only": false
+    }
+  ],
+  "blank_detection_skipped": false
+}

@@ -30,6 +30,7 @@ from PIL import Image
 
 import panel_filter as pf
 from guided_cutter import CutArtifact, CutPanel
+from pydantic import ValidationError
 
 W = 800  # strip width used by every fixture
 
@@ -680,6 +681,77 @@ def test_cut_panel_context_only_survives_json_roundtrip():
         '"dialogue":"","panel_type":"single","confidence":0.9,'
         '"image_file":"panel_002.png"}')
     assert p3.context_only is False
+
+
+def test_cut_panel_context_only_plus_blank_is_rejected():
+    # The one genuinely contradictory state: a panel demoted to context-only
+    # AND scored blank. Blank panels are removed, never demoted, so this
+    # pairing indicates a Phase-2/2.5 bug and must fail loudly.
+    with pytest.raises(ValidationError) as ei:
+        CutPanel(id="001", panel_index=1, y_start=0, y_end=100,
+                 narration="", dialogue="hi", panel_type="single",
+                 confidence=0.9, image_file="panel_001.png",
+                 context_only=True, blank_flag="blank")
+    assert "context_only" in str(ei.value)
+    assert "blank" in str(ei.value)
+
+
+def test_cut_panel_context_only_keeps_narration():
+    # Designed behavior, guarded: the narration field is INTENTIONALLY
+    # retained as story context on context-only panels (it is simply never
+    # spoken). A non-empty narration must NOT be treated as inconsistent.
+    p = CutPanel(id="002", panel_index=2, y_start=100, y_end=200,
+                 narration="Retained as context, never spoken.",
+                 dialogue="inner monologue", panel_type="single",
+                 confidence=0.9, image_file="panel_002.png",
+                 context_only=True)
+    assert p.context_only is True
+    assert p.narration == "Retained as context, never spoken."
+    # suspicious/normal blank_flag coexists fine with context_only
+    CutPanel(id="003", panel_index=3, y_start=200, y_end=300,
+             narration="", dialogue="hi", panel_type="single",
+             confidence=0.9, image_file="panel_003.png",
+             context_only=True, blank_flag="suspicious")
+
+
+def _panels_schema_path() -> Path:
+    import guided_cutter
+    return (Path(guided_cutter.__file__).resolve().parent
+            / "schemas" / "panels.schema.json")
+
+
+def test_artifact_blank_detection_skipped_roundtrip_and_schema():
+    # The flag that lets the webapp warn "a safety layer was off" must
+    # survive a panels.json round-trip and validate against the wire schema.
+    import jsonschema
+    art = CutArtifact(source="strip.png", width=800, height=2400,
+                      plan_hash="x", config={},
+                      panels=[CutPanel(id="001", panel_index=1, y_start=0,
+                                       y_end=2400, narration="Scene.",
+                                       dialogue="", panel_type="single",
+                                       confidence=0.9,
+                                       image_file="panel_001.png")],
+                      blank_detection_skipped=True)
+    data = json.loads(art.model_dump_json())
+    assert data["blank_detection_skipped"] is True
+    # round-trip through the Pydantic model
+    assert CutArtifact.model_validate_json(
+        json.dumps(data)).blank_detection_skipped is True
+    # and through the JSON Schema (schema parity: the model field must be
+    # declared there, since the schema is additionalProperties: false)
+    schema = json.loads(_panels_schema_path().read_text("utf-8"))
+    jsonschema.validate(instance=data, schema=schema)
+
+
+def test_artifact_legacy_missing_blank_detection_skipped_validates():
+    # Legacy artifacts predate the field; it is optional with default false.
+    import jsonschema
+    legacy = ("{'source':'s.png','width':800,'height':100,'plan_hash':'x',"
+              "'config':{},'panels':[]}".replace("'", '"'))
+    art = CutArtifact.model_validate_json(legacy)
+    assert art.blank_detection_skipped is False
+    schema = json.loads(_panels_schema_path().read_text("utf-8"))
+    jsonschema.validate(instance=json.loads(legacy), schema=schema)
 
 
 # --------------------------------------------------------------------------- #

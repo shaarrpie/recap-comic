@@ -773,38 +773,22 @@ def test_dimension_mismatch_fails_on_wrong_aspect_ratio(tmp_path: Path) -> None:
 
 
 
-def test_ollama_backend_name_accepted(tmp_path: Path) -> None:
-    """Bug 1.7 regression: the CLI advertises ollama, so build_backend must
-    accept 'ollama' (and 'local') without raising."""
-    # We can't actually call Ollama, but we can verify the factory accepts
-    # the name without a network call (it should fail on connection, not
-    # on unknown backend).
-    try:
-        gp.build_backend("ollama", model="llava")
-    except ValueError as exc:
-        if "unknown backend" in str(exc):
+def test_legacy_backend_names_map_to_agnes() -> None:
+    """Removed providers resolve to Agnes (sole provider): old commands,
+    configs and saved settings keep working without raising."""
+    for name in ("agnes", "xkiro", "qwen", "mistral", "gemini", "openai",
+                 "anthropic", "ollama", "local", "cloudflare"):
+        try:
+            b = gp.build_backend(name, api_key="test-key")
+        except ValueError as exc:
             raise AssertionError(
-                "build_backend rejected 'ollama' — backend name drift") from exc
-        # Any other error (connection, etc.) is fine — we just want to
-        # confirm the name is recognized.
-    except (ConnectionError, OSError):
-        pass  # connection errors are acceptable here
-
-
-def test_cloudflare_backend_name_accepted() -> None:
-    """Cloudflare Workers AI backend must be accepted by build_backend."""
-    try:
-        gp.build_backend("cloudflare")
-    except ValueError as exc:
-        if "unknown backend" in str(exc):
-            raise AssertionError(
-                "build_backend rejected 'cloudflare' — backend name drift") from exc
-    except RuntimeError:
-        pass  # missing credentials is fine; we only care the name is recognized
+                f"build_backend rejected {name!r}") from exc
+        assert isinstance(b, sa.AgnesVisionBackend)
+        assert b.primary_model and b.fallback_model
 
 
 def test_parse_retry_delay_from_quota_error() -> None:
-    """_parse_retry_delay extracts seconds from a Gemini 429 JSON body."""
+    """_parse_retry_delay extracts seconds from a quota/429 JSON body."""
     exc = ValueError(
         '{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", '
         '"details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", '

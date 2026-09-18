@@ -1,18 +1,16 @@
 # adapters/tts_edge.py
-"""edge-tts adapter (default TTS).
+"""edge-tts adapter (cloud TTS via Microsoft Edge).
 
-Verified against edge-tts 7.x source, 2026-09-05:
-- src/edge_tts/communicate.py: Communicate(text, voice=..., rate=...,
-  volume=..., pitch=..., boundary="SentenceBoundary"|"WordBoundary",
-  connect_timeout=10, receive_timeout=60). 7.2.8 DEFAULTS TO
-  "SentenceBoundary" — word timing requires boundary="WordBoundary".
-  .stream() yields dicts; types 'audio' (key 'data') and
-  'WordBoundary'/'SentenceBoundary' (keys 'offset', 'duration', 'text');
-  offset/duration are in 100-ns ticks (submaker.py divides by 10 to get
-  microseconds, i.e. TICKS_PER_SECOND == 10_000_000).
-- .save(audio_fname, metadata_fname) writes JSONL of boundary events.
-- stream() may only be called once per Communicate instance.
-- CLI: `edge-tts --list-voices` lists all voices.
+edge-tts 7.x is installed; this is the only cloud provider the dispatcher
+needs.  Verified against edge-tts 7.2.8:
+  - Communicate(text, voice=..., rate=..., pitch=..., boundary=...)
+    boundary="WordBoundary" is REQUIRED to get per-word timing (the default
+    "SentenceBoundary" yields no word events, so captions would fall back to
+    one cue per panel).
+  - .stream() yields dicts with type 'audio' (key 'data') and
+    'WordBoundary' (keys 'offset', 'duration', 'text'); offset/duration are
+    in 100-ns ticks (TICKS_PER_SECOND == 10_000_000).
+  - stream() may only be called ONCE per Communicate instance.
 """
 from __future__ import annotations
 
@@ -50,6 +48,11 @@ def synthesize_entry(entry: NarrationEntry, out_dir: Path, *, voice: str,
                      rate: str = "+0%", pitch: str = "+0Hz",
                      probe_duration: Callable[[Path], float],
                      retries: int = 3) -> AudioEntry | None:
+    """Synthesize one narration entry with edge-tts.
+
+    Returns an AudioEntry on success, None on empty text.  Raises after
+    `retries` attempts (text saved to <id>.txt for manual retry).
+    """
     if not entry.text.strip():
         return None
     out_path = out_dir / f"{entry.id}.mp3"
@@ -83,7 +86,7 @@ async def synthesize_entry_async(entry: NarrationEntry, out_dir: Path, *,
                                  pitch: str = "+0Hz",
                                  probe_duration: Callable[[Path], float],
                                  retries: int = 3) -> AudioEntry | None:
-    """Async variant of synthesize_entry for use inside an existing event loop."""
+    """Async variant for use inside an existing event loop."""
     if not entry.text.strip():
         return None
     out_path = out_dir / f"{entry.id}.mp3"

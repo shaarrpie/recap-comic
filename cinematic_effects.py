@@ -91,6 +91,14 @@ class CinematicConfig:
     letterbox_enabled: bool = False
     letterbox_height_px: int = 60  # px per bar
 
+    # Blur background (YouTube-standard: panel floats on a blurred
+    # full-frame copy of itself with a zoom push-in). Disabled by
+    # default because it doubles the per-clip filter work; the
+    # webapp cinematic path enables it via global_overrides.
+    blur_background: bool = False
+    blur_sigma: float = 30.0
+    blur_zoom: float = 0.5        # push-in from contain-fit to cover×(1+zoom)
+
     # Audio
     bgm_path: str | None = None    # optional background music
     bgm_volume: float = 0.18       # relative to narration
@@ -263,6 +271,49 @@ def _zoompan_filter(
     )
 
 
+def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
+                    zoom: float = 0.0, dur: float = 1.0) -> str:
+    """One panel composited onto a blurred, slightly darkened full-frame
+    copy of itself (YouTube-standard background).
+
+    Background branch: cover-scaled to the canvas and centre-cropped
+    BEFORE the blur, so the blurred copy always fills the whole
+    w x h frame edge to edge — the blur is never letterboxed.
+
+    Foreground branch: at t=0 the panel is contain-fitted (the whole
+    panel stays visible and the blur shows around it), then it is
+    pushed in over the clip until it COVERS the frame, reaching
+    (cover x (1 + zoom)) by the last frame.
+
+    zoom=0 (or dur<=0) reproduces the static contain-fit.
+
+    Returns the chain WITHOUT the trailing label; the caller appends
+    transitions/setsar/fps/[vN] exactly as for the plain scale+crop chain.
+    """
+    if zoom > 0 and dur > 0:
+        contain = f"min({w}/iw,{h}/ih)"
+        cover = f"max({w}/iw,{h}/ih)"
+        zexpr = (f"({contain}+({cover}*(1+{zoom:g})-{contain})*t/{dur:.3f})")
+        fg = (f"[fgr{i}]"
+              f"scale=w='iw*{zexpr}':h='ih*{zexpr}':eval=frame:flags=lanczos"
+              f"[fg{i}]")
+    else:
+        fg = (f"[fgr{i}]"
+              f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos"
+              f"[fg{i}]")
+    return (
+        f"split=2[bgr{i}][fgr{i}];"
+        f"[bgr{i}]"
+        f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop={w}:{h}:(iw-{w})/2:(ih-{h})/2,"
+        f"gblur=sigma={sigma:g},"
+        f"eq=brightness=-0.10:saturation=1.3"
+        f"[bg{i}];"
+        f"{fg};"
+        f"[bg{i}][fg{i}]overlay=x=(W-w)/2:y=(H-h)/2"
+    )
+
+
 def _shake_filter(duration_frames: int, cfg: CinematicConfig) -> str:
     """Crop-based screen shake for the first shake_duration seconds.
 
@@ -349,16 +400,26 @@ def _build_panel_clip(
     # ── Build filter chain ──────────────────────────────────────────────────
     # Input tag: [vraw]
     chain = []
+    blur_i = 0  # unique label index for the blur bg split/overlay
 
-    # 1. Scale+pad to output size first (so zoompan has a consistent canvas)
-    chain.append(_scale_pad_filter(w, h))
+    if cfg.blur_background:
+        # Blurred background + zoom push-in (YouTube-standard look).
+        # The blur chain replaces scale+pad and zoompan: its foreground
+        # handles the contain→cover×(1+zoom) push-in and the overlay
+        # centres it; the background is a cover-cropped, blurred copy.
+        chain.append(_blur_bg_chain(blur_i, w, h, cfg.blur_sigma,
+                                       zoom=cfg.blur_zoom, dur=duration_s))
+        blur_i += 1
+    else:
+        # 1. Scale+pad to output size (so zoompan has a consistent canvas)
+        chain.append(_scale_pad_filter(w, h))
+        # 2. zoompan (zoom + Ken-Burns pan)
+        chain.append(_zoompan_filter(panel_type, frames, w, h, cfg, pan_dir))
 
-    # 2. zoompan (zoom + Ken-Burns pan)
-    chain.append(_zoompan_filter(panel_type, frames, w, h, cfg, pan_dir))
-
-    # 3. Screen shake on action panels
+    # 3. Screen shake on action panels (skipped in blur mode — the
+    #    zoom push-in already provides motion; shake + blur double-frames)
     if (cfg.shake_enabled and cfg.style == "dynamic"
-            and panel_type == "action"):
+            and panel_type == "action" and not cfg.blur_background):
         chain.append(_shake_filter(frames, cfg))
 
     # 4. Color grade
@@ -429,7 +490,8 @@ def _build_panel_clip(
             # the clip would render audio-only (observed: 39/50 clips had
             # no video stream). Map the filtered video explicitly.
             cmd += ["-map", "0:v"]
-        cmd += ["-map", f"{audio_input_idx}:a", "-acodec", "aac", "-b:a", "192k"]
+        cmd += ["-map", f"{audio_input_idx}:a", "-acodec", "aac",
+                    "-b:a", "192k", "-ar", "48000", "-ac", "2"]
     else:
         cmd += ["-an"]
 
@@ -489,13 +551,16 @@ def _build_glitch_clip(
         # Video: lavfi color source looped for dur_s
         "-f", "lavfi",
         "-i", f"color=white:s={w}x{h}:r={cfg.fps}",
-        # Audio: silent lavfi source
+        # Audio: silent lavfi source (48 kHz to match the concat
+        # demuxer's normalized output sample rate; prevents the
+        # "Invalid argument" (-22) abort when the aac encoder hits
+        # the 44.1 kHz → 48 kHz format switch mid-stream).
         "-f", "lavfi",
-        "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
+        "-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
         "-map", "0:v", "-map", "1:a",
         "-vf", filt,
         "-vcodec", "libx264", "-preset", "fast", "-crf", "18",
-        "-acodec", "aac", "-b:a", "192k",
+        "-acodec", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
         "-pix_fmt", "yuv420p",
         "-t", f"{dur_s:.3f}",
         "-r", str(cfg.fps),
@@ -683,13 +748,17 @@ def make_cinematic_video(
 
     log.info("concatenating %d clips → %s", len(clip_paths), out_mp4)
 
+    # All per-panel clips are encoded with identical parameters
+    # (libx264 / yuv420p / 48kHz stereo aac / fps=cfg.fps), so the
+    # concat DEMUXER can stream-copy them into the final file —
+    # the single expensive re-encode is eliminated.
+    # (Background music still requires a re-encode for amix.)
     concat_cmd = [
         ffmpeg, "-y",
         "-f", "concat", "-safe", "0",
         "-i", str(concat_list),
     ]
 
-    # Optional: mix in background music
     if cfg.bgm_path and Path(cfg.bgm_path).is_file():
         concat_cmd += ["-i", cfg.bgm_path]
         concat_cmd += [
@@ -697,25 +766,19 @@ def make_cinematic_video(
             f"[0:a]volume=1[narr];[1:a]volume={cfg.bgm_volume}[bgm];"
             "[narr][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]",
             "-map", "0:v", "-map", "[aout]",
+            "-c:v", "copy",
+            "-acodec", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
         ]
     else:
-        concat_cmd += ["-map", "0:v", "-map", "0:a?"]
+        concat_cmd += ["-c", "copy", "-map", "0:v", "-map", "0:a?"]
 
-    concat_cmd += [
-        "-vcodec", "libx264", "-preset", "fast", "-crf", "17",
-        # The concat demuxer feeds panel clips (24kHz mono from edge-tts)
-        # and glitch transitions (44.1kHz stereo) into ONE output stream;
-        # without normalisation the aac encoder aborts mid-stream when the
-        # format switches ("Invalid argument", error -22).
-        "-acodec", "aac", "-b:a", "192k", "-ar", "48000", "-ac", "2",
-        "-pix_fmt", "yuv420p",
-        "-movflags", "+faststart",
-        str(out_mp4),
-    ]
+    concat_cmd += ["-pix_fmt", "yuv420p", "-movflags", "+faststart",
+                       str(out_mp4)]
 
-    # Re-encoding N clips (each already h264/aac) is the slow tail of a
-    # cinematic render: a 50-panel cut re-encodes ~100 segments and can
-    # exceed the per-clip 600s budget several times over.
+    # Concat demuxer with -c copy: all per-panel clips share identical
+    # codec/resolution/fps/pixel-format/audio parameters, so no
+    # re-encode is needed. With BGM, only the amix audio track is
+    # re-encoded (video is stream-copied).
     _run(concat_cmd, label="concat", timeout=3600)
 
     log.info("done  out=%s  duration=%.1fs", out_mp4, total_duration)

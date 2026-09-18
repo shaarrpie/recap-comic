@@ -51,7 +51,8 @@ def test_preview_cache_key_covers_full_synthesized_text(client, monkeypatch):
     """Distinct prompts sharing an 80-char prefix must not collide."""
     written: dict[str, str] = {}
 
-    async def fake_synth_one(text, voice, out, rate="", pitch="", timeout_s=60):
+    async def fake_synth_one(text, voice, out, rate="", pitch="", speed=1.0,
+                             timeout_s=60):
         # Mimic the atomic write the real helper now performs.
         out.write_text(f"audio-for:{text}", encoding="utf-8")
         written[text] = out.name
@@ -73,7 +74,8 @@ def test_preview_cache_reuses_for_identical_text(client, monkeypatch):
     """The same prompt must hit the cache (one synthesis, not two)."""
     calls = []
 
-    async def fake_synth_one(text, voice, out, rate="", pitch="", timeout_s=60):
+    async def fake_synth_one(text, voice, out, rate="", pitch="", speed=1.0,
+                             timeout_s=60):
         calls.append(text)
         out.write_text(f"audio-for:{text}", encoding="utf-8")
 
@@ -89,8 +91,9 @@ def test_preview_cache_reuses_for_identical_text(client, monkeypatch):
 
 def test_failed_preview_leaves_no_cached_file(client, monkeypatch):
     """A failed synthesis must not poison the cache for later calls."""
-    async def boom(text, voice, out, rate="", pitch="", timeout_s=60):
-        raise RuntimeError("network down")
+    async def boom(text, voice, out, rate="", pitch="", speed=1.0,
+                     timeout_s=60):
+        raise RuntimeError("synth down")
 
     monkeypatch.setattr("webapp.tts_helpers.synth_one", boom)
 

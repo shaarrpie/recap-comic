@@ -6,7 +6,7 @@ Covers:
     double quote, backslash or newline (the old format string interpolated
     the message raw and unquoted);
   * sensitive-key detection must catch realistic names (apiKey,
-    xkiro_api_key, GEMINI_API_KEY) without blanking innocent ones like
+    agnes_api_key, AGNES_API_KEY) without blanking innocent ones like
     "author";
   * the webapp's persisted-snapshot redaction shares that one detector.
 """
@@ -64,8 +64,8 @@ def test_json_formatter_escapes_exception_tracebacks() -> None:
 
 
 def test_is_sensitive_key_catches_realistic_names() -> None:
-    for k in ["api_key", "apiKey", "xkiro_api_key", "GEMINI_API_KEY",
-              "gemini_api_key", "token", "Authorization", "x-auth-token",
+    for k in ["api_key", "apiKey", "agnes_api_key", "AGNES_API_KEY",
+              "AGNES_API_KEYS", "token", "Authorization", "x-auth-token",
               "password", "secret", "bearer", "credentials", "authkey",
               "access_token"]:
         assert is_sensitive_key(k), f"{k!r} should be sensitive"
@@ -107,10 +107,10 @@ def test_webapp_snapshot_redaction_uses_shared_detector() -> None:
     """webapp/jobs._redact_config must catch the same keys (no drift)."""
     from webapp.jobs import JobStore
 
-    cfg = {"apiKey": "sk-real", "author": "Jane", "xkiro_api_key": "k-1",
+    cfg = {"apiKey": "sk-real", "author": "Jane", "agnes_api_key": "k-1",
            "chapter": 47}
     out = JobStore._redact_config(cfg)
     assert out["apiKey"] == ""
-    assert out["xkiro_api_key"] == ""
+    assert out["agnes_api_key"] == ""
     assert out["author"] == "Jane"      # the over-redaction bug
     assert out["chapter"] == 47

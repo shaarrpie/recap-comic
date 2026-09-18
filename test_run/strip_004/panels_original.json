@@ -1,0 +1,175 @@
+{
+  "source": "004.webp",
+  "width": 800,
+  "height": 9590,
+  "plan_hash": "e35d6fd099734b76499b250e540ff99953ac4775316f66a17c93a70e8b07250d",
+  "config": {
+    "tolerance": 80,
+    "max_panel_height": 1600,
+    "variance_threshold": 6.0,
+    "edge_threshold": 30.0,
+    "bubble_pad": 8,
+    "use_edge_density": true,
+    "min_gutter_run": 4,
+    "blur_sigma": 0.5,
+    "min_panel_height": 150,
+    "output_width": 390,
+    "min_output_height": 760,
+    "max_output_height": 800,
+    "normalize_output": true,
+    "preserve_boundaries": false,
+    "blank_detection": true,
+    "blank_preset": "conservative"
+  },
+  "panels": [
+    {
+      "id": "001",
+      "panel_index": 1,
+      "y_start": 0,
+      "y_end": 1686,
+      "narration": "A blond man in dark clothing stands in a snowy setting with a serious expression.",
+      "dialogue": "RANK 6 BLUE ZONE GUILDMASTER KYOJO ITSUKI",
+      "panel_type": "single",
+      "confidence": 0.92,
+      "image_file": "panel_001.png",
+      "output_width": 800,
+      "output_height": 1686,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        6
+      ],
+      "snap_measured": [
+        false,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=7399.17",
+        "edge_density=45.33",
+        "entropy=4.72",
+        "color_spread=66.09",
+        "fg_ratio=0.4685"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "002a",
+      "panel_index": 2,
+      "y_start": 1686,
+      "y_end": 4822,
+      "narration": "A group of armored soldiers stands ready with their swords raised as their leader warns them not to let their guard down during a coalition raid. Armored knights stand in falling snow, gripping their weapons. White space transitions to the next scene with a rustling sound effect. A man with brown hair watches as two groups of armored soldiers face off in a snowy mountain setting. A speech bubble with an exclamation mark appears in the top right corner.",
+      "dialogue": "Don't get sloppy just because this is a coalition raid. If we don't clear this, Floor 9 stays a fantasy. スカー ザザザ ! !",
+      "panel_type": "single",
+      "confidence": 0.88,
+      "image_file": "panel_002a.png",
+      "output_width": 800,
+      "output_height": 3136,
+      "strip_width": null,
+      "split_of": "002",
+      "merged_with": [
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        6,
+        0
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=6955.75",
+        "edge_density=48.35",
+        "entropy=3.06",
+        "color_spread=142.44",
+        "fg_ratio=0.2398"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "002b",
+      "panel_index": 2,
+      "y_start": 4822,
+      "y_end": 7780,
+      "narration": "A group of armored soldiers stands ready with their swords raised as their leader warns them not to let their guard down during a coalition raid. Armored knights stand in falling snow, gripping their weapons. White space transitions to the next scene with a rustling sound effect. A man with brown hair watches as two groups of armored soldiers face off in a snowy mountain setting. A speech bubble with an exclamation mark appears in the top right corner.",
+      "dialogue": "Don't get sloppy just because this is a coalition raid. If we don't clear this, Floor 9 stays a fantasy. スカー ザザザ ! !",
+      "panel_type": "single",
+      "confidence": 0.88,
+      "image_file": "panel_002b.png",
+      "output_width": 800,
+      "output_height": 2958,
+      "strip_width": null,
+      "split_of": "002",
+      "merged_with": [
+        2,
+        3,
+        4,
+        5,
+        6
+      ],
+      "snap_distances": [
+        6,
+        0
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=8294.7",
+        "edge_density=31.99",
+        "entropy=3.63",
+        "color_spread=60.37",
+        "fg_ratio=0.3414"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "007",
+      "panel_index": 7,
+      "y_start": 7780,
+      "y_end": 9133,
+      "narration": "A close-up of a man with grey hair and golden eyes is shown in the rain or snow.",
+      "dialogue": "...LOOK WHO SHOWED UP.",
+      "panel_type": "single",
+      "confidence": 0.95,
+      "image_file": "panel_007.png",
+      "output_width": 390,
+      "output_height": 760,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        0,
+        33
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=7478.95",
+        "edge_density=31.77",
+        "entropy=3.11",
+        "color_spread=62.47",
+        "fg_ratio=0.2249"
+      ],
+      "context_only": false
+    }
+  ],
+  "blank_detection_skipped": false
+}

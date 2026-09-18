@@ -1,0 +1,64 @@
+{
+  "filter_version": 4,
+  "input_file": "panels.json",
+  "input_mtime": 1789736227.1375494,
+  "input_size": 5331,
+  "out_file": "panels.json",
+  "strip_found": false,
+  "total": 4,
+  "kept": 4,
+  "context_only": 0,
+  "removed_blank": 0,
+  "rescued": 0,
+  "thresholds": {
+    "method": "fixed",
+    "n_panels": 4,
+    "text_color_threshold": 0.05,
+    "white_dominance_cutoff": 0.8,
+    "text_edge_floor": 0.003,
+    "is_bw_session": false
+  },
+  "decisions": [
+    {
+      "id": "001",
+      "decision": "keep",
+      "method": "padding_stripped",
+      "scores": {
+        "white_of_content": 0.29457,
+        "color_ratio": 0.69425,
+        "edge_density": 0.019838
+      }
+    },
+    {
+      "id": "002a",
+      "decision": "keep",
+      "method": "padding_stripped",
+      "scores": {
+        "white_of_content": 0.60691,
+        "color_ratio": 0.88597,
+        "edge_density": 0.020582
+      }
+    },
+    {
+      "id": "002b",
+      "decision": "keep",
+      "method": "padding_stripped",
+      "scores": {
+        "white_of_content": 0.44392,
+        "color_ratio": 0.74584,
+        "edge_density": 0.014191
+      }
+    },
+    {
+      "id": "007",
+      "decision": "keep",
+      "method": "padding_stripped",
+      "scores": {
+        "white_of_content": 0.46875,
+        "color_ratio": 0.28863,
+        "edge_density": 0.03072
+      }
+    }
+  ],
+  "filter_hash": "af52f241c7e2"
+}

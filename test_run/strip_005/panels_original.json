@@ -1,0 +1,137 @@
+{
+  "source": "005.webp",
+  "width": 800,
+  "height": 9850,
+  "plan_hash": "2644f6ce280ebc6642228a9b79d603e941965ea565206133dc6b1285617c0442",
+  "config": {
+    "tolerance": 80,
+    "max_panel_height": 1600,
+    "variance_threshold": 6.0,
+    "edge_threshold": 30.0,
+    "bubble_pad": 8,
+    "use_edge_density": true,
+    "min_gutter_run": 4,
+    "blur_sigma": 0.5,
+    "min_panel_height": 150,
+    "output_width": 390,
+    "min_output_height": 760,
+    "max_output_height": 800,
+    "normalize_output": true,
+    "preserve_boundaries": false,
+    "blank_detection": true,
+    "blank_preset": "conservative"
+  },
+  "panels": [
+    {
+      "id": "001",
+      "panel_index": 1,
+      "y_start": 0,
+      "y_end": 5040,
+      "narration": "A group of armored and cloaked characters stand together in a snowy landscape while ghostly figures loom behind them. A masked figure stands in the snow with two companions behind him. Two figures in fur-lined coats watch boots approach through falling snow.",
+      "dialogue": "BLUE EYES THEMSELVES.",
+      "panel_type": "single",
+      "confidence": 0.92,
+      "image_file": "panel_001.png",
+      "output_width": 800,
+      "output_height": 5040,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "snap_distances": [
+        0,
+        0
+      ],
+      "snap_measured": [
+        false,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=7572.77",
+        "edge_density=40.49",
+        "entropy=4.97",
+        "color_spread=91.84",
+        "fg_ratio=0.3711"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "005",
+      "panel_index": 5,
+      "y_start": 5040,
+      "y_end": 7577,
+      "narration": "A person with dark hair looks upward as snow drifts down from the pale sky. A masked man stands in the snow, identified as Rank 1 Guildmaster Narukami Subaru.",
+      "dialogue": "RANK 1 BLUE EYES GUILDMASTER NARUKAMI SUBARU",
+      "panel_type": "single",
+      "confidence": 0.8,
+      "image_file": "panel_005.png",
+      "output_width": 800,
+      "output_height": 2537,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [
+        5,
+        6
+      ],
+      "snap_distances": [
+        0,
+        1
+      ],
+      "snap_measured": [
+        true,
+        true
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=10735.58",
+        "edge_density=25.2",
+        "entropy=4.12",
+        "color_spread=43.82",
+        "fg_ratio=0.2929"
+      ],
+      "context_only": false
+    },
+    {
+      "id": "007",
+      "panel_index": 7,
+      "y_start": 7577,
+      "y_end": 9850,
+      "narration": "A blonde man smiles in the snow while guards stand in the background.",
+      "dialogue": "SUBARU! スタッ",
+      "panel_type": "single",
+      "confidence": 0.98,
+      "image_file": "panel_007.png",
+      "output_width": 800,
+      "output_height": 2273,
+      "strip_width": null,
+      "split_of": null,
+      "merged_with": [],
+      "snap_distances": [
+        1,
+        0
+      ],
+      "snap_measured": [
+        true,
+        false
+      ],
+      "blank_score": 0.0,
+      "blank_flag": "normal",
+      "blank_reasons": [
+        "variance=11082.89",
+        "edge_density=30.59",
+        "entropy=3.65",
+        "color_spread=89.99",
+        "fg_ratio=0.2229"
+      ],
+      "context_only": false
+    }
+  ],
+  "blank_detection_skipped": false
+}

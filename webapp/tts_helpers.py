@@ -1,34 +1,68 @@
+"""Local TTS helper for voice previews (Kokoro, offline).
+
+Synthesizes `text` with the local Kokoro weights to WAV, then transcodes
+to MP3 with the bundled imageio-ffmpeg binary so preview caches stay .mp3
+(the routes and tests gate on that extension). No cloud calls: the only
+network AI in this project is the Agnes gateway.
+
+Signature is kept stable (text, voice, out, rate, pitch, timeout_s):
+rate/pitch are accepted and ignored (Kokoro voices take `speed`, which
+preview callers leave at the default). Atomic write: an interrupted
+synthesis never leaves a partial mp3 behind.
+"""
+from __future__ import annotations
+
 import asyncio
+import subprocess
 from pathlib import Path
 
-import edge_tts
+
+def _ffmpeg_exe() -> str:
+    import imageio_ffmpeg
+    return imageio_ffmpeg.get_ffmpeg_exe()
+
+
+def _synth_wav_to_mp3(text: str, voice: str, out: Path,
+                      speed: float = 1.0) -> None:
+    from adapters.tts_kokoro import resolve_model_files, synthesize
+
+    model_path, voices_path = resolve_model_files()
+    tmp_wav = out.with_suffix(".wav.tmp")
+    tmp_mp3 = out.with_suffix(".mp3.tmp")
+    try:
+        synthesize(text, tmp_wav, model_path=model_path,
+                   voices_path=voices_path, voice=voice, speed=speed,
+                   probe_duration=lambda _p: 0.0)
+        cmd = [_ffmpeg_exe(), "-y", "-nostdin", "-i", str(tmp_wav),
+               "-codec:a", "libmp3lame", "-b:a", "128k", str(tmp_mp3)]
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False,
+                              timeout=120)
+        if proc.returncode != 0 or not tmp_mp3.is_file():
+            tail = "\n".join((proc.stderr or "").splitlines()[-5:])
+            raise RuntimeError(f"mp3 transcode failed: {tail}")
+        if tmp_mp3.stat().st_size == 0:
+            raise RuntimeError("tts returned no audio for this text")
+        tmp_mp3.replace(out)
+    finally:
+        for tmp in (tmp_wav, tmp_mp3):
+            try:
+                if tmp.is_file() and tmp.resolve() != out.resolve():
+                    tmp.unlink()
+            except OSError:
+                pass
 
 
 async def synth_one(text: str, voice: str, out: Path,
                     rate: str = "", pitch: str = "",
-                    timeout_s: float = 60) -> None:
-    kwargs = {"boundary": "WordBoundary"}
-    if rate:
-        kwargs["rate"] = rate
-    if pitch:
-        kwargs["pitch"] = pitch
-    # edge_tts.Communicate's signature mixes Literal/optional params, so a
-    # conditional **kwargs is the only way to forward rate/pitch without
-    # four near-duplicate call sites.
-    comm = edge_tts.Communicate(text, voice=voice, **kwargs)  # type: ignore[arg-type]
-    audio = bytearray()
-
-    async def _pull():
-        async for msg in comm.stream():
-            if msg["type"] == "audio":
-                audio.extend(msg["data"])
-
-    await asyncio.wait_for(_pull(), timeout=timeout_s)
-    if not audio:
+                    speed: float = 1.0,
+                    timeout_s: float = 120) -> None:
+    # rate/pitch are legacy knobs: accepted for caller compat, ignored by
+    # Kokoro (which voices text with `speed` instead).
+    text = (text or "").strip()
+    if not text:
+        raise RuntimeError("tts received empty text")
+    await asyncio.wait_for(
+        asyncio.to_thread(_synth_wav_to_mp3, text, voice, out, speed),
+        timeout=timeout_s)
+    if not out.is_file() or out.stat().st_size == 0:
         raise RuntimeError("tts returned no audio for this text")
-    # Atomic write: an interrupted synthesis used to leave a partial mp3 on
-    # disk that later callers accepted unconditionally (they only check
-    # is_file()), serving corrupt audio forever after.
-    tmp = out.with_suffix(".tmp")
-    tmp.write_bytes(bytes(audio))
-    tmp.replace(out)

@@ -12,14 +12,12 @@ sample_strip.png ──► panel_001.png + panel_002.png + ... + panels.json
 
 A two-phase pipeline:
 1. **Phase 1** (`strip_analyzer.py`): the strip is sliced into overlapping
-    2000px chunks and sent to a vision LLM. The default backend is **xkiro**
-    (OpenAI-compatible `https://api.xkiro.com/v1`): primary model
-    `qwen/qwen3.5-397b-a17b:free` (Qwen3.5-397B-A17B) with automatic
-    fallback to `mistralai/mistral-medium-3.5` (Mistral Medium 3.5) on any
-    failure — same prompt, same image, no fabricated results. Legacy
-    backends (Gemini / OpenAI / Anthropic / local Ollama) remain available
-    via `--backend`. The model returns a strict JSON panel plan: boundaries, narration,
-    dialogue, and per-panel confidence.
+    2000px chunks and sent to a vision LLM. The backend is **agnes**
+    (Agnes AI gateway, OpenAI-compatible `https://apihub.agnes-ai.com/v1`):
+    primary model `agnes-2.5-flash` with automatic fallback to
+    `agnes-2.0-flash` on any failure — same prompt, same image, no
+    fabricated results. The model returns a strict JSON panel plan:
+    boundaries, narration, dialogue, and per-panel confidence.
 2. **Phase 2** (`guided_cutter.py`): AI boundaries are *refined* by snapping to
    real gutters (row-variance + Sobel edge density), continuous art is merged,
    oversized panels are split, and cuts never go through speech bubbles. Output:
@@ -39,9 +37,7 @@ pip install -r requirements.txt
 
 Optional extras:
 ```bash
-pip install google-genai          # Gemini backend
-pip install openai                # OpenAI backend
-pip install anthropic             # Anthropic backend
+pip install openai                # Agnes backend client (OpenAI-compatible)
 ```
 
 Set API keys in a `.env` file (see `.env.example`).
@@ -50,10 +46,10 @@ Set API keys in a `.env` file (see `.env.example`).
 
 ```bash
 # Phase 1 only (dry run) — prints the plan, cuts nothing
-python cli.py guided plan sample_strip.png --backend gemini
+python cli.py guided plan sample_strip.png --backend agnes
 
 # Phase 1 + 2 — full pipeline
-python cli.py guided run sample_strip.png --out-dir guided_out --backend gemini
+python cli.py guided run sample_strip.png --out-dir guided_out --backend agnes
 
 # Offline (gutter-detector fallback, no API key)
 python cli.py guided run sample_strip.png --backend none
@@ -71,9 +67,22 @@ python cli.py guided video guided_out/panels.json --tts none
 python cli.py guided video guided_out/panels.json --dry-run
 ```
 
-Outputs next to the mp4: recap.srt (captions), timeline.json, audio/*.mp3,
+Outputs next to the mp4: recap.srt (captions), timeline.json, audio clips,
 narration.json. Re-running is incremental: unchanged narration reuses the
 cached audio, an unchanged timeline skips the ffmpeg render (`--force` resets).
+
+### Offline speech (Kokoro)
+
+Spoken videos use local Kokoro TTS (`--tts kokoro`, the default) — no
+network calls. Fetch the weights once (~300MB, or ~80MB quantized;
+see the kokoro-onnx README for the download links) and either place
+`kokoro-v1.0.onnx` + `voices-v1.0.bin` in `./models/` or point
+`KOKORO_MODEL_PATH` / `KOKORO_VOICES_PATH` at them:
+
+```bash
+# Narrated video with a Kokoro voice (default)
+python cli.py guided video guided_out/panels.json --voice af_heart --speed 1.0
+```
 
 ### Manhwa-recap visual style (blur + vignette)
 
@@ -155,7 +164,7 @@ uvicorn webapp.main:app --port 8000
 ```
 
 Open `http://localhost:8000`. Nothing runs automatically on upload —
-press Run to start a job. Set `XKIRO_API_KEY` (or `GEMINI_API_KEY`) in
+press Run to start a job. Set `AGNES_API_KEY` in
 `.env` for AI features; without a key the app runs in offline mode
 (deterministic cropping; no AI narration).
 
@@ -171,7 +180,7 @@ vision accuracy.
 ## Live smoke test
 
 ```bash
-python scripts/smoke_test_live.py samples/real_strip_01.png --backend gemini
+python scripts/smoke_test_live.py samples/real_strip_01.png --backend agnes
 ```
 
 Prints panel count, snap-distance stats, % below confidence 0.5, token usage,

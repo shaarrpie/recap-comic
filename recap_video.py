@@ -10,7 +10,7 @@ Stages (all artifacts are written next to the mp4):
   1. build_narration()   CutPanel -> NarrationEntry.  Script text is the
                          panel narration, optionally followed by the dialogue
                          (skipped when the narration already quotes it).
-  2. synthesize_audio()  one mp3 per panel via adapters.tts_edge; duration is
+  2. synthesize_audio()  one audio clip per panel via adapters.tts (kokoro); duration is
                          MEASURED with ffprobe.  `tts="none"` skips this and
                          produces a silent video timed by reading speed
                          (allowed: with no audio there is nothing to drift).
@@ -19,7 +19,7 @@ Stages (all artifacts are written next to the mp4):
                          so narration always finishes and pans are never
                          faster than `max_pan_px_per_sec`.
   4. render_video()      adapters.render_ffmpeg.render (single ffmpeg)
-  5. write_srt()         captions from the SAME timeline (+ edge-tts word
+  5. write_srt()         captions from the SAME timeline (+ word
                          timings when available) so they cannot drift either.
 
 Caching follows the repo rule: a stage is skipped iff its output exists and
@@ -36,6 +36,7 @@ import shutil
 import subprocess
 import time
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -81,10 +82,10 @@ class VideoError(RuntimeError):
 # --------------------------------------------------------------------------- #
 @dataclass
 class VideoConfig:
-    tts: Literal["edge", "kokoro", "none"] = "edge"
-    voice: str = "en-US-AriaNeural"
-    rate: str = "+0%"            # edge-tts rate, e.g. "+10%"
-    pitch: str = "+0Hz"
+    tts: Literal["kokoro", "none"] = "kokoro"
+    voice: str = "af_heart"
+    rate: str = "+0%"            # legacy edge-tts knob: accepted, ignored
+    pitch: str = "+0Hz"          # legacy edge-tts knob: accepted, ignored
     speed: float = 1.0           # kokoro speed multiplier
     include_dialogue: bool = True
     gap_seconds: float = 0.35    # trailing silence after each panel
@@ -125,6 +126,14 @@ class VideoConfig:
     vignette: bool = True
     vignette_angle: str = "PI/2.5"   # ffmpeg angle expr; smaller = stronger
     blur_sigma: float = 40.0         # gblur sigma of the background branch
+    # Ken-Burns push-in strength (fraction of fitted size reached by the
+    # last frame). 0.5 = the panel grows to 1.5x. Applies to the blur
+    # foreground and to the zoom_in/zoom_out pan kinds. 0 disables motion.
+    zoom_strength: float = 0.5
+    # Kokoro clips are independent, so they are synthesized in a bounded
+    # thread pool. 6 keeps laptop CPU busy without thrashing; lower to 2-3
+    # on weak machines, set 1 to serialize.
+    tts_concurrency: int = 6
 
     def __post_init__(self) -> None:
         if not self.class_duration_multiplier:
@@ -149,7 +158,7 @@ class VideoConfig:
     # The full hash() still covers the timeline + video cache, where the
     # style genuinely changes the output.
     _STYLE_FIELDS = ("blur_background", "color_grade", "vignette",
-                     "vignette_angle", "blur_sigma")
+                     "vignette_angle", "blur_sigma", "zoom_strength")
 
     def hash_essentials(self) -> str:
         """hash() minus the visual-only style flags (TTS/narration cache key)."""
@@ -517,6 +526,14 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
         progress_ctx = None
         task_id = None
     try:
+        # Serial planning pass (cheap): drop empty/duplicate text, reuse
+        # cached clips. The remaining entries are independent — each writes
+        # its own file — so the network-bound synthesis can run concurrently.
+        # `order` keeps the final entries sequential regardless of the order
+        # in which the concurrent results arrive.
+        to_synth: list[NarrationEntry] = []
+        order: list[str] = []
+        by_id: dict[str, AudioEntry] = {}
         prev_text = ""
         for e in narration.entries:
             text = e.text.strip()
@@ -526,30 +543,46 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
                 log.info("TTS skipped %s: duplicate of previous narration", e.id)
                 continue
             prev_text = text
+            order.append(e.id)
             hit = reusable.pop(e.id, None)
             if hit is not None:
-                log.info("tts %d/%d  %s  %.2fs (reused cached clip)",
-                         done + 1, total, e.id, hit.duration_seconds)
-                entries.append(hit)
+                by_id[e.id] = hit
                 done += 1
+                log.info("tts %d/%d  %s  %.2fs (reused cached clip)",
+                         done, total, e.id, hit.duration_seconds)
                 if progress_ctx is not None and task_id is not None:
                     progress_ctx.update(task_id, advance=1)
                 continue
-            out, err = tts_synth(
-                e, audio_dir, provider=cfg.tts, voice=cfg.voice,
-                rate=cfg.rate, pitch=cfg.pitch, speed=cfg.speed,
-                probe_duration=lambda p: probe_duration(p, cfg.ffprobe_exe),
-                kokoro_model_path=cfg.kokoro_model_path,
-                kokoro_voices_path=cfg.kokoro_voices_path,
-                retries=retries)
-            if err is not None or out is None:
-                log.warning("TTS skipped %s: %s", e.id, err or "empty text")
-                continue
-            entries.append(out)
-            done += 1
-            log.info("tts %d/%d  %s  %.2fs", done, total, e.id, out.duration_seconds)
-            if progress_ctx is not None and task_id is not None:
-                progress_ctx.update(task_id, advance=1)
+            to_synth.append(e)
+
+        if to_synth:
+            conc = max(1, getattr(cfg, "tts_concurrency", 6))
+            log.info("tts %d clips via thread pool (concurrency=%d)",
+                     len(to_synth), conc)
+            with ThreadPoolExecutor(max_workers=conc,
+                                    thread_name_prefix="tts") as pool:
+                results = list(pool.map(
+                    lambda ent: (ent, tts_synth(
+                        ent, audio_dir, provider=cfg.tts, voice=cfg.voice,
+                        rate=cfg.rate, pitch=cfg.pitch, speed=cfg.speed,
+                        probe_duration=lambda p: probe_duration(p, cfg.ffprobe_exe),
+                        kokoro_model_path=cfg.kokoro_model_path,
+                        kokoro_voices_path=cfg.kokoro_voices_path,
+                        retries=retries)),
+                    to_synth))
+            for ent, (out, err) in results:
+                if err is not None or out is None:
+                    log.warning("TTS skipped %s: %s", ent.id, err or "empty text")
+                    continue
+                by_id[ent.id] = out
+                done += 1
+                log.info("tts %d/%d  %s  %.2fs", done, total, ent.id,
+                         out.duration_seconds)
+                if progress_ctx is not None and task_id is not None:
+                    progress_ctx.update(task_id, advance=1)
+
+        # Emit in narration order, not completion order.
+        entries = [by_id[pid] for pid in order if pid in by_id]
     finally:
         if progress_ctx is not None:
             progress_ctx.stop()
@@ -858,7 +891,8 @@ def render_video(timeline: TimelineArtifact, out_path: Path,
         color_grade=cfg.color_grade,
         vignette=cfg.vignette,
         vignette_angle=cfg.vignette_angle,
-        blur_sigma=cfg.blur_sigma)
+        blur_sigma=cfg.blur_sigma,
+        zoom_strength=cfg.zoom_strength)
     log.info("render_video start out=%s timeline_entries=%d style=blur=%s/"
              "grade=%s/vignette=%s",
              out_path, len(timeline.entries), style.blur_background,
@@ -878,22 +912,16 @@ def render_video(timeline: TimelineArtifact, out_path: Path,
         raise VideoError(str(exc)) from exc
     elapsed = time.time() - t0
     tmp.replace(out_path)
-    _apply_faststart(out_path, exe)
+    # +faststart is folded into the encode itself (build_command /
+    # build_command_chunked) — no separate full-file copy pass here.
     log.info("render_video complete out=%s duration=%.2fs", out_path, elapsed)
 
 
 def _apply_faststart(path: Path, ffmpeg_exe: str) -> None:
-    tmp = path.with_name(path.stem + ".faststart.mp4")
-    cmd = [ffmpeg_exe, "-y", "-nostdin", "-i", str(path),
-           "-c", "copy", "-movflags", "+faststart", str(tmp)]
-    proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-    if proc.returncode != 0:
-        tail = "\n".join(proc.stderr.splitlines()[-10:])
-        log.warning("faststart post-process failed for %s: %s", path, tail)
-        if tmp.is_file():
-            tmp.unlink()
-    else:
-        tmp.replace(path)
+    """Deprecated: +faststart is now folded into the encode itself
+    (adapters.render_ffmpeg.build_command*), so no second copy pass runs.
+    Kept as a no-op shim for any external callers/tests."""
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -953,7 +981,7 @@ def make_recap_video(panels_json: Path, out_path: Path,
             log.warning(
                 "no narration in panels.json (provenance=%s). The video will "
                 "be silent; consider re-running 'guided run' with an AI "
-                "backend (gemini/openai/anthropic/ollama).", prov)
+                "backend (agnes).", prov)
 
     # 2. audio
     audio = synthesize_audio(narration, audio_dir, cfg, force=force)

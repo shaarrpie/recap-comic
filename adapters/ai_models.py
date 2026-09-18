@@ -1,14 +1,15 @@
 # adapters/ai_models.py
-"""Central AI model configuration: Qwen primary + Mistral fallback.
+"""Central AI model configuration: Agnes primary + Agnes fallback.
 
 All AI (vision/LLM) calls should obtain their model identifiers from here
-instead of hard-coding strings throughout the codebase.
+instead of hard-coding strings throughout the codebase. Agnes AI is the
+SOLE analysis/narration provider (OpenAI-compatible gateway).
 
 Default behavior:
-    Primary:  Qwen3.5-397B-A17B
-    Fallback: Mistral Medium 3.5
+    Primary:  agnes-2.5-flash
+    Fallback: agnes-2.0-flash
 
-Provider: OpenAI-compatible endpoint (default https://api.xkiro.com/v1).
+Provider: OpenAI-compatible endpoint (default https://apihub.agnes-ai.com/v1).
 Credentials NEVER appear in logs; only model names / error summaries.
 
 Architecture rule (project requirement): AI is used ONLY for semantic
@@ -23,6 +24,7 @@ import asyncio
 import json
 import logging
 import os
+import threading
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -32,17 +34,17 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 PRIMARY_MODEL = os.environ.get(
-    "XKIRO_PRIMARY_MODEL", "qwen/qwen3.5-397b-a17b:free")
+    "AGNES_PRIMARY_MODEL", "agnes-2.5-flash")
 FALLBACK_MODEL = os.environ.get(
-    "XKIRO_FALLBACK_MODEL", "mistralai/mistral-medium-3.5")
+    "AGNES_FALLBACK_MODEL", "agnes-2.0-flash")
 # Human-readable labels (UI/logs); the provider requires the IDs above —
-# verified live against https://api.xkiro.com/v1/models: the bare string
-# "Qwen3.5-397B-A17B" returns 404, while "qwen/qwen3.5-397b-a17b:free"
-# and "mistralai/mistral-medium-3.5" accept text, JSON-mode and image input.
-PRIMARY_LABEL = "Qwen3.5-397B-A17B"
-FALLBACK_LABEL = "Mistral Medium 3.5"
-DEFAULT_BASE_URL = os.environ.get("XKIRO_BASE_URL", "https://api.xkiro.com/v1")
-DEFAULT_TIMEOUT_S = float(os.environ.get("XKIRO_TIMEOUT_S", "120"))
+# verified live against https://apihub.agnes-ai.com/v1/models. Both models
+# accept text, JSON-mode and image input (OpenAI-compatible image_url).
+PRIMARY_LABEL = "Agnes 2.5 Flash"
+FALLBACK_LABEL = "Agnes 2.0 Flash"
+DEFAULT_BASE_URL = os.environ.get(
+    "AGNES_BASE_URL", "https://apihub.agnes-ai.com/v1")
+DEFAULT_TIMEOUT_S = float(os.environ.get("AGNES_TIMEOUT_S", "120"))
 
 
 def _norm(name: str) -> str:
@@ -52,19 +54,16 @@ def _norm(name: str) -> str:
 def resolve_model_id(name: str) -> str:
     """Map human/bare names to provider-accepted IDs.
 
-    Accepts "Qwen3.5-397B-A17B", "qwen", "Mistral Medium 3.5", "mistral"
+    Accepts "Agnes 2.5 Flash", "2.5", "Agnes 2.0 Flash", "2.0"
     (case/punctuation-insensitive); anything already provider-shaped
-    (contains "/") passes through unchanged.
+    (starts with "agnes-") passes through unchanged.
     """
-    if "/" in name:
+    if name.startswith("agnes-"):
         return name
     key = _norm(name)
-    qwen_keys = {"qwen", _norm(PRIMARY_LABEL), _norm(PRIMARY_MODEL),
-                 "qwen35397ba17b", "qwen35397ba17bfree"}
-    mistral_keys = {"mistral", _norm(FALLBACK_LABEL), _norm(FALLBACK_MODEL)}
-    if key in qwen_keys:
+    if key in {"agnes25flash", "25flash", _norm(PRIMARY_MODEL)}:
         return PRIMARY_MODEL
-    if key in mistral_keys:
+    if key in {"agnes20flash", "20flash", _norm(FALLBACK_MODEL)}:
         return FALLBACK_MODEL
     return name
 
@@ -101,53 +100,24 @@ def manual_key() -> str | None:
     return None
 
 
-def api_key_from_env(explicit: str | None = None,
-                     allow_gemini_key: bool | None = None) -> str | None:
-    """Resolve the Xkiro/OpenAI-compatible API key without logging it.
+def api_key_from_env(explicit: str | None = None) -> str | None:
+    """Resolve the Agnes API key without logging it.
 
     Resolution order (manual webapp key wins over .env keys):
       1. `explicit` — caller-passed key (api_key param) always wins.
       2. webapp_output/settings.json "api_key" — manual webapp key.
-      3. XKIRO_API_KEY
-      4. XKIRO_API_KEYS (comma-separated pool; first entry)
-      5. GEMINI_API_KEYS pool (first entry)  -- opt-in only, see below
-      6. GEMINI_API_KEY                      -- opt-in only, see below
-
-    A GEMINI_* key is only used against the XKIRO endpoint when the caller
-    explicitly opts in (allow_gemini_key=True, or the env var
-    XKIRO_ALLOW_GEMINI_KEY=1). Otherwise it is skipped: the default endpoint
-    is api.xkiro.com, a third-party proxy, and sending a Google credential
-    there by default is not something a tool should do silently.
+      3. AGNES_API_KEY
+      4. AGNES_API_KEYS (comma-separated pool; first entry)
     """
     if explicit and explicit.strip():
         return explicit.strip()
     manual = manual_key()
     if manual:
         return manual
-    if allow_gemini_key is None:
-        allow_gemini_key = os.environ.get(
-            "XKIRO_ALLOW_GEMINI_KEY", "").strip().lower() in ("1", "true", "yes")
-    # Check XKIRO keys first
-    for var in ("XKIRO_API_KEY", "XKIRO_API_KEYS"):
+    for var in ("AGNES_API_KEY", "AGNES_API_KEYS"):
         val = os.environ.get(var, "").strip()
         if val:
-            return val.split(",")[0].strip()
-    # Fall back to Gemini keys, but only with explicit opt-in.
-    for var in ("GEMINI_API_KEYS", "GEMINI_API_KEY"):
-        val = os.environ.get(var, "").strip()
-        if val:
-            if not allow_gemini_key:
-                log.warning(
-                    "Only a GEMINI_API_KEY is set and the default endpoint is "
-                    "api.xkiro.com (a third-party proxy). Refusing to send a "
-                    "Google credential there by default: api_key_from_env "
-                    "returns None. Set XKIRO_API_KEY explicitly, or opt in "
-                    "with XKIRO_ALLOW_GEMINI_KEY=1 to use the Gemini key "
-                    "against the proxy.")
-                return None
-            log.warning("Using GEMINI_API_KEY against XKIRO endpoint (api.xkiro.com). "
-                        "This sends your Google credential to a third-party proxy. "
-                        "Set XKIRO_API_KEY explicitly to avoid this.")
+            # AGNES_API_KEYS may be comma-separated; take the first.
             return val.split(",")[0].strip()
     return None
 
@@ -157,10 +127,142 @@ def require_api_key(explicit: str | None = None) -> str:
     if not key:
         raise RuntimeError(
             "No AI API key found: pass api_key, save one in the webapp "
-            "settings, or set XKIRO_API_KEY / XKIRO_API_KEYS / "
-            "GEMINI_API_KEYS / GEMINI_API_KEY in .env "
+            "settings, or set AGNES_API_KEY in .env "
             "(use --backend none for offline mode)")
     return key
+
+
+def api_key_pool(explicit: str | None = None) -> list[str]:
+    """All usable Agnes keys in priority order (deduplicated).
+
+    `[explicit]` wins alone when passed; otherwise the manual settings key,
+    then AGNES_API_KEY, then every entry of AGNES_API_KEYS. Callers iterate
+    the pool on rate-limit errors (see `is_rate_limit_error`) so a
+    per-key problem (revoked key, per-key throttle) degrades to the next
+    instead of failing the operation.
+
+    NOTE (per Agnes TOKEN_PLAN_FAQ): limits are shared BY KEY TYPE, not per
+    key — N free keys share ONE 20-RPM pool and do NOT multiply throughput.
+    Rotation helps with per-key failures, not with pool exhaustion. Only
+    keys of different types (free vs Token Plan) have separate pools.
+    """
+    if explicit and explicit.strip():
+        return [explicit.strip()]
+    keys: list[str] = []
+    manual = manual_key()
+    if manual:
+        keys.append(manual)
+    for var in ("AGNES_API_KEY", "AGNES_API_KEYS"):
+        val = os.environ.get(var, "").strip()
+        for part in val.split(","):
+            part = part.strip()
+            if part and part not in keys:
+                keys.append(part)
+    return keys
+
+
+_pool_cursor = 0
+_pool_lock = threading.Lock()
+
+
+def pool_start_index(pool_size: int) -> int:
+    """Round-robin start offset so concurrent operations spread load across
+    keys instead of all hammering key #1 (which would hit its RPM first).
+
+    Thread-safe; never logs or returns key material (just an index).
+    """
+    global _pool_cursor
+    with _pool_lock:
+        idx = _pool_cursor % max(1, pool_size)
+        _pool_cursor += 1
+    return idx
+
+
+def _rate_wait_config() -> tuple[float, int]:
+    """(wait_seconds, wait_rounds) for pool-exhausted rate limits.
+
+    Agnes free tier has no published daily hard cap: throttling is RPM +
+    fair-use, and the documented recovery is "pause and wait a few minutes".
+    So when EVERY pool key is rate-limited at once, we sleep with linear
+    backoff and retry the whole pool instead of failing the operation.
+    Tunable via AGNES_RATE_WAIT_S / AGNES_RATE_WAIT_ROUNDS (rounds=0
+    restores fail-immediately).
+    """
+    try:
+        wait_s = float(os.environ.get("AGNES_RATE_WAIT_S", "120"))
+    except (TypeError, ValueError):
+        wait_s = 120.0
+    try:
+        rounds = int(os.environ.get("AGNES_RATE_WAIT_ROUNDS", "2"))
+    except (TypeError, ValueError):
+        rounds = 2
+    return max(0.0, wait_s), max(0, rounds)
+
+
+def call_with_key_rotation(operation: str, fn, *,
+                           keys: list[str] | None = None,
+                           api_key: str | None = None):
+    """Run `fn(key)` (primary->fallback pair) across the key pool.
+
+    - Start key round-robins per call (load spread, not just failover).
+    - A rate-limited key rotates to the next one immediately.
+    - All keys rate-limited at once -> sleep (linear backoff, see
+      `_rate_wait_config`) and retry the pool, instead of failing.
+    - Non-rate-limit failures raise immediately (no pointless waits).
+    - Key values never appear in logs (indexes only).
+    Returns fn's result; raises the last AIFallbackError (or the
+    non-rate-limit error) when everything is exhausted.
+    """
+    if keys is None:
+        keys = api_key_pool(api_key)
+    if not keys:
+        raise RuntimeError(
+            "AGNES_API_KEY is not set; set it in .env or pass api_key")
+    wait_s, rounds = _rate_wait_config()
+    start = pool_start_index(len(keys))
+    last_err: AIFallbackError | None = None
+    for rnd in range(rounds + 1):
+        for attempt in range(len(keys)):
+            key = keys[(start + attempt) % len(keys)]
+            try:
+                return fn(key)
+            except AIFallbackError as exc:
+                last_err = exc
+                if is_rate_limit_error(exc) and attempt + 1 < len(keys):
+                    log.warning("agnes rate-limit on key %d/%d; rotating (%s)",
+                                attempt + 1, len(keys), operation)
+                    continue
+                if not is_rate_limit_error(exc):
+                    raise
+                break  # whole pool throttled this round
+        # Pool exhausted with rate limits: wait, then retry the pool —
+        # unless this was the last round.
+        assert last_err is not None
+        if rnd >= rounds:
+            break
+        delay = wait_s * (rnd + 1)
+        log.warning("agnes pool throttled (all %d key(s)); waiting %.0fs "
+                    "(round %d/%d, %s)", len(keys), delay, rnd + 1, rounds,
+                    operation)
+        time.sleep(delay)
+    assert last_err is not None
+    raise last_err
+
+
+def is_rate_limit_error(exc: BaseException | None) -> bool:
+    """True when `exc` (or an AIFallbackError's causes) is a rate-limit /
+    quota exhaustion: 429, rate_limit, resource_exhausted. These are the
+    errors worth rotating to the next pool key for (never fabricated
+    output, just a different credential)."""
+    if exc is None:
+        return False
+    if isinstance(exc, AIFallbackError):
+        return (is_rate_limit_error(exc.primary_error)
+                or is_rate_limit_error(exc.fallback_error))
+    msg = str(exc).lower()
+    return ("429" in msg or "rate_limit" in msg
+            or "resource_exhausted" in msg or "quota" in msg
+            or "too many requests" in msg)
 
 
 _TRANSIENT_MARKERS = (
@@ -251,7 +353,7 @@ def call_ai_with_fallback(
     primary_model: str = PRIMARY_MODEL,
     fallback_model: str = FALLBACK_MODEL,
 ) -> AIFallbackResult:
-    """Try primary (Qwen), then fallback (Mistral). Never both on success.
+    """Try primary (Agnes 2.5 Flash), then fallback (2.0 Flash). Never both on success.
 
     Any exception from primary_fn — network/timeout/HTTP/malformed/invalid
     JSON/empty/unavailable/image-rejection/token-limit — triggers the
@@ -365,17 +467,24 @@ def generate_vision_with_fallback(
     request_fn: Callable[..., str] | None = None,
 ) -> AIFallbackResult:
     """Vision generation (ACTUAL image bytes, never text-only) with the
-    same Qwen -> Mistral fallback contract. `request_fn(model, prompt,
+    same Agnes primary -> fallback contract. `request_fn(model, prompt,
     b64_png) -> text` injects a fake transport for tests; otherwise the
-    OpenAI-compatible endpoint is used. Empty responses count as failures."""
-    key = api_key or api_key_from_env()
-    if not key and request_fn is None:
+    OpenAI-compatible endpoint is used. Empty responses count as failures.
+
+    On rate-limit errors the whole primary->fallback pair is retried with
+    the next key from the pool (round-robin start), so one exhausted key
+    degrades instead of failing the call.
+    """
+    keys = api_key_pool(api_key)
+    if not keys and request_fn is None:
         raise RuntimeError(
-            "XKIRO_API_KEY is not set; set it in .env or pass api_key")
+            "AGNES_API_KEY is not set; set it in .env or pass api_key")
+    if not keys:
+        keys = [""]
     primary_model = resolve_model_id(primary_model)
     fallback_model = resolve_model_id(fallback_model)
 
-    def _once(model_id: str) -> str:
+    def _once(model_id: str, key: str) -> str:
         if request_fn is not None:
             text = request_fn(model_id, prompt, b64_png)
         else:
@@ -399,10 +508,14 @@ def generate_vision_with_fallback(
             raise ValueError(f"model {model_id} returned an empty response")
         return text
 
-    return call_ai_with_fallback(
-        operation, lambda: _once(primary_model),
-        lambda: _once(fallback_model),
-        primary_model=primary_model, fallback_model=fallback_model)
+    def _pair(key: str):
+        return call_ai_with_fallback(
+            operation, lambda: _once(primary_model, key),
+            lambda: _once(fallback_model, key),
+            primary_model=primary_model, fallback_model=fallback_model)
+
+    outcome = call_with_key_rotation(operation, _pair, keys=keys)
+    return outcome
 
 
 def generate_text_with_fallback(
@@ -418,17 +531,24 @@ def generate_text_with_fallback(
     request_fn: Callable[..., str] | None = None,
 ) -> AIFallbackResult:
     """Text-only generation via the OpenAI-compatible endpoint with the
-    same Qwen -> Mistral fallback contract. `request_fn(model, system,
+    same Agnes primary -> fallback contract. `request_fn(model, system,
     user) -> text` injects a fake transport for tests; otherwise the
-    `openai` package is used. Empty responses count as failures."""
-    key = api_key or api_key_from_env()
-    if not key and request_fn is None:
+    `openai` package is used. Empty responses count as failures.
+
+    On rate-limit errors the whole primary->fallback pair is retried with
+    the next key from the pool (round-robin start), so one exhausted key
+    degrades instead of failing the call.
+    """
+    keys = api_key_pool(api_key)
+    if not keys and request_fn is None:
         raise RuntimeError(
-            "XKIRO_API_KEY is not set; set it in .env or pass api_key")
+            "AGNES_API_KEY is not set; set it in .env or pass api_key")
+    if not keys:
+        keys = [""]
     primary_model = resolve_model_id(primary_model)
     fallback_model = resolve_model_id(fallback_model)
 
-    def _once(model_id: str) -> str:
+    def _once(model_id: str, key: str) -> str:
         model_id = resolve_model_id(model_id)
         if request_fn is not None:
             text = request_fn(model_id, system, user)
@@ -448,7 +568,11 @@ def generate_text_with_fallback(
             raise ValueError(f"model {model_id} returned an empty response")
         return text
 
-    return call_ai_with_fallback(
-        operation, lambda: _once(primary_model),
-        lambda: _once(fallback_model),
-        primary_model=primary_model, fallback_model=fallback_model)
+    def _pair(key: str):
+        return call_ai_with_fallback(
+            operation, lambda: _once(primary_model, key),
+            lambda: _once(fallback_model, key),
+            primary_model=primary_model, fallback_model=fallback_model)
+
+    outcome = call_with_key_rotation(operation, _pair, keys=keys)
+    return outcome
