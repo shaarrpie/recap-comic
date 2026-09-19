@@ -32,6 +32,38 @@ PRESET_NONE = "none"
 PRESET_REFERENCE = "reference"
 VALID_PRESETS = (PRESET_NONE, PRESET_REFERENCE)
 
+# Tall/long panels read "too far away" when a contain-fit leaves them as a
+# thin vertical strip (the artwork covers only a small fraction of the canvas
+# width). Bring those closer with a fixed scale bump and reveal the extra
+# top/bottom crop with a vertical pan only (never a zoom animation). Only
+# genuinely narrow art triggers this -- a height-constrained panel whose
+# contain-fit covers less than ``TALL_PANEL_WIDTH_FILL`` of the canvas width
+# -- so wide/near-square panels and portrait renders stay byte-for-byte the
+# same as before.
+TALL_PANEL_SCALE = 1.2
+TALL_PANEL_WIDTH_FILL = 0.5
+
+# A "super tall" strip (aspect height/width >= SPLIT_MIN_ASPECT) is too thin
+# to read even after the 1.2x bump. Split it into SPLIT_COLUMNS horizontal
+# bands laid out side by side: the whole panel then shows at once at roughly
+# SPLIT_COLUMNS x closer, with no long pan needed (fits a narration-length
+# shot). Moderately tall panels keep the 1.2x + vertical-pan treatment.
+SPLIT_MIN_ASPECT = 3.0
+SPLIT_COLUMNS = 2
+
+# Split-panel layout/animation knobs (surfaced in the resolve result so the
+# renderer reads them from ``motion`` as the single source of truth).
+# SPLIT_GAP_FRAC: blank (blurred-bg) gap between the side-by-side bands, as a
+# fraction of canvas width. SPLIT_PAN_FRAC: extra height each band is scaled
+# to so it can slowly pan vertically (bands drift in opposite directions).
+SPLIT_GAP_FRAC = 0.05
+SPLIT_PAN_FRAC = 0.15
+# Vertical supersampling factor for the band pan: the crop pans in an image
+# this many times taller, then downscales, so integer crop steps become
+# sub-pixel final motion -> smooth, jitter-free pan. Higher = smoother but
+# costlier; 3 is a good balance for slow narration-length pans.
+SPLIT_SUPERSAMPLE = 3.0
+
 
 @dataclass
 class ReferenceSegment:
@@ -128,10 +160,15 @@ def zoom_strength_for_seg(seg: ReferenceSegment) -> float:
     """Map reference zoom to the blur-foreground push-in strength.
 
     Reference: 1.00 normal, 0.92-0.93 slightly out, 1.13-1.14 in.
-    Base 0.3 for normal framing preserves ordering (out < normal < in)
+    Base 0.15 for normal framing preserves ordering (out < normal < in)
     without inventing pull-back behavior the blur chain cannot express.
+
+    The multiplier is deliberately small (0.5) and the cap low (0.4) so
+    push-ins/pull-outs stay slow and cinematic: a 1.14 reference zoom yields
+    only a ~0.22 push-in. Tune by editing the base/multiplier/cap here
+    rather than the per-segment zoom values.
     """
-    return float(min(0.8, max(0.0, 0.3 + (seg.zoom - 1.0) * 2.0)))
+    return float(min(0.4, max(0.0, 0.15 + (seg.zoom - 1.0) * 0.5)))
 
 
 def pan_kind_for_seg(seg: ReferenceSegment, preset: MotionPreset) -> str:
@@ -154,23 +191,18 @@ def pan_kind_for_seg(seg: ReferenceSegment, preset: MotionPreset) -> str:
 def map_segments_to_panels(n_panels: int, preset: MotionPreset) -> list[int]:
     """Reference segment index (0-based) for each generated panel in order.
 
-    - 1:1 when counts match (seg i -> shot i).
-    - More panels than segments: cycle the pattern (preserves rhythm).
-    - Fewer panels: even sampling across the pattern (first..last) instead
-      of cutting important shots randomly.
+    STRICT sequential cycle: the pattern always starts at the first segment
+    (beat 1) and repeats continuously — panel i uses segment ``i % s``. With
+    the shipped 4-beat preset this yields the fixed camera rhythm
+    zoom_in -> pan_down -> pan_up -> zoom_out, repeated for as many panels
+    as there are (and truncated in order for fewer panels than beats). No
+    even-sampling or mid-pattern start is used, so the sequence is never
+    reordered or begun off-beat.
     """
     s = len(preset)
     if n_panels <= 0 or s == 0:
         return []
-    if n_panels == s:
-        return list(range(s))
-    if n_panels > s:
-        return [i % s for i in range(n_panels)]
-    if n_panels == 1:
-        # Single panel: hold the middle of the pattern (a representative
-        # vertical move) rather than the opening frame.
-        return [s // 2]
-    return [round(i * (s - 1) / (n_panels - 1)) for i in range(n_panels)]
+    return [i % s for i in range(n_panels)]
 
 
 def resolve_for_panel(*, png_w: int, png_h: int, canvas_w: int, canvas_h: int,
@@ -193,6 +225,17 @@ def resolve_for_panel(*, png_w: int, png_h: int, canvas_w: int, canvas_h: int,
     desired_dx = norm["ndx"] * canvas_w * strength
     desired_dy = norm["ndy"] * canvas_h * strength
 
+    # Per-panel push/pull strength for the blur foreground; overridden to 0
+    # for tall/long panels (they reveal via pan only, never zoom).
+    zs = zoom_strength_for_seg(seg)
+    tall_panel = False
+    panel_scale = 1.0
+    split_columns = 0
+    # Band-pan direction for split panels: band 0 pans (split_dir), band 1
+    # pans (-split_dir). recap_video.build_ref_timeline flips this across
+    # consecutive split panels; the default here is the first split panel.
+    split_dir = 1
+
     # Cover geometry (same convention as recap_video.compute_pan): both dims
     # cover the canvas, capped at 4x, so clamping below can never go negative
     # for real panels and no empty area is ever revealed.
@@ -205,25 +248,61 @@ def resolve_for_panel(*, png_w: int, png_h: int, canvas_w: int, canvas_h: int,
         # clamp to a conservative fraction of the canvas (the measured
         # reference never exceeds ~6% of the frame) to avoid excessive crop.
         import math as _math
-        max_dx = canvas_w * 0.08
-        max_dy = canvas_h * 0.08
-        pan_x = _math.copysign(min(abs(desired_dx), max_dx),
-                               desired_dx) if desired_dx else 0.0
-        pan_y = _math.copysign(min(abs(desired_dy), max_dy),
-                               desired_dy) if desired_dy else 0.0
-        if is_static(seg, preset):
-            pan_x, pan_y = 0.0, 0.0
-        # PanSpec stays meaningful for duration floors + editor display:
-        # reuse the directional kind, with travel_px = dominant-axis px.
-        kind = pan_kind_for_seg(seg, preset)
-        travel_px = int(round(max(abs(pan_x), abs(pan_y))))
-        scaled_w = max(1, _math.ceil(png_w * min(canvas_w / png_w,
-                                                canvas_h / png_h)))
-        scaled_h = max(1, _math.ceil(png_h * min(canvas_w / png_w,
-                                                canvas_h / png_h)))
-        if min(canvas_w / png_w, canvas_h / png_h) > 4.0:
-            scaled_w = max(1, _math.ceil(png_w * 4.0))
-            scaled_h = max(1, _math.ceil(png_h * 4.0))
+        contain = min(canvas_w / png_w, canvas_h / png_h)
+        if contain > 4.0:
+            contain = 4.0
+        # A "far away" panel is a thin strip after the contain-fit: its width
+        # covers only a small slice of the canvas. Only height-constrained art
+        # can be that narrow, so this leaves wide/portrait-filling panels on
+        # the unchanged generic path.
+        strip_fill = (png_w * contain) / canvas_w if canvas_w else 1.0
+        if strip_fill < TALL_PANEL_WIDTH_FILL:
+            tall_panel = True
+            zs = 0.0
+            if png_h / png_w >= SPLIT_MIN_ASPECT:
+                # Super-tall strip: split into side-by-side bands so the whole
+                # panel reads ~SPLIT_COLUMNS x closer at once (static, no pan).
+                split_columns = SPLIT_COLUMNS
+                panel_scale = 1.0
+                kind = "static"
+                travel_px = 0
+                pan_x = pan_y = 0.0
+                comp_w = png_w * split_columns
+                comp_h = png_h / split_columns
+                cc = min(canvas_w / comp_w, canvas_h / comp_h)
+                if cc > 4.0:
+                    cc = 4.0
+                scaled_w = max(1, _math.ceil(comp_w * cc))
+                scaled_h = max(1, _math.ceil(comp_h * cc))
+            else:
+                # Moderately tall: bring closer with a fixed scale bump and
+                # reveal the extra top/bottom crop with a slow vertical pan
+                # only (no zoom). Blurred side pillars stay.
+                panel_scale = TALL_PANEL_SCALE
+                # Alternate sweep direction across the 4-beat cycle so
+                # consecutive tall panels do not repeat the same move.
+                kind = "pan_down" if seg.seg % 2 == 0 else "pan_up"
+                travel_px = int(round((panel_scale - 1.0) * canvas_h))
+                pan_y = _math.copysign(
+                    travel_px, 1.0 if kind == "pan_down" else -1.0)
+                pan_x = 0.0
+                scaled_w = max(1, _math.ceil(png_w * contain * panel_scale))
+                scaled_h = max(1, _math.ceil(png_h * contain * panel_scale))
+        else:
+            max_dx = canvas_w * 0.08
+            max_dy = canvas_h * 0.08
+            pan_x = _math.copysign(min(abs(desired_dx), max_dx),
+                                   desired_dx) if desired_dx else 0.0
+            pan_y = _math.copysign(min(abs(desired_dy), max_dy),
+                                   desired_dy) if desired_dy else 0.0
+            if is_static(seg, preset):
+                pan_x, pan_y = 0.0, 0.0
+            # PanSpec stays meaningful for duration floors + editor display:
+            # reuse the directional kind, with travel_px = dominant-axis px.
+            kind = pan_kind_for_seg(seg, preset)
+            travel_px = int(round(max(abs(pan_x), abs(pan_y))))
+            scaled_w = max(1, _math.ceil(png_w * contain))
+            scaled_h = max(1, _math.ceil(png_h * contain))
     else:
         import math as _math
         scaled_w = _math.ceil(png_w * scale)
@@ -286,7 +365,7 @@ def resolve_for_panel(*, png_w: int, png_h: int, canvas_w: int, canvas_h: int,
         "seg": seg.seg,
         "dur": seg.dur,
         "zoom": seg.zoom,
-        "zoom_strength": zoom_strength_for_seg(seg),
+        "zoom_strength": zs,
         "dx": seg.dx,
         "dy": seg.dy,
         "dxps": seg.dxps,
@@ -304,6 +383,13 @@ def resolve_for_panel(*, png_w: int, png_h: int, canvas_w: int, canvas_h: int,
         "travel_px": int(travel_px),
         "pan_x_px": float(pan_x),
         "pan_y_px": float(pan_y),
+        "tall_panel": bool(tall_panel),
+        "panel_scale": float(panel_scale),
+        "split_columns": int(split_columns),
+        "split_dir": int(split_dir),
+        "split_gap_frac": float(SPLIT_GAP_FRAC),
+        "split_pan_frac": float(SPLIT_PAN_FRAC),
+        "split_ss": float(SPLIT_SUPERSAMPLE),
     }
 
 

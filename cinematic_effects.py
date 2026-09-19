@@ -53,14 +53,17 @@ class CinematicConfig:
     output_height: int = 1920
 
     # Ken Burns
+    # Zoom travels are deliberately gentle: a small start->end delta over the
+    # (fixed) clip duration means a slow per-frame creep — slower, more
+    # cinematic pushes than the earlier snappy values.
     kb_zoom_start: float = 1.0     # scale at start of clip
-    kb_zoom_end: float = 1.12      # scale at end (for calm panels)
-    kb_zoom_end_fast: float = 1.20 # scale at end (action panels)
+    kb_zoom_end: float = 1.06      # scale at end (for calm panels)
+    kb_zoom_end_fast: float = 1.10 # scale at end (action panels)
 
     # Punch zoom  (first N frames)
     punch_frames: int = 9          # ≈ 0.3s @30fps  –  the "smash" in
-    punch_scale: float = 1.20      # peak scale during punch
-    punch_settle: float = 1.06     # settle after punch
+    punch_scale: float = 1.10      # peak scale during punch
+    punch_settle: float = 1.03     # settle after punch
 
     # Screen shake (applied via crop offset)
     shake_enabled: bool = True
@@ -73,6 +76,10 @@ class CinematicConfig:
     glitch_shift_px: int = 8
 
     # Color grade (every panel)
+    # OFF by default: colour grading is disabled so artwork colours stay
+    # faithful. The grade_* values below are only applied when color_grade
+    # is explicitly enabled.
+    color_grade: bool = False
     grade_contrast: float = 1.08   # >1 = more contrast
     grade_saturation: float = 1.05 # slight boost
     grade_shadows: float = -0.04   # cool shadows (teal)
@@ -110,7 +117,7 @@ DEFAULT_DYNAMIC = CinematicConfig(style="dynamic")
 DEFAULT_SUBTLE  = CinematicConfig(
     style="subtle",
     punch_frames=6,
-    punch_scale=1.12,
+    punch_scale=1.06,
     shake_amplitude_px=6,
     glitch_shift_px=4,
     speedlines_opacity=0.10,
@@ -422,8 +429,9 @@ def _build_panel_clip(
             and panel_type == "action" and not cfg.blur_background):
         chain.append(_shake_filter(frames, cfg))
 
-    # 4. Color grade
-    chain.append(_color_grade_filter(cfg))
+    # 4. Color grade (disabled by default; only applied when explicitly enabled)
+    if cfg.color_grade:
+        chain.append(_color_grade_filter(cfg))
 
     # 5. Vignette
     if cfg.vignette_enabled:

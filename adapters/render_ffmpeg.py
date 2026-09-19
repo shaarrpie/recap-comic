@@ -61,10 +61,11 @@ class StyleConfig:
     blur_sigma: float = 40.0        # gblur sigma for the background branch
     # Ken-Burns push-in strength as a fraction of the panel's fitted size:
     # the foreground grows from its fitted size to (1 + zoom_strength)x over
-    # the clip, so a 0.5 yields a 1.5x push-in by the last frame. Applies to
-    # both the blur-background foreground and the plain zoom_in/zoom_out
-    # kinds. 0 disables the animation (static fitted frame).
-    zoom_strength: float = 0.5
+    # the clip, so a 0.25 yields a 1.25x push-in by the last frame. Applies
+    # to both the blur-background foreground and the plain zoom_in/zoom_out
+    # kinds. 0 disables the animation (static fitted frame). Kept small so
+    # zoom animations stay slow and cinematic.
+    zoom_strength: float = 0.25
 
 
 def _style_post_filters(style: StyleConfig | None) -> list[str]:
@@ -89,32 +90,123 @@ def _style_post_filters(style: StyleConfig | None) -> list[str]:
 
 def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
                    zoom: float = 0.0, dur: float = 1.0,
-                   pan_x: float = 0.0, pan_y: float = 0.0) -> str:
-    """One panel composited onto a blurred, slightly darkened full-frame
-    copy of itself.
+                   pan_x: float = 0.0, pan_y: float = 0.0,
+                   kind: str | None = None,
+                   zoom_mag: float = 0.35, pan_frac: float = 0.32,
+                   columns: int = 0, split_dir: int = 1,
+                   gap_frac: float = 0.05,
+                   pan_overflow: float = 0.15,
+                   split_ss: float = 3.0) -> str:
+    """One panel composited onto a neutral blurred full-frame copy of itself.
 
-    Background branch: cover-scaled to the canvas and centre-cropped BEFORE
-    the blur, so the blurred copy always fills the whole w x h frame (the
-    YouTube-standard canvas) edge to edge — the blur is never letterboxed.
+    Background branch (always): cover-scaled to the canvas and centre-cropped
+    BEFORE the blur, so the blurred copy fills the whole w x h frame edge to
+    edge (never letterboxed) and is a true, un-colour-adjusted blur.
 
-    Foreground branch: at t=0 the panel is contain-fitted (the whole panel
-    stays visible and the blur shows around it), then it is pushed in over
-    the clip until it COVERS the frame, reaching (cover x (1 + zoom)) by the
-    last frame. The centre-ing + overflow clipping is done by the overlay
-    (it handles both the smaller-than-canvas and larger-than-canvas cases),
-    so there is no crop filter to go out of bounds.
+    Foreground branch has two modes:
 
-    zoom=0 (or dur<=0) reproduces the legacy static contain-fit.
+    1. Cinematic, kind-driven Ken Burns (used when a motion preset supplies
+       ``kind``). The edit-rotation cycle becomes actually visible because
+       each kind now produces a DISTINCT, slow (full-clip) move:
+         - zoom_in  : grow from fit-height to (1+zoom_mag)x
+         - zoom_out : shrink from (1+zoom_mag)x to fit-height
+         - pan_down : hold taller than the frame, drift top -> bottom
+         - pan_up   : hold taller than the frame, drift bottom -> top
+       For tall manhwa panels the foreground stays narrower than the canvas,
+       so the blurred side pillars remain visible throughout.
 
-    pan_x/pan_y are TOTAL overlay travels in canvas px over the clip
-    (reference-motion preset): +x = right, +y = down, smoothly interpolated
-    as t/dur. Zero reproduces the exact legacy centred overlay string. The
-    blurred background always fills the frame, so panning the foreground
-    can never reveal empty/black areas.
+    2. Legacy contain->cover push-in (``kind`` is None, e.g. no motion preset
+       or a plain style render): the foreground starts contain-fitted (whole
+       panel visible) and is pushed in until it covers the frame, reaching
+       (cover x (1 + zoom)) on the last frame. zoom=0 (or dur<=0) reproduces
+       the static contain-fit. pan_x/pan_y are TOTAL overlay travels in
+       canvas px, interpolated smoothly as t/dur.
 
-    Returns the chain WITHOUT the trailing label; the caller appends
-    transitions/setsar/fps/[vN] exactly as for the plain scale+crop chain.
+    The blurred background always fills the frame, so no move can reveal
+    empty/black areas. Returns the chain WITHOUT the trailing label.
     """
+    bg = (f"[bgr{i}]"
+          f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
+          f"crop={w}:{h}:(iw-{w})/2:(ih-{h})/2,"
+          f"gblur=sigma={sigma:g}"
+          f"[bg{i}]")
+    head = f"split=2[bgr{i}][fgr{i}];"
+    centre = f"[bg{i}][fg{i}]overlay=x=(W-w)/2:y=(H-h)/2"
+
+    # ---- super-tall panel: split into `columns` horizontal bands laid out
+    # side by side directly on the blurred background (no hstack), so a gap
+    # between the bands shows the blurred copy. Each band slowly pans
+    # vertically; neighbouring bands move in OPPOSITE directions and the pair
+    # flips per split panel via ``split_dir``. No zoom. Bands fill the frame
+    # height; the whole panel reads ~columns x closer at once.
+    #
+    # Smoothness: the pan is a `crop` whose y ffmpeg rounds to whole pixels.
+    # A slow pan (~27px/s) advances 0-or-1 px unevenly per frame -> visible
+    # jitter. So we pan in a vertically SUPER-SAMPLED space (``split_ss`` x
+    # taller), where one integer step is only 1/split_ss of a final pixel, then
+    # Lanczos-downscale back to the frame height -- the downsample blends the
+    # sub-pixel positions into smooth, jitter-free motion.
+    if columns >= 2:
+        ss = max(1.0, float(split_ss))
+        vh = int(round(h * ss))                    # supersampled viewport height
+        bh_big = int(round(h * (1.0 + pan_overflow) * ss))  # band height (ss x)
+        ov_big = bh_big - vh                       # supersampled pan travel px
+        gap = int(round(w * gap_frac))             # gap between bands (px)
+        dt = dur if dur and dur > 0 else 1.0
+        copies = "".join(f"[sl{k}_{i}]" for k in range(columns))
+        chain = f"[fgr{i}]split={columns}{copies};"
+        for k in range(columns):
+            d = split_dir * (1 if k % 2 == 0 else -1)
+            if d > 0:                              # pan down: top -> bottom
+                yexpr = f"{ov_big:.3f}*t/{dt:.3f}"
+            else:                                  # pan up: bottom -> top
+                yexpr = f"{ov_big:.3f}-{ov_big:.3f}*t/{dt:.3f}"
+            chain += (
+                f"[sl{k}_{i}]crop=iw:trunc(ih/{columns}):0"
+                f":trunc(ih*{k}/{columns})[sc{k}_{i}];"
+                f"[sc{k}_{i}]scale=-2:{bh_big}:flags=lanczos[sd{k}_{i}];"
+                f"[sd{k}_{i}]crop=iw:{vh}:0:'{yexpr}'[cd{k}_{i}];"
+                f"[cd{k}_{i}]scale=-2:{h}:flags=lanczos[vp{k}_{i}];")
+        prev = f"bg{i}"
+        for k in range(columns):
+            xk = (f"(W-({columns}*w+{(columns - 1) * gap}))/2"
+                  f"+{k}*(w+{gap})")
+            if k == columns - 1:
+                chain += f"[{prev}][vp{k}_{i}]overlay=x='{xk}':y=0"
+            else:
+                nxt = f"o{k}_{i}"
+                chain += (f"[{prev}][vp{k}_{i}]overlay=x='{xk}':y=0"
+                          f"[{nxt}];")
+                prev = nxt
+        return f"{head}{bg};{chain}"
+
+    # ---- cinematic, kind-driven Ken Burns (only when a motion preset set kind)
+    if kind in ("zoom_in", "zoom_out", "pan_down", "pan_up") and dur > 0:
+        zm = max(zoom_mag, float(zoom or 0.0))
+        if kind == "zoom_in":
+            zexpr = f"(({h}/ih)*(1+{zm:g}*t/{dur:.3f}))"
+            fg = (f"[fgr{i}]scale=w='iw*{zexpr}':h='ih*{zexpr}'"
+                  f":eval=frame:flags=lanczos[fg{i}]")
+            return f"{head}{bg};{fg};{centre}"
+        if kind == "zoom_out":
+            zexpr = f"(({h}/ih)*({1.0 + zm:g}-{zm:g}*t/{dur:.3f}))"
+            fg = (f"[fgr{i}]scale=w='iw*{zexpr}':h='ih*{zexpr}'"
+                  f":eval=frame:flags=lanczos[fg{i}]")
+            return f"{head}{bg};{fg};{centre}"
+        # pan_down / pan_up: hold the foreground taller than the frame so the
+        # camera drifts through the artwork; width stays contain (pillars).
+        s = f"({h}/ih)*(1+{pan_frac:g})"
+        fg = (f"[fgr{i}]scale=w='iw*{s}':h='ih*{s}'"
+              f":eval=frame:flags=lanczos[fg{i}]")
+        travel = h * pan_frac
+        if kind == "pan_down":
+            oy = f"(H-h)/2+{travel:.3f}-{travel:.3f}*t/{dur:.3f}"
+        else:
+            oy = f"(H-h)/2-{travel:.3f}+{travel:.3f}*t/{dur:.3f}"
+        overlay = f"[bg{i}][fg{i}]overlay=x=(W-w)/2:y='{oy}'"
+        return f"{head}{bg};{fg};{overlay}"
+
+    # ---- legacy contain->cover push-in (motion preset inactive): unchanged
     if zoom > 0 and dur > 0:
         # Per-frame scale factor: contain-fit at t=0 -> cover x (1+zoom) at
         # the end. iw/ih are the panel PNG dims; w/h the canvas literals.
@@ -133,18 +225,8 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
                    f"x='(W-w)/2+({pan_x:g})*t/{dur:.3f}':"
                    f"y='(H-h)/2+({pan_y:g})*t/{dur:.3f}'")
     else:
-        overlay = f"[bg{i}][fg{i}]overlay=x=(W-w)/2:y=(H-h)/2"
-    return (
-        f"split=2[bgr{i}][fgr{i}];"
-        f"[bgr{i}]"
-        f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
-        f"crop={w}:{h}:(iw-{w})/2:(ih-{h})/2,"
-        f"gblur=sigma={sigma:g},"
-        f"eq=brightness=-0.10:saturation=1.3"
-        f"[bg{i}];"
-        f"{fg};"
-        f"{overlay}"
-    )
+        overlay = centre
+    return f"{head}{bg};{fg};{overlay}"
 
 
 def _scale_crop(kind: str, sw: int, sh: int, dur: float, t: str = "t",
@@ -233,10 +315,37 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
                                           style.zoom_strength))
             pan_x = float(motion.get("pan_x_px", 0.0) or 0.0)
             pan_y = float(motion.get("pan_y_px", 0.0) or 0.0)
+            # A motion preset supplies the pan kind; drive a distinct, slow
+            # Ken-Burns move per shot (the edit-rotation cycle). Without a
+            # preset, kind stays None and the legacy push-in is reproduced.
+            ref_kind = kind if motion.get("preset") else None
+            # Tall/long panels: bring the foreground closer with a fixed
+            # scale bump (panel_scale, e.g. 1.2) and reveal the crop with a
+            # vertical pan only. The _blur_bg_chain pan branch holds the
+            # foreground at (h/ih)*(1+pan_frac) and drifts by canvas*pan_frac,
+            # so pan_frac = panel_scale - 1 traverses exactly the new overflow
+            # with no zoom. Normal panels keep the 0.32 default unchanged.
+            pan_frac = 0.32
+            if motion.get("tall_panel"):
+                try:
+                    pan_frac = max(0.0, float(motion.get("panel_scale", 1.2)) - 1.0)
+                except (TypeError, ValueError):
+                    pan_frac = 0.2
             vf = _blur_bg_chain(i, tw, th, style.blur_sigma,
                                 zoom=panel_zoom,
                                 dur=e.duration_seconds,
-                                pan_x=pan_x, pan_y=pan_y)
+                                pan_x=pan_x, pan_y=pan_y,
+                                kind=ref_kind, pan_frac=pan_frac,
+                                columns=int(motion.get("split_columns", 0)
+                                            or 0),
+                                split_dir=int(motion.get("split_dir", 1)
+                                              or 1),
+                                gap_frac=float(motion.get(
+                                    "split_gap_frac", 0.05) or 0.05),
+                                pan_overflow=float(motion.get(
+                                    "split_pan_frac", 0.15) or 0.15),
+                                split_ss=float(motion.get(
+                                    "split_ss", 3.0) or 3.0))
         else:
             motion = e.motion or {}
             default_zoom = style.zoom_strength if style else 0.3

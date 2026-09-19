@@ -92,6 +92,20 @@ class VideoConfig:
     min_display_seconds: float = 2.0
     max_display_seconds: float = 12.0   # cap for SILENT panels only
     silent_wpm: int = 160        # reading speed used ONLY when tts == "none"
+    # ── Speech window (short recap beats) ───────────────────────────────────
+    # Each spoken panel aims for 5-7s: per-panel text is trimmed to whole
+    # sentences inside speech_target_seconds, and panel durations are
+    # backstopped at speech_max_seconds (+ gap). The cap never cuts speech
+    # short — it only trims silence/pan padding and class-mult inflation —
+    # because the text trim guarantees fresh audio already fits. The camera
+    # always plays its move inside the panel window (ffmpeg t/dur), so pans
+    # stay in sync with the short narration instead of lingering past it.
+    # Disable with speech_window=False for the legacy uncapped behaviour.
+    speech_window: bool = True
+    speech_target_seconds: float = 6.0  # trim budget aim (middle of 5-7s)
+    speech_max_seconds: float = 7.0     # hard backstop per spoken panel
+    speech_wpm: int = 140          # conservative budgeting rate (TTS varies;
+                                   # slow estimate keeps real audio in-window)
     max_pan_px_per_sec: int = 450  # slow, readable Ken-Burns pan
     # When a panel's pan would outlast its narration, speed the pan up to
     # fit inside the speech window (bounded: never more than this multiple
@@ -127,16 +141,18 @@ class VideoConfig:
     vignette_angle: str = "PI/2.5"   # ffmpeg angle expr; smaller = stronger
     blur_sigma: float = 40.0         # gblur sigma of the background branch
     # Ken-Burns push-in strength (fraction of fitted size reached by the
-    # last frame). 0.5 = the panel grows to 1.5x. Applies to the blur
+    # last frame). 0.25 = the panel grows to 1.25x. Applies to the blur
     # foreground and to the zoom_in/zoom_out pan kinds. 0 disables motion.
-    zoom_strength: float = 0.5
+    # Kept small so zoom animations stay slow and cinematic.
+    zoom_strength: float = 0.25
     # ── Reference-motion preset (editing style) ─────────────────────────────
-    # "none" (default) keeps the existing automation; "reference" reproduces
-    # the camera/editing rhythm of reference_motion_preset.json (segment
-    # order, relative timing, zoom, pan direction/speed) normalized to each
-    # panel/canvas. motion_strength scales pan travel (1.0 = as measured);
-    # motion_preset_path overrides the bundled JSON (custom templates).
-    motion_preset: str = "none"
+    # "reference" (default) reproduces the strict camera cycle of
+    # reference_motion_preset.json — a repeating 4-beat sequence (zoom in,
+    # pan down, pan up, zoom out) normalized to each panel/canvas. "none"
+    # falls back to the geometry-driven automation. motion_strength scales
+    # pan travel (1.0 = as measured); motion_preset_path overrides the
+    # bundled JSON (custom templates).
+    motion_preset: str = "reference"
     motion_preset_path: Path | None = None
     motion_strength: float = 1.0
     # Kokoro clips are independent, so they are synthesized in a bounded
@@ -243,6 +259,52 @@ _CJK_RE = re.compile(r"[\u3040-\u30ff\uac00-\ud7af\u4e00-\u9fff]")
 
 def _word_count(text: str) -> int:
     return len(_WORD_RE.findall(text)) + len(_CJK_RE.findall(text))
+
+
+_SENT_SPLIT_RE = re.compile(r"(?<=[.!?…\"'”’])\s+")
+
+
+def estimate_speech_seconds(text: str, cfg: VideoConfig) -> float:
+    """Rough speech length for budgeting (conservative: errs slow so real
+    TTS audio lands inside the 5-7s window, never over it)."""
+    return (_word_count(text) / cfg.speech_wpm) * 60.0 if text.strip() else 0.0
+
+
+def fit_text_to_speech_window(text: str, cfg: VideoConfig) -> str:
+    """Trim one panel's spoken text to whole sentences inside the window.
+
+    Lines already under speech_max_seconds pass through untouched. Longer
+    lines keep leading whole sentences up to speech_target_seconds; a single
+    over-long sentence is hard-cut to the max budget with terminal
+    punctuation restored (TTS-friendly). Never returns non-lexical text.
+    """
+    if not cfg.speech_window or not text.strip():
+        return text
+    max_words = max(1, int(cfg.speech_max_seconds * cfg.speech_wpm / 60))
+    if _word_count(text) <= max_words:
+        return text
+    target_words = max(1, int(cfg.speech_target_seconds * cfg.speech_wpm / 60))
+    sentences = [s for s in _SENT_SPLIT_RE.split(text.strip()) if s.strip()]
+    kept: list[str] = []
+    kept_words = 0
+    for s in sentences:
+        w = _word_count(s)
+        if kept and kept_words + w > target_words:
+            break
+        kept.append(s)
+        kept_words += w
+        if kept_words >= target_words:
+            break
+    if not kept:
+        # No sentence boundary at all: hard-cut to the max budget.
+        kept = [" ".join(re.findall(r"\S+", text.strip())[:max_words])]
+        kept_words = _word_count(kept[0])
+    if kept_words > max_words:
+        # Leading sentence(s) alone exceed the max: hard-cut whole words.
+        kept = [" ".join(re.findall(r"\S+",
+                                    " ".join(kept))[:max_words])]
+    short = _normalise(" ".join(kept))
+    return short if not is_non_lexical(short) else ""
 
 
 def _resolve_ffmpeg(exe: str = "ffmpeg") -> str:
@@ -414,6 +476,7 @@ def build_narration(artifact: CutArtifact, cfg: VideoConfig,
             ln = by_id_line.get(p.id)
             text = (ln or {}).get("text", "") or ""
             text = _normalise(text) if text.strip() else ""
+            text = fit_text_to_speech_window(text, cfg)
             if is_non_lexical(text):
                 text = ""
             if text and text == prev_text:
@@ -424,6 +487,7 @@ def build_narration(artifact: CutArtifact, cfg: VideoConfig,
                 (ln or {}).get("quote") else []
         else:
             text = script_text(p, include_dialogue=cfg.include_dialogue)
+            text = fit_text_to_speech_window(text, cfg)
             if text and text == prev_text:
                 continue             # duplicate caption: no entry at all
             if text:
@@ -677,6 +741,24 @@ def _round_ms_up(x: float) -> float:
     return math.ceil(round(x * 1000.0, 6)) / 1000.0
 
 
+def _speech_cap_seconds(cfg: VideoConfig,
+                        audio_seconds: float | None) -> float | None:
+    """Backstop for the 5-7s speech window (None when disabled).
+
+    The cap sits at speech_max_seconds + gap but never below the measured
+    audio + gap: narration must always finish; only trailing silence, pan
+    padding and class-mult inflation get trimmed. The renderer plays each
+    pan inside the (possibly shortened) window via t/dur, so the camera
+    move stays in sync with the short narration.
+    """
+    if not cfg.speech_window:
+        return None
+    cap = cfg.speech_max_seconds + cfg.gap_seconds
+    if audio_seconds is not None:
+        cap = max(cap, audio_seconds + cfg.gap_seconds)
+    return cap
+
+
 def display_seconds(*, audio_seconds: float | None, words: int,
                     travel_px: int, cfg: VideoConfig,
                     panel_class: str = "calm") -> float:
@@ -696,7 +778,7 @@ def display_seconds(*, audio_seconds: float | None, words: int,
     mult = cast(dict[str, float], cfg.class_duration_multiplier).get(
         panel_class, cast(dict[str, float], cfg.class_duration_multiplier).get("calm", 1.0))
     if audio_seconds is not None:
-        # spoken panel: narration must finish; never capped
+        # spoken panel: narration must finish; never capped below the audio
         base = audio_seconds + cfg.gap_seconds
         if cfg.pan_fit_speech and travel_px and pan_floor > base:
             # The pan would still be running after the narrator stops.
@@ -711,11 +793,18 @@ def display_seconds(*, audio_seconds: float | None, words: int,
                         cfg.action_floor_seconds)
         else:
             floor = cfg.min_display_seconds
-        return _round_ms_up(max(base, floor, pan_floor) * mult)
+        dur = max(base, floor, pan_floor) * mult
+        cap = _speech_cap_seconds(cfg, audio_seconds)
+        if cap is not None:
+            dur = min(dur, cap)
+        return _round_ms_up(dur)
     # silent panel: reading-speed heuristic (no audio => no drift possible)
     read = (words / cfg.silent_wpm) * 60.0 if words else 0.0
     dur = min(max(read + cfg.gap_seconds, cfg.min_display_seconds),
               cfg.max_display_seconds)
+    cap = _speech_cap_seconds(cfg, None)
+    if cap is not None:
+        dur = min(dur, cap)
     return _round_ms_up(max(dur, pan_floor) * mult)
 
 
@@ -921,13 +1010,26 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
         total_ref = sum((preset.segments or [])[si].dur
                         for si in seg_indices) or 1.0
         scale = total_base / total_ref
+        split_seen = 0  # ordinal of split panels, to alternate band-pan dirs
         for order, ((p, img, png_w, png_h, _text, a), si, r, base) in enumerate(
                 zip(usable, seg_indices, resolved, bases, strict=True), start=1):
             seg = (preset.segments or [])[si]
             scaled_ref = seg.dur * scale
             dur = _round_ms_up(max(base, scaled_ref))
+            cap = _speech_cap_seconds(
+                cfg, a.duration_seconds if a else None)
+            if cap is not None:
+                dur = min(dur, _round_ms_up(cap))
             pan = PanSpec(kind=r["kind"], scaled_w=r["scaled_w"],
                           scaled_h=r["scaled_h"], travel_px=r["travel_px"])
+            # Split panels pan their two bands in opposite directions and the
+            # pair flips on every successive split panel (+1, -1, +1, ...).
+            scols = int(r.get("split_columns", 0) or 0)
+            if scols >= 2:
+                split_dir = 1 if (split_seen % 2 == 0) else -1
+                split_seen += 1
+            else:
+                split_dir = int(r.get("split_dir", 1) or 1)
             motion = {
                 "preset": preset.name,
                 "seg": seg.seg,
@@ -948,6 +1050,13 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
                 "static": r["static"],
                 "pan_x_px": r["pan_x_px"],
                 "pan_y_px": r["pan_y_px"],
+                "tall_panel": r.get("tall_panel", False),
+                "panel_scale": r.get("panel_scale", 1.0),
+                "split_columns": scols,
+                "split_dir": split_dir,
+                "split_gap_frac": r.get("split_gap_frac", 0.05),
+                "split_pan_frac": r.get("split_pan_frac", 0.15),
+                "split_ss": r.get("split_ss", 3.0),
                 "rhythm_weight": seg.dur / total_ref,
                 "scaled_ref_seconds": round(scaled_ref, 3),
                 "source_panel": p.id,

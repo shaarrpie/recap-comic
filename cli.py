@@ -785,10 +785,11 @@ def guided_video(
         40.0, "--blur-sigma",
         help="gblur sigma for the blurred background (default 40)"),
     motion_preset: str = typer.Option(
-        "none", "--motion-preset",
-        help="editing style: none (default automation) | reference "
-             "(reproduce the reference-video camera/editing rhythm from "
-             "reference_motion_preset.json, normalized to each panel)"),
+        "reference", "--motion-preset",
+        help="editing style: reference (default; strict sequential camera "
+             "cycle from reference_motion_preset.json — zoom in, pan down, "
+             "pan up, zoom out, repeated) | none (geometry-driven "
+             "automation)"),
     motion_preset_path: Path | None = typer.Option(
         None, "--motion-preset-path",
         help="override JSON for --motion-preset reference (custom template)"),
@@ -801,6 +802,19 @@ def guided_video(
         help="print the per-shot camera plan (seg, duration, zoom, dx/dy, "
              "normalized movement, panel, confidence) and write "
              "motion_report.json next to the timeline"),
+    speech_window: bool = typer.Option(
+        True, "--speech-window/--no-speech-window",
+        help="keep each spoken panel to 5-7s: trim narration to whole "
+             "sentences inside the target and backstop durations at the max "
+             "(panels cut in sync; camera moves fit the window)"),
+    speech_target: float = typer.Option(
+        6.0, "--speech-target",
+        help="trim budget aim per panel in seconds (middle of the 5-7s "
+             "window)"),
+    speech_max: float = typer.Option(
+        7.0, "--speech-max",
+        help="hard backstop per spoken panel in seconds (never cuts speech "
+             "short, only trims trailing silence/padding)"),
     ffmpeg: str = typer.Option("ffmpeg", "--ffmpeg", help="ffmpeg executable"),
     ffprobe: str = typer.Option("ffprobe", "--ffprobe", help="ffprobe executable"),
     dry_run: bool = typer.Option(
@@ -855,6 +869,10 @@ def guided_video(
     if motion_strength < 0:
         typer.echo("ERROR: --motion-strength must be >= 0", err=True)
         raise typer.Exit(1)
+    if speech_target <= 0 or speech_max <= 0 or speech_target > speech_max:
+        typer.echo("ERROR: require 0 < --speech-target <= --speech-max",
+                   err=True)
+        raise typer.Exit(1)
     out_path = out or panels.parent / "recap.mp4"
     cfg = VideoConfig(
         tts=tts,  # type: ignore[arg-type]
@@ -868,6 +886,8 @@ def guided_video(
         blur_sigma=blur_sigma,
         motion_preset=mp, motion_preset_path=motion_preset_path,
         motion_strength=motion_strength,
+        speech_window=speech_window, speech_target_seconds=speech_target,
+        speech_max_seconds=speech_max,
         ffmpeg_exe=ffmpeg, ffprobe_exe=ffprobe,
         kokoro_model_path=kokoro_model_path,
         kokoro_voices_path=kokoro_voices_path)

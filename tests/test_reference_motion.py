@@ -1,4 +1,8 @@
-"""Offline tests for the reference-motion preset (no ffmpeg / TTS)."""
+"""Offline tests for the reference-motion preset (no ffmpeg / TTS).
+
+The shipped preset is a STRICT sequential cycle: 1) zoom_in 2) pan_down
+3) pan_up 4) zoom_out, repeated continuously (panel i -> segment i mod 4).
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -39,92 +43,107 @@ def _meta() -> Meta:
 
 
 # ------------------------------------------------------------ preset loading
-def test_preset_loads_14_ordered_segments():
+def test_preset_loads_4_beat_cycle_in_order():
     p = _preset()
-    assert len(p) == 14
-    assert [s.seg for s in (p.segments or [])] == list(range(1, 15))
-    assert abs(p.total_duration - 27.23) < 0.05
+    assert len(p) == 4
+    assert [s.seg for s in (p.segments or [])] == [1, 2, 3, 4]
+    assert abs(p.total_duration - 9.0) < 0.05
     assert p.reference_width == pytest.approx(1312.0)
+    # The strict cycle contract: zoom in -> pan down -> pan up -> zoom out.
+    kinds = [mp.pan_kind_for_seg(s, p) for s in (p.segments or [])]
+    assert kinds == ["zoom_in", "pan_down", "pan_up", "zoom_out"]
 
 
 def test_normalized_movement_uses_reference_dims():
     p = _preset()
-    seg1 = (p.segments or [])[0]
-    n = mp.normalized_movement(seg1, p)
+    seg2 = (p.segments or [])[1]  # pan_down beat
+    n = mp.normalized_movement(seg2, p)
     assert n["ndx"] == pytest.approx(0.0)
-    assert n["ndy"] == pytest.approx(104.0 / p.reference_height)
-    assert n["ndyps"] == pytest.approx(58.9 / p.reference_height)
+    assert n["ndy"] == pytest.approx(150.0 / p.reference_height)
+    assert n["ndyps"] == pytest.approx(60.0 / p.reference_height)
 
 
 def test_static_vs_moving_classification():
     p = _preset()
     segs = {s.seg: s for s in (p.segments or [])}
-    assert mp.is_static(segs[4], p) is True  # zoom-in hold from the request
-    assert mp.is_static(segs[1], p) is False  # large vertical move
-    assert mp.is_static(segs[12], p) is True
+    assert mp.is_static(segs[1], p) is True   # zoom_in beat: zoom only
+    assert mp.is_static(segs[2], p) is False  # pan_down beat: moving
+    assert mp.is_static(segs[3], p) is False  # pan_up beat: moving
+    assert mp.is_static(segs[4], p) is True   # zoom_out beat: zoom only
 
 
 def test_low_confidence_damps_but_keeps_motion():
+    # Synthetic low-confidence copy of the pan_down beat: the shipped cycle
+    # is all high-confidence, so damping is exercised on a crafted segment.
     p = _preset()
     segs = {s.seg: s for s in (p.segments or [])}
-    assert mp.confidence_damping(segs[1], p) == pytest.approx(1.0)
-    assert mp.confidence_damping(segs[6], p) == pytest.approx(0.6)
-    assert mp.confidence_damping(segs[10], p) == pytest.approx(0.6)
+    strong = segs[2]
+    weak = mp.ReferenceSegment(seg=strong.seg, t0=strong.t0, t1=strong.t1,
+                               dur=strong.dur, zoom=strong.zoom,
+                               matchScore=0.5, dx=strong.dx, dy=strong.dy,
+                               dxps=strong.dxps, dyps=strong.dyps)
+    assert mp.confidence_damping(strong, p) == pytest.approx(1.0)
+    damped = mp.confidence_damping(weak, p)
+    assert 0.0 < damped < 1.0
+    assert damped == pytest.approx(p.low_confidence_damping)
 
 
-def test_zoom_strength_preserves_ordering():
+def test_zoom_strength_preserves_ordering_and_stays_slow():
     p = _preset()
     segs = {s.seg: s for s in (p.segments or [])}
-    z_out = mp.zoom_strength_for_seg(segs[2])  # 0.92
-    z_norm = mp.zoom_strength_for_seg(segs[1])  # 1.00
-    z_in = mp.zoom_strength_for_seg(segs[4])  # 1.14
+    z_out = mp.zoom_strength_for_seg(segs[4])  # 0.92
+    z_norm = mp.zoom_strength_for_seg(segs[2])  # 1.00
+    z_in = mp.zoom_strength_for_seg(segs[1])  # 1.14
     assert z_out < z_norm < z_in
-    assert 0.0 <= z_out <= 0.8 and 0.0 <= z_in <= 0.8
+    # Slow/cinematic cap: no push-in exceeds 0.4.
+    assert 0.0 <= z_out <= 0.4 and 0.0 <= z_in <= 0.4
 
 
 def test_pan_kind_sign_convention():
     p = _preset()
     segs = {s.seg: s for s in (p.segments or [])}
-    assert mp.pan_kind_for_seg(segs[1], p) == "pan_down"  # dy>0
-    assert mp.pan_kind_for_seg(segs[3], p) == "pan_up"  # dy<0
-    assert mp.pan_kind_for_seg(segs[4], p) == "zoom_in"  # static + zoom
-    assert mp.pan_kind_for_seg(segs[2], p) == "zoom_out"  # static-ish + zoom
+    assert mp.pan_kind_for_seg(segs[1], p) == "zoom_in"    # static + zoom in
+    assert mp.pan_kind_for_seg(segs[2], p) == "pan_down"   # dy>0
+    assert mp.pan_kind_for_seg(segs[3], p) == "pan_up"     # dy<0
+    assert mp.pan_kind_for_seg(segs[4], p) == "zoom_out"   # static + zoom out
 
 
-def test_mapping_cycles_and_spans():
+def test_mapping_cycles_strictly_from_first_beat():
     p = _preset()
-    assert mp.map_segments_to_panels(14, p) == list(range(14))
-    cycled = mp.map_segments_to_panels(16, p)
-    assert cycled[:14] == list(range(14))
-    assert cycled[14:] == [0, 1]  # rhythm repeats, order preserved
-    few = mp.map_segments_to_panels(3, p)
-    assert few[0] == 0 and few[-1] == 13  # spans first..last, no random cut
-    assert few == sorted(few)
+    assert mp.map_segments_to_panels(4, p) == [0, 1, 2, 3]
+    # More panels than beats: the 4-beat pattern repeats continuously.
+    assert mp.map_segments_to_panels(6, p) == [0, 1, 2, 3, 0, 1]
+    assert mp.map_segments_to_panels(9, p) == [0, 1, 2, 3, 0, 1, 2, 3, 0]
+    # Fewer panels than beats: truncate IN ORDER from beat 1 (never an
+    # off-beat or mid-pattern start).
+    assert mp.map_segments_to_panels(3, p) == [0, 1, 2]
+    assert mp.map_segments_to_panels(1, p) == [0]
+    assert mp.map_segments_to_panels(0, p) == []
 
 
-# ------------------------------------------------------------------ resolve
+# ---------------------------------------------------------------- resolve
 def test_blur_resolve_never_reveals_empty_and_keeps_direction():
     p = _preset()
     segs = {s.seg: s for s in (p.segments or [])}
     r = mp.resolve_for_panel(png_w=390, png_h=800, canvas_w=1080,
-                             canvas_h=1920, seg=segs[1], preset=p,
+                             canvas_h=1920, seg=segs[2], preset=p,
                              blur_background=True)
     assert r["kind"] == "pan_down"
     assert r["pan_y_px"] > 0  # downward preserved
-    assert abs(r["pan_y_px"]) <= 1080 * 0.08 + 1e-6 or \
-        abs(r["pan_y_px"]) <= 1920 * 0.08 + 1e-6
-    assert r["ndy"] == pytest.approx(104.0 / p.reference_height)
+    assert abs(r["pan_y_px"]) <= 1920 * 0.08 + 1e-6
+    assert r["ndy"] == pytest.approx(150.0 / p.reference_height)
 
 
 def test_blur_static_seg_has_no_pan_but_keeps_zoom():
     p = _preset()
     segs = {s.seg: s for s in (p.segments or [])}
     r = mp.resolve_for_panel(png_w=390, png_h=800, canvas_w=1080,
-                             canvas_h=1920, seg=segs[4], preset=p,
+                             canvas_h=1920, seg=segs[1], preset=p,
                              blur_background=True)
     assert r["static"] is True
     assert r["pan_x_px"] == 0.0 and r["pan_y_px"] == 0.0
-    assert r["zoom_strength"] > mp.zoom_strength_for_seg(segs[1])
+    # zoom_in beat pushes harder than the normal-framing pan beat.
+    assert r["zoom_strength"] > mp.zoom_strength_for_seg(segs[2])
 
 
 def test_cover_resolve_clamps_to_overflow():
@@ -132,13 +151,13 @@ def test_cover_resolve_clamps_to_overflow():
     segs = {s.seg: s for s in (p.segments or [])}
     # Exact-fit panel: no overflow, so even a large dy must clamp to static.
     r = mp.resolve_for_panel(png_w=1080, png_h=1920, canvas_w=1080,
-                             canvas_h=1920, seg=segs[1], preset=p,
+                             canvas_h=1920, seg=segs[2], preset=p,
                              blur_background=False)
     assert r["travel_px"] == 0
     assert r["scaled_w"] >= 1080 and r["scaled_h"] >= 1920
     # Tall panel: travel fits inside the overflow, direction kept.
     r2 = mp.resolve_for_panel(png_w=800, png_h=3600, canvas_w=1080,
-                              canvas_h=1920, seg=segs[1], preset=p,
+                              canvas_h=1920, seg=segs[2], preset=p,
                               blur_background=False)
     assert r2["kind"] == "pan_down"
     assert 0 < r2["travel_px"] <= (r2["scaled_h"] - 1920)
@@ -167,22 +186,30 @@ def _timeline_with_preset(tmp_path: Path, n: int = 3) -> TimelineArtifact:
                              panels_hash="x")
 
 
-def test_timeline_threads_preset_and_preserves_rhythm(tmp_path: Path):
-    tl = _timeline_with_preset(tmp_path, 14)
-    assert len(tl.entries) == 14
+def test_timeline_threads_strict_cycle_and_preserves_rhythm(tmp_path: Path):
+    tl = _timeline_with_preset(tmp_path, 9)
+    assert len(tl.entries) == 9
     kinds = [e.pan.kind for e in tl.entries]
-    # Exact reference sequence (not simplified to zoom->pan->zoom->pan).
-    assert kinds[0] == "pan_down"
-    assert kinds[2] == "pan_up"
-    assert kinds[3] == "zoom_in"
-    assert kinds[4] == "pan_down"
-    # Short reference shots stay short relative to long ones.
+    # The 4-beat cycle, repeated continuously in strict order.
+    assert kinds == ["zoom_in", "pan_down", "pan_up", "zoom_out",
+                     "zoom_in", "pan_down", "pan_up", "zoom_out",
+                     "zoom_in"]
+    # Longer beats stay long relative to shorter ones (rhythm preserved).
     durs = [e.duration_seconds for e in tl.entries]
-    assert durs[1] < durs[5]  # seg2 (1.07s) < seg6 (3.07s)
+    assert durs[1] >= durs[0]  # seg2 (2.5s beat) >= seg1 (2.0s beat)
     for e in tl.entries:
         assert e.motion is not None
         assert {"seg", "zoom", "dx", "dy", "ndx", "ndy",
                 "confidence"}.issubset(set(e.motion.keys()))
+
+
+def test_default_video_config_enforces_the_cycle(tmp_path: Path):
+    """The default pipeline now reproduces the strict cycle: every timeline
+    entry carries motion metadata and the kinds follow the 4-beat order."""
+    tl = _timeline_with_preset(tmp_path, 4)
+    assert [e.pan.kind for e in tl.entries] == \
+        ["zoom_in", "pan_down", "pan_up", "zoom_out"]
+    assert tl.entries[0].motion is not None
 
 
 def test_motion_report_rows(tmp_path: Path):
@@ -205,7 +232,8 @@ def test_default_path_has_no_motion(tmp_path: Path):
                                 text="Hello world here.")])
     audio = AudioArtifact(meta=_meta(), voice="none", entries=[])
     tl = rv.build_timeline(art, tmp_path, narration, audio, tmp_path,
-                           rv.VideoConfig(tts="none"), panels_hash="x")
+                           rv.VideoConfig(tts="none", motion_preset="none"),
+                           panels_hash="x")
     assert tl.entries[0].motion is None
     assert rv.build_motion_report(tl) == []
 
@@ -237,6 +265,227 @@ def test_blur_chain_pan_animates_overlay_smoothly():
                            pan_x=0.0, pan_y=60.0)
     assert "overlay=x='(W-w)/2+(0)*t/2.000'" in chain
     assert "(60)*t/2.000" in chain
+
+
+def test_blur_chain_cinematic_kinds_are_distinct():
+    """With a motion preset the four cycle kinds must each produce a
+    DISTINCT, full-clip (slow) move -- this is what makes the edit-rotation
+    cycle actually visible."""
+    zin = _blur_bg_chain(0, 1080, 1920, 40.0, dur=6.0, kind="zoom_in")
+    zout = _blur_bg_chain(0, 1080, 1920, 40.0, dur=6.0, kind="zoom_out")
+    pdown = _blur_bg_chain(0, 1080, 1920, 40.0, dur=6.0, kind="pan_down")
+    pup = _blur_bg_chain(0, 1080, 1920, 40.0, dur=6.0, kind="pan_up")
+    # zoom_in grows over the whole clip; zoom_out shrinks over the whole clip
+    assert "(1920/ih)*(1+0.35*t/6.000)" in zin
+    assert "(1920/ih)*(1.35-0.35*t/6.000)" in zout
+    # pan shots hold a fixed taller foreground and animate ONLY overlay y
+    assert "y='(H-h)/2+" in pdown and "*t/6.000" in pdown
+    assert "y='(H-h)/2-" in pup and "*t/6.000" in pup
+    # all four moves are different
+    assert len({zin, zout, pdown, pup}) == 4
+
+
+def test_build_command_uses_cinematic_kind_when_preset_present():
+    from adapters.render_ffmpeg import StyleConfig
+    tl = _tl_entry(motion={"preset": "reference_v1", "zoom_strength": 0.22,
+                           "pan_x_px": 0.0, "pan_y_px": 0.0}, kind="zoom_in")
+    cmd = build_command(tl, Path("out.mp4"), style=StyleConfig())
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    # kind-driven grow, floored at the cinematic magnitude (0.35)
+    assert "(1920/ih)*(1+0.35*t/2.000)" in fc
+    # the legacy contain->cover push-in must NOT appear once a preset drives it
+    assert "min(1080/iw,1920/ih)" not in fc
+
+
+# ------------------------------------------------------- tall/long panels
+def test_resolve_tall_panel_is_closer_and_pan_only():
+    """A tall/long panel (aspect >= 1.5) is brought closer to 1.2x and MUST
+    reveal via a vertical pan only -- no zoom strength -- even when the cycle
+    beat was originally a zoom_in / zoom_out."""
+    p = _preset()
+    segs = p.segments or []
+    zoom_in_seg = segs[0]    # beat 1 -> would normally be zoom_in
+    zoom_out_seg = segs[3]   # beat 4 -> would normally be zoom_out
+    r_in = mp.resolve_for_panel(
+        png_w=800, png_h=1600, canvas_w=1920, canvas_h=1080,
+        seg=zoom_in_seg, preset=p, blur_background=True)
+    r_out = mp.resolve_for_panel(
+        png_w=800, png_h=1600, canvas_w=1920, canvas_h=1080,
+        seg=zoom_out_seg, preset=p, blur_background=True)
+    for r in (r_in, r_out):
+        assert r["tall_panel"] is True
+        assert r["panel_scale"] == pytest.approx(1.2)
+        assert r["zoom_strength"] == 0.0            # never a zoom animation
+        assert r["kind"] in ("pan_down", "pan_up")  # coerced to a pan
+        assert r["travel_px"] == round(0.2 * 1080)  # == 216px reveal
+    # Direction alternates on the beat parity (odd -> up, even -> down).
+    assert r_in["kind"] == "pan_up"
+    assert r_out["kind"] == "pan_down"
+
+
+def test_resolve_normal_panel_is_not_tall():
+    p = _preset()
+    seg = (p.segments or [])[0]  # zoom_in beat
+    r = mp.resolve_for_panel(
+        png_w=1000, png_h=1000, canvas_w=1920, canvas_h=1080,
+        seg=seg, preset=p, blur_background=True)
+    assert r["tall_panel"] is False
+    assert r["panel_scale"] == pytest.approx(1.0)
+    assert r["kind"] == "zoom_in"
+    assert r["zoom_strength"] > 0.0
+
+
+def test_blur_chain_tall_pan_holds_scale_and_moves_y():
+    """pan_frac = panel_scale - 1 must hold a FIXED closer foreground and
+    animate ONLY the overlay y (no per-frame scale growth == no zoom)."""
+    chain = _blur_bg_chain(0, 1920, 1080, 40.0, dur=6.0,
+                           kind="pan_down", pan_frac=0.2)
+    # foreground held at 1.2x contain (constant factor, no t term)
+    assert "(1080/ih)*(1+0.2)" in chain
+    assert "*(1+0.2*t" not in chain                 # no zoom growth
+    # overlay y traverses the full 0.2*h overflow slowly across the clip
+    assert "y='(H-h)/2+384.000-384.000*t/6.000'" in chain or \
+           "y='(H-h)/2+216.000-216.000*t/6.000'" in chain
+
+
+def test_build_command_tall_panel_closer_and_no_zoom():
+    from adapters.render_ffmpeg import StyleConfig
+    tl = _tl_entry(motion={"preset": "reference_v1", "zoom_strength": 0.0,
+                           "pan_x_px": 0.0, "pan_y_px": 384.0,
+                           "tall_panel": True, "panel_scale": 1.2},
+                   kind="pan_down")
+    cmd = build_command(tl, Path("out.mp4"), style=StyleConfig())
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    # closer 1.2x hold (portrait canvas h=1920 -> factor 0.2 -> travel 384)
+    assert "(1920/ih)*(1+0.2)" in fc
+    assert "384.000" in fc
+    # strictly a pan: no zoom push/pull, no legacy contain->cover push-in
+    assert "*(1+0.2*t" not in fc
+    assert "(1+0.35*t" not in fc
+    assert "min(1080/iw,1920/ih)" not in fc
+
+
+# ------------------------------------------------- super-tall split layout
+def test_resolve_super_tall_panel_splits_side_by_side():
+    """An 8:1 strip is too thin to read at 1.2x, so it splits into two bands
+    shown side by side (whole panel ~2x closer at once, static, no pan)."""
+    p = _preset()
+    seg = (p.segments or [])[0]
+    r = mp.resolve_for_panel(
+        png_w=800, png_h=6395, canvas_w=1920, canvas_h=1080,
+        seg=seg, preset=p, blur_background=True)
+    assert r["split_columns"] == 2
+    assert r["tall_panel"] is True
+    assert r["kind"] == "static"          # per-band pan is renderer-driven
+    assert r["travel_px"] == 0
+    assert r["zoom_strength"] == 0.0       # never a zoom
+    assert r["split_dir"] == 1             # first split panel default
+    assert r["split_gap_frac"] == pytest.approx(0.05)
+    assert r["split_pan_frac"] == pytest.approx(0.15)
+    # composite (two 800x3197 bands side by side) contained to 1920x1080:
+    # ~540 wide (side pillars remain), ~1080 tall.
+    assert 500 <= r["scaled_w"] <= 600
+    assert 1075 <= r["scaled_h"] <= 1085
+    assert r["scaled_w"] < 1920
+
+
+def test_resolve_moderately_tall_panel_not_split():
+    p = _preset()
+    seg = (p.segments or [])[0]
+    r = mp.resolve_for_panel(
+        png_w=800, png_h=1645, canvas_w=1920, canvas_h=1080,  # 2.06:1 < 3.0
+        seg=seg, preset=p, blur_background=True)
+    assert r["split_columns"] == 0
+    assert r["tall_panel"] is True         # still the 1.2x + pan path
+    assert r["panel_scale"] == pytest.approx(1.2)
+    assert r["kind"] in ("pan_down", "pan_up")
+
+
+def test_blur_chain_split_has_gap_and_overlays_on_bg():
+    """Bands are overlaid directly on the blurred bg (no hstack composite) so
+    a `gap` (round(W*SPLIT_GAP_FRAC)) of blurred background shows between them."""
+    chain = _blur_bg_chain(0, 1920, 1080, 40.0, columns=2, dur=6.0)
+    assert "[fgr0]split=2[sl0_0][sl1_0];" in chain
+    assert "crop=iw:trunc(ih/2):0:trunc(ih*0/2)" in chain
+    assert "crop=iw:trunc(ih/2):0:trunc(ih*1/2)" in chain
+    assert "hstack" not in chain                      # no side-by-side composite
+    # (the blurred-background branch legitimately uses force_original_aspect_ratio)
+    # gap = round(1920*0.05) = 96; band slots separated by (w + 96)
+    assert "overlay=x='(W-(2*w+96))/2+0*(w+96)':y=0" in chain
+    assert "overlay=x='(W-(2*w+96))/2+1*(w+96)':y=0" in chain
+    assert "[bg0][vp0_0]overlay=" in chain            # composited onto blurred bg
+    assert "eval=frame" not in chain                  # never a zoom push/pull
+
+
+def test_blur_chain_split_bands_pan_in_opposite_directions():
+    """split_dir=+1 -> band0 pans down, band1 pans up; split_dir=-1 flips both.
+    With 3x vertical supersampling (h=1080): viewport 3240, band 3726, so the
+    pan travels 486 supersampled px (== 162 final px) then downscales to 1080."""
+    fwd = _blur_bg_chain(0, 1920, 1080, 40.0, columns=2, dur=6.0, split_dir=1)
+    assert "crop=iw:3240:0:'486.000*t/6.000'[cd0_0]" in fwd          # band0 down
+    assert "crop=iw:3240:0:'486.000-486.000*t/6.000'[cd1_0]" in fwd  # band1 up
+    assert "[cd0_0]scale=-2:1080:flags=lanczos[vp0_0]" in fwd        # downscale
+    rev = _blur_bg_chain(0, 1920, 1080, 40.0, columns=2, dur=6.0, split_dir=-1)
+    assert "crop=iw:3240:0:'486.000-486.000*t/6.000'[cd0_0]" in rev  # band0 up
+    assert "crop=iw:3240:0:'486.000*t/6.000'[cd1_0]" in rev          # band1 down
+
+
+def test_blur_chain_split_supersamples_for_smoothness():
+    """A higher supersample factor multiplies the pan travel (finer sub-pixel
+    steps) without changing the final viewport height (still h)."""
+    chain = _blur_bg_chain(0, 1920, 1080, 40.0, columns=2, dur=6.0,
+                           split_dir=1, split_ss=4.0)
+    # vh=round(1080*4)=4320, bh=round(1080*1.15*4)=4968, travel=648
+    assert "crop=iw:4320:0:'648.000*t/6.000'[cd0_0]" in chain
+    assert "[cd0_0]scale=-2:1080:flags=lanczos[vp0_0]" in chain
+
+
+def test_build_command_super_tall_uses_split():
+    from adapters.render_ffmpeg import StyleConfig
+    tl = _tl_entry(motion={"preset": "reference_v1", "zoom_strength": 0.0,
+                           "pan_x_px": 0.0, "pan_y_px": 0.0,
+                           "tall_panel": True, "panel_scale": 1.0,
+                           "split_columns": 2, "split_dir": 1}, kind="static")
+    cmd = build_command(tl, Path("out.mp4"), style=StyleConfig())
+    fc = cmd[cmd.index("-filter_complex") + 1]
+    # canvas 1080x1920, 3x ss -> viewport 5760, band 6624, travel 864, gap 54
+    assert "hstack" not in fc
+    assert "crop=iw:5760:0:'864.000*t/2.000'" in fc
+    assert "(W-(2*w+54))" in fc
+    # the 1.2x pan and the zoom cycle must NOT appear for a split shot
+    assert "(1+0.2" not in fc
+    assert "(1+0.35*t" not in fc
+
+
+def _split_timeline(tmp_path: Path, n: int) -> TimelineArtifact:
+    """Build a reference timeline of `n` super-tall (5:1) panels -- every one
+    splits, so the split_dir alternation across split panels is observable."""
+    panels = []
+    y = 0
+    for i in range(1, n + 1):
+        h = 4000
+        panels.append(_panel(i, y, y + h, f"Panel {i} narration here."))
+        Image.new("RGB", (800, h), "white").save(
+            tmp_path / f"panel_{i:03d}.png")
+        y += h
+    art = CutArtifact(source="strip.png", width=800, height=y,
+                      plan_hash="x", config={}, panels=panels)
+    narration = NarrationArtifact(
+        meta=_meta(), mode="narrator",
+        entries=[NarrationEntry(id=p.id, panel_id=p.id, order=i + 1,
+                                text=f"Panel {i + 1} narration here.")
+                 for i, p in enumerate(panels)])
+    audio = AudioArtifact(meta=_meta(), voice="none", entries=[])
+    cfg = rv.VideoConfig(tts="none", motion_preset="reference")
+    return rv.build_timeline(art, tmp_path, narration, audio, tmp_path, cfg,
+                             panels_hash="x")
+
+
+def test_ref_timeline_alternates_split_dir(tmp_path: Path):
+    tl = _split_timeline(tmp_path, 4)
+    assert all(e.motion["split_columns"] == 2 for e in tl.entries)
+    # +1, -1, +1, -1 across consecutive split panels
+    assert [e.motion["split_dir"] for e in tl.entries] == [1, -1, 1, -1]
 
 
 def test_build_command_uses_per_panel_motion():
@@ -292,7 +541,7 @@ def test_cover_preset_never_pads_black(tmp_path: Path):
 
 # ------------------------------------------------------------------ cache
 def test_motion_changes_hash_but_not_essentials():
-    a = rv.VideoConfig()
+    a = rv.VideoConfig(motion_preset="none")
     b = rv.VideoConfig(motion_preset="reference")
     assert a.hash() != b.hash()
     assert a.hash_essentials() == b.hash_essentials()

@@ -130,7 +130,8 @@ def test_build_timeline_landscape_declares_canvas(cut_dir):
     by design, so the cover-fit + pan assertions below describe the legacy path.
     """
     d, art = cut_dir
-    cfg = rv.VideoConfig(tts="none", blur_background=False)
+    cfg = rv.VideoConfig(tts="none", blur_background=False,
+                         motion_preset="none")
     nar = rv.build_narration(art, cfg, panels_hash="h")
     aud = rv.synthesize_audio(nar, d / "audio", cfg)
     tl = rv.build_timeline(art, d, nar, aud, d / "audio", cfg, panels_hash="h",
@@ -144,8 +145,11 @@ def test_build_timeline_landscape_declares_canvas(cut_dir):
 
 # ---------------------------------------------------------------- duration --
 def test_display_seconds_rules():
+    # Legacy uncapped contract (speech_window=False): audio + gap floors,
+    # pan floor always wins, silent capped only by max_display_seconds.
     cfg = rv.VideoConfig(gap_seconds=0.35, min_display_seconds=2.0,
-                         max_pan_px_per_sec=450, silent_wpm=120)
+                         max_pan_px_per_sec=450, silent_wpm=120,
+                         speech_window=False)
     # spoken: audio + gap, never below min
     assert rv.display_seconds(audio_seconds=0.5, words=3, travel_px=0,
                               cfg=cfg) == 2.0
@@ -165,7 +169,8 @@ def test_display_seconds_rules():
 def test_timeline_is_contiguous_and_silent_mode(cut_dir):
     d, art = cut_dir
     # blur off: this test asserts the Ken-Burns pan kind; blur mode is static.
-    cfg = rv.VideoConfig(tts="none", blur_background=False)
+    cfg = rv.VideoConfig(tts="none", blur_background=False,
+                         motion_preset="none")
     nar = rv.build_narration(art, cfg, panels_hash="h")
     aud = rv.synthesize_audio(nar, d / "audio", cfg)
     assert aud.entries == [] and aud.voice == "none"
@@ -188,7 +193,9 @@ def test_timeline_uses_measured_audio(cut_dir):
     d, art = cut_dir
     # blur off: panel 2's duration here is the pan floor (2940px travel),
     # which blur mode never computes (contain-fit => travel_px=0).
-    cfg = rv.VideoConfig(blur_background=False)
+    # Exercises the geometry-driven automation (blur off): opt out of the
+    # default strict reference-motion cycle.
+    cfg = rv.VideoConfig(blur_background=False, motion_preset="none")
     nar = rv.build_narration(art, cfg, panels_hash="h")
     aud = AudioArtifact(meta=_meta(), voice="v", entries=[
         AudioEntry(entry_id="001", path="001.mp3", duration_seconds=3.2,
@@ -211,7 +218,7 @@ def test_missing_panel_image_is_skipped_not_an_error(cut_dir):
     d, art = cut_dir
     assert len(art.panels) >= 2, "fixture must have at least 2 panels"
     (d / "panel_002.png").unlink()
-    cfg = rv.VideoConfig(tts="none")
+    cfg = rv.VideoConfig(tts="none", motion_preset="none")
     nar = rv.build_narration(art, cfg, panels_hash="h")
     aud = rv.synthesize_audio(nar, d / "audio", cfg)
     tl = rv.build_timeline(art, d, nar, aud, d / "audio", cfg, panels_hash="h")
@@ -230,7 +237,7 @@ def test_srt_time_format():
 
 def test_write_srt_uses_word_timings(cut_dir, tmp_path):
     d, art = cut_dir
-    cfg = rv.VideoConfig()
+    cfg = rv.VideoConfig(motion_preset="none")
     nar = rv.build_narration(art, cfg, panels_hash="h")
     words = [{"start": i * 0.3, "end": i * 0.3 + 0.25, "text": w}
              for i, w in enumerate(["Jin", "wakes", "up", "in", "the", "dungeon", "Where", "am", "I"])]
@@ -252,7 +259,7 @@ def test_write_srt_uses_word_timings(cut_dir, tmp_path):
 # ------------------------------------------------------------- ffmpeg cmd --
 def test_render_command_builds_without_ffmpeg(cut_dir):
     d, art = cut_dir
-    cfg = rv.VideoConfig(tts="none")
+    cfg = rv.VideoConfig(tts="none", motion_preset="none")
     nar = rv.build_narration(art, cfg, panels_hash="h")
     aud = rv.synthesize_audio(nar, d / "audio", cfg)
     tl = rv.build_timeline(art, d, nar, aud, d / "audio", cfg, panels_hash="h")
@@ -359,7 +366,7 @@ def test_complete_tts_artifact_is_cached(tmp_path, monkeypatch):
     monkeypatch.setattr("adapters.tts.synthesize_entry", fake)
     d = tmp_path / "audio"
     nar = _narration("alpha", "beta")
-    cfg = rv.VideoConfig()
+    cfg = rv.VideoConfig(motion_preset="none")
     first = rv.synthesize_audio(nar, d, cfg)
     assert [e.entry_id for e in first.entries] == ["001", "002"]
     assert fake.calls == ["001", "002"]
@@ -376,7 +383,7 @@ def test_partial_tts_failure_is_repaired_not_reused(tmp_path, monkeypatch):
     monkeypatch.setattr("adapters.tts.synthesize_entry", flaky)
     d = tmp_path / "audio"
     nar = _narration("alpha", "beta", "gamma")
-    cfg = rv.VideoConfig()
+    cfg = rv.VideoConfig(motion_preset="none")
     degraded = rv.synthesize_audio(nar, d, cfg)
     assert [e.entry_id for e in degraded.entries] == ["001", "003"]
 
@@ -397,7 +404,7 @@ def test_changed_narration_invalidates_stale_clips(tmp_path, monkeypatch):
     fake = _FakeTts()
     monkeypatch.setattr("adapters.tts.synthesize_entry", fake)
     d = tmp_path / "audio"
-    cfg = rv.VideoConfig()
+    cfg = rv.VideoConfig(motion_preset="none")
     rv.synthesize_audio(_narration("alpha", "beta"), d, cfg)
     fake2 = _FakeTts()
     monkeypatch.setattr("adapters.tts.synthesize_entry", fake2)

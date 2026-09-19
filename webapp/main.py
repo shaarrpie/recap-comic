@@ -384,6 +384,10 @@ class RunRequest(BaseModel):
     # reference-video camera/editing rhythm (see reference_motion_preset.json).
     motion_preset: str | None = None
     motion_strength: float | None = None
+    # Speech window: None = VideoConfig default (each spoken panel 5-7s).
+    speech_window: bool | None = None
+    speech_target_seconds: float | None = None
+    speech_max_seconds: float | None = None
 
 
 @app.post("/api/run")
@@ -484,6 +488,9 @@ async def run(body: RunRequest):
         "blur_sigma": body.blur_sigma,
         "motion_preset": body.motion_preset,
         "motion_strength": body.motion_strength,
+        "speech_window": body.speech_window,
+        "speech_target_seconds": body.speech_target_seconds,
+        "speech_max_seconds": body.speech_max_seconds,
     })
     log.info("job=%s created kind=generate session=%s order=%s backend=%s",
              job.id, session,

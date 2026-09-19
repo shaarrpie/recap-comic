@@ -864,7 +864,12 @@ def _render_video(job: Job, **kwargs: Any) -> None:
         zoom_strength=_style("zoom_strength", VideoConfig.zoom_strength),
         motion_preset=_style("motion_preset", VideoConfig.motion_preset),
         motion_strength=_style("motion_strength",
-                               VideoConfig.motion_strength))
+                               VideoConfig.motion_strength),
+        speech_window=_style("speech_window", VideoConfig.speech_window),
+        speech_target_seconds=_style("speech_target_seconds",
+                                     VideoConfig.speech_target_seconds),
+        speech_max_seconds=_style("speech_max_seconds",
+                                  VideoConfig.speech_max_seconds))
     job.log("INFO",
             f"render input={panels_json.name} tts={cfg.tts} "
             f"voice={cfg.voice} rate={cfg.rate} pitch={cfg.pitch} "

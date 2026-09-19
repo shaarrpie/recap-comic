@@ -190,7 +190,9 @@ class TestPacingByClass:
         assert reveal == pytest.approx(calm * 1.35, abs=0.01)
 
     def test_pan_floor_always_applies(self):
-        cfg = rv.VideoConfig(min_display_seconds=2.0)
+        # Legacy floor mechanics: window pinned off to isolate them (the
+        # 5-7s backstop is covered in test_speech_window.py).
+        cfg = rv.VideoConfig(min_display_seconds=2.0, speech_window=False)
         dur = rv.display_seconds(audio_seconds=0.5, words=3,
                                  travel_px=4500, cfg=cfg,
                                  panel_class="action")
@@ -209,7 +211,9 @@ class TestPacingByClass:
     def test_pan_fit_speech_bounds_extreme_travel(self):
         # 45000px / 900 = 50s: even 2x speed cannot fit the speech window,
         # so the bounded pan floor still applies (readable, not instant).
-        cfg = rv.VideoConfig(min_display_seconds=2.0, pan_fit_speech=True)
+        # Window pinned off to isolate the legacy bound.
+        cfg = rv.VideoConfig(min_display_seconds=2.0, pan_fit_speech=True,
+                             speech_window=False)
         dur = rv.display_seconds(audio_seconds=5.0, words=3,
                                  travel_px=45000, cfg=cfg,
                                  panel_class="calm")
@@ -224,7 +228,10 @@ class TestPacingByClass:
         900,     # exact 2.0s at base speed, no speed-up needed
     ])
     def test_rounding_never_truncates_pan_floor(self, travel):
-        cfg = rv.VideoConfig(min_display_seconds=2.0, pan_fit_speech=True)
+        # Window pinned off: this test guards the legacy floor arithmetic
+        # against millisecond rounding, orthogonal to the speech backstop.
+        cfg = rv.VideoConfig(min_display_seconds=2.0, pan_fit_speech=True,
+                             speech_window=False)
         dur = rv.display_seconds(audio_seconds=0.5, words=0,
                                  travel_px=travel, cfg=cfg,
                                  panel_class="calm")
@@ -251,9 +258,11 @@ class TestPacingByClass:
         # and must never fall below the input
         assert rv._round_ms_up(45000 / 1350) >= 45000 / 1350
 
-    def test_pan_fit_speech_off_by_default(self):
-        # Default behaviour unchanged: the classic pan floor always wins.
-        cfg = rv.VideoConfig(min_display_seconds=2.0)
+    def test_pan_fit_speech_flag_off_by_default(self):
+        # The pan_fit_speech flag defaults off (legacy pan-floor-wins pacing
+        # when the speech window is also off; the window backstop itself is
+        # covered in test_speech_window.py).
+        cfg = rv.VideoConfig(min_display_seconds=2.0, speech_window=False)
         dur = rv.display_seconds(audio_seconds=5.0, words=3,
                                  travel_px=4500, cfg=cfg,
                                  panel_class="calm")
@@ -276,8 +285,10 @@ def test_build_timeline_classifies_panels(session):
     art = CutArtifact.model_validate_json(
         (d / "panels.json").read_text("utf-8"))
     # action text on panel 2 ("charges... fist") -> action class affects
-    # duration even though narration is short
-    cfg = rv.VideoConfig(tts="none")
+    # duration even though narration is short. This exercises the
+    # geometry-driven automation pacing (class multipliers), so opt out of
+    # the default strict reference-motion cycle which forces calm pacing.
+    cfg = rv.VideoConfig(tts="none", motion_preset="none")
     nar = rv.build_narration(art, cfg, panels_hash="h", work_dir=d)
     aud = rv.synthesize_audio(nar, d / "audio", cfg)
     tl = rv.build_timeline(art, d, nar, aud, d / "audio", cfg,
