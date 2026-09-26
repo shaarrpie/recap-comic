@@ -66,3 +66,37 @@ async def synth_one(text: str, voice: str, out: Path,
         timeout=timeout_s)
     if not out.is_file() or out.stat().st_size == 0:
         raise RuntimeError("tts returned no audio for this text")
+
+
+async def synth_one_edge(text: str, voice: str, out: Path,
+                         rate: str = "+0%", pitch: str = "+0Hz",
+                         timeout_s: float = 180) -> None:
+    """Synthesize one preview clip with cloud edge-tts (network call).
+
+    Only reached when the user explicitly selects provider='edge'. Writes an
+    mp3 atomically and raises on empty audio so voice_api surfaces a 502
+    rather than caching a silent clip (edge-tts fails silently on a bad voice
+    id). Unlike Kokoro, edge honours ``rate``/``pitch``.
+    """
+    text = (text or "").strip()
+    if not text:
+        raise RuntimeError("tts received empty text")
+    import edge_tts
+
+    tmp = out.with_suffix(".mp3.tmp")
+
+    async def _run() -> None:
+        comm = edge_tts.Communicate(text, voice=voice, rate=rate, pitch=pitch)
+        await comm.save(str(tmp))
+        if not tmp.is_file() or tmp.stat().st_size == 0:
+            raise RuntimeError("edge-tts returned no audio for this text")
+        tmp.replace(out)
+
+    try:
+        await asyncio.wait_for(_run(), timeout=timeout_s)
+    finally:
+        try:
+            if tmp.is_file():
+                tmp.unlink()
+        except OSError:
+            pass

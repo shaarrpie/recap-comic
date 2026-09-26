@@ -37,19 +37,36 @@ VALID_PRESETS = (PRESET_NONE, PRESET_REFERENCE)
 # width). Bring those closer with a fixed scale bump and reveal the extra
 # top/bottom crop with a vertical pan only (never a zoom animation). Only
 # genuinely narrow art triggers this -- a height-constrained panel whose
-# contain-fit covers less than ``TALL_PANEL_WIDTH_FILL`` of the canvas width
-# -- so wide/near-square panels and portrait renders stay byte-for-byte the
-# same as before.
-TALL_PANEL_SCALE = 1.2
+# contain-fit covers less than ``TALL_PANEL_WIDTH_FILL`` of the canvas width.
+# Both classes are now framed CLOSER than the contain-fit: tall art at
+# TALL_PANEL_SCALE, everything else at NORMAL_PANEL_SCALE. The old 1.2x left
+# most of a 16:9 frame to the blurred pillars, which read as "blank space
+# around the manhwa" and forced the camera to travel further to show the art.
+TALL_PANEL_SCALE = 2.2
+NORMAL_PANEL_SCALE = 2.0
 TALL_PANEL_WIDTH_FILL = 0.5
 
+# How much of the closeness the camera actually sweeps in one shot. The
+# renderer used to traverse the ENTIRE hidden height (scale-1)*canvas_h, which
+# at these crops means 1296px inside a ~3s shot -- ~400px/s, a sweep, not a
+# drift. 0.35 keeps the framing and slows the move to ~140px/s; the unvisited
+# part of the crop simply stays out of frame, like any real camera hold.
+PAN_TRAVEL_FRACTION = 0.35
+# Lateral slides (pan_left / pan_right) move the whole panel across the
+# blurred backdrop, so the travel is a fraction of the canvas WIDTH and needs
+# no horizontal overflow to be valid.
+LATERAL_SLIDE_FRACTION = 0.08
+
 # A "super tall" strip (aspect height/width >= SPLIT_MIN_ASPECT) is too thin
-# to read even after the 1.2x bump. Split it into SPLIT_COLUMNS horizontal
+# to read even after the closer bump. Split it into SPLIT_COLUMNS horizontal
 # bands laid out side by side: the whole panel then shows at once at roughly
-# SPLIT_COLUMNS x closer, with no long pan needed (fits a narration-length
-# shot). Moderately tall panels keep the 1.2x + vertical-pan treatment.
+# SPLIT_COLUMNS * (1 + SPLIT_PAN_FRAC) x closer, with no long pan needed (fits a
+# narration-length shot).
 SPLIT_MIN_ASPECT = 3.0
 SPLIT_COLUMNS = 2
+# Effective closeness wanted for super-tall art. Overflow per band follows from
+# it: closeness = columns * (1 + pan_frac)  ->  pan_frac = 2.5/2 - 1 = 0.25.
+SPLIT_CLOSENESS = 2.5
 
 # Split-panel layout/animation knobs (surfaced in the resolve result so the
 # renderer reads them from ``motion`` as the single source of truth).
@@ -57,7 +74,7 @@ SPLIT_COLUMNS = 2
 # fraction of canvas width. SPLIT_PAN_FRAC: extra height each band is scaled
 # to so it can slowly pan vertically (bands drift in opposite directions).
 SPLIT_GAP_FRAC = 0.05
-SPLIT_PAN_FRAC = 0.15
+SPLIT_PAN_FRAC = SPLIT_CLOSENESS / SPLIT_COLUMNS - 1.0
 # Vertical supersampling factor for the band pan: the crop pans in an image
 # this many times taller, then downscales, so integer crop steps become
 # sub-pixel final motion -> smooth, jitter-free pan. Higher = smoother but
@@ -256,53 +273,52 @@ def resolve_for_panel(*, png_w: int, png_h: int, canvas_w: int, canvas_h: int,
         # can be that narrow, so this leaves wide/portrait-filling panels on
         # the unchanged generic path.
         strip_fill = (png_w * contain) / canvas_w if canvas_w else 1.0
-        if strip_fill < TALL_PANEL_WIDTH_FILL:
+        narrow = strip_fill < TALL_PANEL_WIDTH_FILL
+        panel_scale = TALL_PANEL_SCALE if narrow else NORMAL_PANEL_SCALE
+        if narrow and png_h / png_w >= SPLIT_MIN_ASPECT:
+            # Super-tall strip: split into side-by-side bands so the whole
+            # panel reads SPLIT_CLOSENESS x closer at once (bands drift in
+            # opposite directions; no zoom).
             tall_panel = True
+            split_columns = SPLIT_COLUMNS
+            panel_scale = 1.0
             zs = 0.0
-            if png_h / png_w >= SPLIT_MIN_ASPECT:
-                # Super-tall strip: split into side-by-side bands so the whole
-                # panel reads ~SPLIT_COLUMNS x closer at once (static, no pan).
-                split_columns = SPLIT_COLUMNS
-                panel_scale = 1.0
-                kind = "static"
-                travel_px = 0
-                pan_x = pan_y = 0.0
-                comp_w = png_w * split_columns
-                comp_h = png_h / split_columns
-                cc = min(canvas_w / comp_w, canvas_h / comp_h)
-                if cc > 4.0:
-                    cc = 4.0
-                scaled_w = max(1, _math.ceil(comp_w * cc))
-                scaled_h = max(1, _math.ceil(comp_h * cc))
-            else:
-                # Moderately tall: bring closer with a fixed scale bump and
-                # reveal the extra top/bottom crop with a slow vertical pan
-                # only (no zoom). Blurred side pillars stay.
-                panel_scale = TALL_PANEL_SCALE
-                # Alternate sweep direction across the 4-beat cycle so
-                # consecutive tall panels do not repeat the same move.
-                kind = "pan_down" if seg.seg % 2 == 0 else "pan_up"
-                travel_px = int(round((panel_scale - 1.0) * canvas_h))
-                pan_y = _math.copysign(
-                    travel_px, 1.0 if kind == "pan_down" else -1.0)
-                pan_x = 0.0
-                scaled_w = max(1, _math.ceil(png_w * contain * panel_scale))
-                scaled_h = max(1, _math.ceil(png_h * contain * panel_scale))
+            kind = "static"
+            travel_px = 0
+            pan_x = pan_y = 0.0
+            comp_w = png_w * split_columns
+            comp_h = png_h / split_columns
+            cc = min(canvas_w / comp_w, canvas_h / comp_h)
+            if cc > 4.0:
+                cc = 4.0
+            scaled_w = max(1, _math.ceil(comp_w * cc))
+            scaled_h = max(1, _math.ceil(comp_h * cc))
         else:
-            max_dx = canvas_w * 0.08
-            max_dy = canvas_h * 0.08
-            pan_x = _math.copysign(min(abs(desired_dx), max_dx),
-                                   desired_dx) if desired_dx else 0.0
-            pan_y = _math.copysign(min(abs(desired_dy), max_dy),
-                                   desired_dy) if desired_dy else 0.0
-            if is_static(seg, preset):
-                pan_x, pan_y = 0.0, 0.0
-            # PanSpec stays meaningful for duration floors + editor display:
-            # reuse the directional kind, with travel_px = dominant-axis px.
+            # The BEAT drives the move. Tall panels used to be forced into
+            # "pan_down if beat is even else pan_up", which discarded every
+            # zoom and slide beat -- that is why a whole recap looked like
+            # nothing but up-and-down sliding.
+            tall_panel = narrow
             kind = pan_kind_for_seg(seg, preset)
-            travel_px = int(round(max(abs(pan_x), abs(pan_y))))
-            scaled_w = max(1, _math.ceil(png_w * contain))
-            scaled_h = max(1, _math.ceil(png_h * contain))
+            hidden = (panel_scale - 1.0) * canvas_h
+            v_travel = int(round(hidden * PAN_TRAVEL_FRACTION))
+            h_travel = int(round(canvas_w * LATERAL_SLIDE_FRACTION))
+            pan_x = pan_y = 0.0
+            travel_px = 0
+            if kind == "pan_down":
+                travel_px, pan_y = v_travel, float(v_travel)
+            elif kind == "pan_up":
+                travel_px, pan_y = v_travel, float(-v_travel)
+            elif kind == "pan_right":
+                travel_px, pan_x = h_travel, float(h_travel)
+            elif kind == "pan_left":
+                travel_px, pan_x = h_travel, float(-h_travel)
+            elif kind in ("zoom_in", "zoom_out"):
+                travel_px = 0
+            else:                                  # static hold
+                zs = 0.0
+            scaled_w = max(1, _math.ceil(png_w * contain * panel_scale))
+            scaled_h = max(1, _math.ceil(png_h * contain * panel_scale))
     else:
         import math as _math
         scaled_w = _math.ceil(png_w * scale)
@@ -390,6 +406,10 @@ def resolve_for_panel(*, png_w: int, png_h: int, canvas_w: int, canvas_h: int,
         "split_gap_frac": float(SPLIT_GAP_FRAC),
         "split_pan_frac": float(SPLIT_PAN_FRAC),
         "split_ss": float(SPLIT_SUPERSAMPLE),
+        # Fraction of the closer crop the camera actually sweeps this shot.
+        # The renderer traverses `pan_frac * pan_travel_frac` of the frame so
+        # framing and motion speed are independent knobs.
+        "pan_travel_frac": float(PAN_TRAVEL_FRACTION),
     }
 
 

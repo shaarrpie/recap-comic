@@ -1,65 +1,21 @@
 {
-  "name": "reference_v1",
-  "description": "Strict sequential motion blueprint: a single repeating 4-beat camera cycle. Panel i uses segment (i mod 4) in order, so every cycle plays 1) Zoom In, 2) Pan Down, 3) Pan Up, 4) Zoom Out, then repeats continuously. Beat kinds are fixed by pan_kind_for_seg: static + zoom>=1.1 => zoom_in, dominant downward move => pan_down, dominant upward move => pan_up, static + zoom<=0.95 => zoom_out. Zoom travels are kept small so each push/pull reads slow and cinematic. Normalized template: the renderer adapts dx/dy/zoom to any panel/canvas size. Positive dy = downward, positive dx = rightward. Do not invent behavior beyond these four beats.",
+  "name": "reference_v2",
+  "description": "Strict sequential motion blueprint: a repeating 8-beat camera cycle. Panel i uses segment (i mod 8) in order, so every cycle plays 1) Zoom In, 2) Pan Down, 3) Slide Right, 4) Zoom Out, 5) Pan Up, 6) Slide Left, 7) Zoom In, 8) Pan Down, then repeats continuously. Beat kinds are fixed by pan_kind_for_seg: static + zoom>=1.1 => zoom_in, static + zoom<=0.95 => zoom_out, dominant downward move => pan_down, dominant upward move => pan_up, dominant sideways move => pan_right / pan_left. The old 4-beat cycle only ever produced zoom/vertical pan, and the tall-panel path overrode even those, so every shot in a recap slid up or down.",
   "reference_width": 1312,
   "reference_height": 2332,
   "reference_fps": 30,
-  "total_duration": 9.0,
-  "static_speed_threshold_px_per_s": 10.0,
+  "total_duration": 18.0,
+  "static_speed_threshold_px_per_s": 5.0,
   "low_confidence_threshold": 0.85,
   "low_confidence_damping": 0.6,
   "segments": [
-    {
-      "seg": 1,
-      "t0": 0.0,
-      "t1": 2.0,
-      "dur": 2.0,
-      "zoom": 1.14,
-      "matchScore": 0.99,
-      "dx": 0.0,
-      "dy": 0.0,
-      "dxps": 0.0,
-      "dyps": 0.0,
-      "kind": "zoom_in"
-    },
-    {
-      "seg": 2,
-      "t0": 2.0,
-      "t1": 4.5,
-      "dur": 2.5,
-      "zoom": 1.0,
-      "matchScore": 0.99,
-      "dx": 0.0,
-      "dy": 150.0,
-      "dxps": 0.0,
-      "dyps": 60.0,
-      "kind": "pan_down"
-    },
-    {
-      "seg": 3,
-      "t0": 4.5,
-      "t1": 7.0,
-      "dur": 2.5,
-      "zoom": 1.0,
-      "matchScore": 0.99,
-      "dx": 0.0,
-      "dy": -150.0,
-      "dxps": 0.0,
-      "dyps": -60.0,
-      "kind": "pan_up"
-    },
-    {
-      "seg": 4,
-      "t0": 7.0,
-      "t1": 9.0,
-      "dur": 2.0,
-      "zoom": 0.92,
-      "matchScore": 0.99,
-      "dx": 0.0,
-      "dy": 0.0,
-      "dxps": 0.0,
-      "dyps": 0.0,
-      "kind": "zoom_out"
-    }
+    {"seg": 1, "t0": 0.0, "t1": 2.0, "dur": 2.0, "zoom": 1.14, "matchScore": 0.99, "dx": 0.0, "dy": 0.0, "dxps": 0.0, "dyps": 0.0},
+    {"seg": 2, "t0": 2.0, "t1": 4.5, "dur": 2.5, "zoom": 1.0, "matchScore": 0.99, "dx": 0.0, "dy": 150.0, "dxps": 0.0, "dyps": 60.0},
+    {"seg": 3, "t0": 4.5, "t1": 6.7, "dur": 2.2, "zoom": 1.0, "matchScore": 0.99, "dx": 150.0, "dy": 0.0, "dxps": 68.0, "dyps": 0.0},
+    {"seg": 4, "t0": 6.7, "t1": 8.7, "dur": 2.0, "zoom": 0.92, "matchScore": 0.99, "dx": 0.0, "dy": 0.0, "dxps": 0.0, "dyps": 0.0},
+    {"seg": 5, "t0": 8.7, "t1": 11.2, "dur": 2.5, "zoom": 1.0, "matchScore": 0.99, "dx": 0.0, "dy": -150.0, "dxps": 0.0, "dyps": -60.0},
+    {"seg": 6, "t0": 11.2, "t1": 13.4, "dur": 2.2, "zoom": 1.0, "matchScore": 0.99, "dx": -150.0, "dy": 0.0, "dxps": -68.0, "dyps": 0.0},
+    {"seg": 7, "t0": 13.4, "t1": 15.2, "dur": 1.8, "zoom": 1.12, "matchScore": 0.99, "dx": 0.0, "dy": 0.0, "dxps": 0.0, "dyps": 0.0},
+    {"seg": 8, "t0": 15.2, "t1": 18.0, "dur": 2.8, "zoom": 1.0, "matchScore": 0.99, "dx": 0.0, "dy": 150.0, "dxps": 0.0, "dyps": 54.0}
   ]
 }

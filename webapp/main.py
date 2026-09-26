@@ -384,10 +384,21 @@ class RunRequest(BaseModel):
     # reference-video camera/editing rhythm (see reference_motion_preset.json).
     motion_preset: str | None = None
     motion_strength: float | None = None
-    # Speech window: None = VideoConfig default (each spoken panel 5-7s).
+    # Speech window: None = VideoConfig default (every panel clip under 5s).
     speech_window: bool | None = None
     speech_target_seconds: float | None = None
     speech_max_seconds: float | None = None
+    # Canvas / pacing / resource controls (None = VideoConfig default).
+    # canvas_w/h select 16:9 (1920x1080) vs 9:16 (1080x1920); fps and
+    # tts_concurrency matter on weak hardware (lower fps, concurrency 1-2).
+    canvas_w: int | None = None
+    canvas_h: int | None = None
+    fps: int | None = None
+    tts_concurrency: int | None = None
+    include_dialogue: bool | None = None
+    gap_seconds: float | None = None
+    min_display_seconds: float | None = None
+    max_display_seconds: float | None = None
 
 
 @app.post("/api/run")
@@ -491,6 +502,14 @@ async def run(body: RunRequest):
         "speech_window": body.speech_window,
         "speech_target_seconds": body.speech_target_seconds,
         "speech_max_seconds": body.speech_max_seconds,
+        "canvas_w": body.canvas_w,
+        "canvas_h": body.canvas_h,
+        "fps": body.fps,
+        "tts_concurrency": body.tts_concurrency,
+        "include_dialogue": body.include_dialogue,
+        "gap_seconds": body.gap_seconds,
+        "min_display_seconds": body.min_display_seconds,
+        "max_display_seconds": body.max_display_seconds,
     })
     log.info("job=%s created kind=generate session=%s order=%s backend=%s",
              job.id, session,

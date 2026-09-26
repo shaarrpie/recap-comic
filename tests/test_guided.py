@@ -301,9 +301,14 @@ def _panel_png_size(out_dir: Path, image_file: str) -> tuple[int, int]:
 
 
 def test_panel_output_size_is_normalized(tmp_path: Path) -> None:
-    """Output-size policy: PNGs are exactly 390px wide, height in [760, 800].
+    """Output-size policy: PNGs are exactly 390px wide and NEVER padded.
 
-    Source coordinates stay full-resolution; only the PNG bytes change.
+    Source coordinates stay full-resolution; only the PNG bytes change. The
+    height is the crop's own aspect-preserving height: the old policy padded
+    short panels with black up to 760px, which manufactured dead space (a
+    390x380 crop arrived 50% black) that the camera then panned across. Each
+    shot is sized from its recorded output_width/output_height, so a short
+    panel simply shows short.
     """
     strip = tmp_path / "strip.png"
     make_strip(1700, panels=[(0, 800), (820, 1620)],
@@ -315,15 +320,20 @@ def test_panel_output_size_is_normalized(tmp_path: Path) -> None:
     for p in artifact.panels:
         w, h = _panel_png_size(out, p.image_file)
         assert w == 390
-        assert 760 <= h <= 800
         assert p.output_width == w
         assert p.output_height == h
+        assert h <= gc.CutterConfig().max_output_height
+        # No black letterbox top or bottom: the art reaches the panel edge.
+        with Image.open(out / p.image_file) as im:
+            arr = np.asarray(im.convert("RGB"))
+        assert not (arr[0] == 0).all()
+        assert not (arr[-1] == 0).all()
         # Source geometry untouched: y range still matches the plan.
         assert p.y_end > p.y_start
 
 
 def test_panel_output_size_clamps_tall_and_short(tmp_path: Path) -> None:
-    """Short pads to 760; tall panels NEVER center-crop (full-res passthrough).
+    """Short panels are NOT padded; tall panels are NEVER center-cropped.
 
     A tall panel is a continuous-art mega-group the splitter kept whole;
     center-cropping it to 800px would discard most of the art, so the
@@ -344,7 +354,7 @@ def test_panel_output_size_clamps_tall_and_short(tmp_path: Path) -> None:
     for p in artifact.panels:
         w, h = _panel_png_size(out, p.image_file)
         assert w == 390
-        assert 760 <= h <= 800
+        assert p.output_height == h
 
     # True out-of-bounds paths on the pure helper (deterministic, no I/O):
     # tall (4000px -> resized 1950px > 800) keeps the FULL-RES crop —
@@ -352,7 +362,10 @@ def test_panel_output_size_clamps_tall_and_short(tmp_path: Path) -> None:
     tall = Image.new("RGB", (800, 4000), (120, 30, 30))
     assert gc.normalize_panel_image(tall).size == (800, 4000)
     short = Image.new("RGB", (800, 100), (30, 120, 30))
-    assert gc.normalize_panel_image(short).size == (390, 760)
+    # Unpadded: 100 * (390/800) = 49. Black padding is opt-in only, because the
+    # pad is exactly the dead space trim_flat_margins exists to remove.
+    assert gc.normalize_panel_image(short).size == (390, 49)
+    assert gc.normalize_panel_image(short, pad_short=True).size == (390, 760)
     # A tall panel under a high max_output_height still resizes (no crop
     # needed): 800x4000 -> 390x1950 at width 390.
     raw = gc.normalize_panel_image(tall, max_output_height=5000,
@@ -361,7 +374,10 @@ def test_panel_output_size_clamps_tall_and_short(tmp_path: Path) -> None:
 
 
 def test_panel_output_normalize_opt_out_keeps_fullres(tmp_path: Path) -> None:
-    """normalize_output=False restores legacy full-resolution crops."""
+    """normalize_output=False restores legacy full-resolution crops: the PNG is
+    byte-for-byte the snapped crop, with no resize AND no blank-margin trim
+    (legacy mode records no output_width/height, so recap_video derives the pan
+    geometry from y_end - y_start and a trimmed PNG would disagree with it)."""
     strip = tmp_path / "strip.png"
     make_strip(1700, panels=[(0, 800), (820, 1620)],
                 gutters=[(800, 820)]).save(strip)
@@ -411,12 +427,79 @@ def test_mega_panel_keeps_full_art_for_video_pan(tmp_path: Path) -> None:
     pan = compute_pan(mega.output_width, mega.output_height)
     assert pan.kind == "pan_down"
     assert pan.travel_px > 3000
-    # The normal panel below still normalizes to 390x[760,800].
+    # The normal panel below still normalizes to 390px wide -- unpadded, so
+    # ~234px tall for a ~480px crop instead of a 760px black letterbox.
     normal = next(p for p in artifact.panels
                   if 3000 >= p.y_end - p.y_start > 100)
     nw, nh = _panel_png_size(out, normal.image_file)
     assert nw == 390
-    assert 760 <= nh <= 800
+    assert 150 < nh < 500
+    assert normal.output_width == nw and normal.output_height == nh
+    with Image.open(out / normal.image_file) as im:
+        narr = np.asarray(im.convert("RGB"))
+    assert not (narr[0] == 0).all()
+    assert not (narr[-1] == 0).all()
+
+
+def test_flat_margin_trim_is_capped_deterministic_and_gated(tmp_path: Path) -> None:
+    """trim_flat_margins drops uniform blank gutters without eating the art.
+
+    Scanlated pages carry wide flat gutters and the boundary snap lands just
+    OUTSIDE them, so the saved PNG shipped with ~15% dead pixels per panel
+    (measured on two real chapters). Guards under test: at most `max_fraction`
+    per side, deterministic, a no-op on art with no flat edge, and NEVER
+    applied in legacy full-res mode (where recap_video derives geometry from
+    y_end - y_start, so trimmed bytes would disagree with the pan travel).
+    """
+    cap = 0.25                                 # trim_flat_margins max_fraction
+    arr = np.full((600, 800, 3), 255, dtype=np.uint8)
+    arr[200:400, 200:400] = (10, 200, 10)     # the only real artwork
+    trimmed, removed = gc.trim_flat_margins(Image.fromarray(arr))
+    # Every side hits the 25% cap (the flat margins are wider than that).
+    assert removed == {"left": int(800 * cap), "right": int(800 * cap),
+                       "top": int(600 * cap), "bottom": int(600 * cap)}
+    assert trimmed.size == (400, 300)
+    # Deterministic: the same crop trims to the same box every time.
+    again, removed2 = gc.trim_flat_margins(Image.fromarray(arr))
+    assert again.size == trimmed.size and removed2 == removed
+    # No flat row/column anywhere -> untouched.
+    noisy = make_strip(400, panels=[(0, 400)])
+    untouched, removed3 = gc.trim_flat_margins(noisy)
+    assert sum(removed3.values()) == 0
+    assert untouched.size == noisy.size
+
+    # --- and the gate: a dead band INSIDE the crop. ---
+    strip_arr = np.full((1700, 800, 3), 240, dtype=np.uint8)
+    rng = np.random.default_rng(3)
+    strip_arr[0:700] = rng.integers(30, 210, (700, 800, 3), dtype=np.uint8)
+    strip_arr[700:800] = 255                  # dead band at the crop's bottom
+    strip_arr[820:1620] = rng.integers(30, 210, (800, 800, 3), dtype=np.uint8)
+    strip = tmp_path / "deadband.png"
+    Image.fromarray(strip_arr).save(strip)
+    plan = plan_from([(0, 800), (820, 1620)], height=1700)
+
+    legacy_out = tmp_path / "legacy"
+    legacy = gc.guided_cut(strip, plan, out_dir=legacy_out,
+                           config=gc.CutterConfig(normalize_output=False,
+                                                  trim_margins=True))
+    first = next(p for p in legacy.panels if p.y_start == 0)
+    lw, lh = _panel_png_size(legacy_out, first.image_file)
+    assert (lw, lh) == (800, first.y_end - first.y_start)
+    with Image.open(legacy_out / first.image_file) as im:
+        larr = np.asarray(im.convert("RGB"))
+    assert (larr[-1] == 255).all()            # dead band still baked in
+
+    norm_out = tmp_path / "norm"
+    norm = gc.guided_cut(strip, plan, out_dir=norm_out)
+    nfirst = next(p for p in norm.panels if p.y_start == 0)
+    nw, nh = _panel_png_size(norm_out, nfirst.image_file)
+    assert nw == 390
+    # The 100 flat rows are gone: exactly the 700 art rows survive.
+    assert nh == round(700 * 390 / 800)
+    assert nfirst.output_width == nw and nfirst.output_height == nh
+    with Image.open(norm_out / nfirst.image_file) as im:
+        narr = np.asarray(im.convert("RGB"))
+    assert not (narr[-1] == 255).all()
 
 
 def test_phase1_cache_avoids_recall(tmp_path: Path) -> None:

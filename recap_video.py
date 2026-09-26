@@ -4,6 +4,7 @@
 Input : panels.json  (CutArtifact written by `guided run` / `guided cut`)
 Output: recap.mp4    1080x1920 (9:16), 30 fps, H.264 + AAC, loudness-normalised
         + sidecars:  narration.json, audio.json, timeline.json, recap.srt
+        (+ sfx.json and an audio mixdown when --sfx-dir is set)
 
 Stages (all artifacts are written next to the mp4):
 
@@ -50,10 +51,13 @@ from adapters.schemas import (
     NarrationArtifact,
     NarrationEntry,
     PanSpec,
+    SfxArtifact,
+    SfxEvent,
     TimelineArtifact,
     TimelineEntry,
 )
 from guided_cutter import CutArtifact, CutPanel
+from text_clean import is_promo_text, strip_non_latin
 
 try:
     from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
@@ -82,28 +86,38 @@ class VideoError(RuntimeError):
 # --------------------------------------------------------------------------- #
 @dataclass
 class VideoConfig:
-    tts: Literal["kokoro", "none"] = "kokoro"
+    tts: Literal["edge", "kokoro", "none"] = "kokoro"  # edge=cloud, kokoro=local CPU, none=silent
     voice: str = "af_heart"
     rate: str = "+0%"            # legacy edge-tts knob: accepted, ignored
     pitch: str = "+0Hz"          # legacy edge-tts knob: accepted, ignored
     speed: float = 1.0           # kokoro speed multiplier
     include_dialogue: bool = True
-    gap_seconds: float = 0.35    # trailing silence after each panel
+    gap_seconds: float = 0.0     # trailing silence after each panel; 0 so the
+    # narrator runs straight into the next line with no pause to catch breath
     min_display_seconds: float = 2.0
     max_display_seconds: float = 12.0   # cap for SILENT panels only
+    min_silent: float = 1.0      # seconds an un-narrated panel shows between
+    # its narrated neighbours. The chapter script speaks fewer lines than
+    # there are panels; the skipped panels stay on screen as short silent
+    # beats so the video shows the whole chapter instead of jumping. Set to
+    # 0 to drop them instead: the timeline then holds only spoken panels, so
+    # the narrator never pauses and no shot is rushed through a filler hold.
     silent_wpm: int = 160        # reading speed used ONLY when tts == "none"
-    # ── Speech window (short recap beats) ───────────────────────────────────
-    # Each spoken panel aims for 5-7s: per-panel text is trimmed to whole
-    # sentences inside speech_target_seconds, and panel durations are
-    # backstopped at speech_max_seconds (+ gap). The cap never cuts speech
-    # short — it only trims silence/pan padding and class-mult inflation —
-    # because the text trim guarantees fresh audio already fits. The camera
-    # always plays its move inside the panel window (ffmpeg t/dur), so pans
-    # stay in sync with the short narration instead of lingering past it.
-    # Disable with speech_window=False for the legacy uncapped behaviour.
+    # ── Speech window (natural-flow recap beats) ────────────────────────────
+    # The narrator is the master: it reads each line at its own pace and the
+    # panel lasts exactly as long as that line (gap_seconds is 0, so lines run
+    # back-to-back with no pause). The cap only stops a frame from LINGERING
+    # past short narration (min-display / pan / class-mult inflation) — it
+    # never cuts or speeds up speech. Because per-panel text is trimmed to
+    # whole sentences inside speech_target_seconds and there is no trailing
+    # gap, a normal line already lands under 5s with no tempo change. Only a
+    # pathologically long sentence runs past 5s, and we let it: clean sentence
+    # flow beats an artificial hard cap. Disable with speech_window=False for
+    # the legacy (lingering, uncapped) behaviour.
     speech_window: bool = True
-    speech_target_seconds: float = 6.0  # trim budget aim (middle of 5-7s)
-    speech_max_seconds: float = 7.0     # hard backstop per spoken panel
+    speech_target_seconds: float = 4.0  # trim budget aim (sub-5s window)
+    speech_max_seconds: float = 4.6     # trim/cap budget; normal lines fit under
+    # 5s with no gap and no tempo change (4.6 + 0.0 gap < 5s)
     speech_wpm: int = 140          # conservative budgeting rate (TTS varies;
                                    # slow estimate keeps real audio in-window)
     max_pan_px_per_sec: int = 450  # slow, readable Ken-Burns pan
@@ -159,6 +173,27 @@ class VideoConfig:
     # thread pool. 6 keeps laptop CPU busy without thrashing; lower to 2-3
     # on weak machines, set 1 to serialize.
     tts_concurrency: int = 6
+    # ── Narration fit (opt-in tempo backstop) ───────────────────────────────
+    # OFF by default: the narrator is NEVER sped up or slowed down — a rushed
+    # read is worse than a panel that runs a hair past 5s, so a line keeps its
+    # natural pacing and the panel simply catches up to it. When explicitly
+    # enabled, every MEASURED clip over speech_max_seconds is tempo-adjusted
+    # with ffmpeg atempo (pitch preserved, bounded by speech_fit_max_speedup);
+    # only when even max speed cannot fit is the tail trimmed, with a warning.
+    # Both fields participate in hash_essentials: toggling them changes the
+    # audio bytes, so caches invalidate (one refit/re-synth, then stable).
+    speech_fit_audio: bool = False
+    speech_fit_max_speedup: float = 2.0
+    # ── SFX (automatic sound effects) ────────────────────────────────────────
+    # sfx_dir points at a sound bank with transition/ action/ reveal/
+    # subfolders (.wav/.mp3/.ogg/.m4a/.flac; an optional default/ fills any
+    # empty category). When set, a deterministic plan (sfx.json) tags panel
+    # cuts and action/reveal narration beats, and the mixdown overlays the
+    # sounds onto the finished video. Render-only: never changes narration
+    # or TTS bytes, so these fields are excluded from hash_essentials.
+    sfx_dir: Path | None = None
+    sfx_volume: float = 0.9         # global loudness multiplier
+    sfx_volumes: dict[str, float] | None = None  # per-kind, set in __post_init__
 
     def __post_init__(self) -> None:
         if not self.class_duration_multiplier:
@@ -168,6 +203,8 @@ class VideoConfig:
                 "dialogue": 1.0,
                 "calm": 1.0,
             }
+        if not self.sfx_volumes:
+            self.sfx_volumes = {"transition": 0.5, "action": 0.9, "reveal": 0.6}
         mp = (self.motion_preset or "none").lower()
         if mp not in ("none", "reference"):
             raise ValueError(
@@ -194,7 +231,9 @@ class VideoConfig:
     # only camera geometry and pacing distribution).
     _STYLE_FIELDS = ("blur_background", "color_grade", "vignette",
                      "vignette_angle", "blur_sigma", "zoom_strength",
-                     "motion_preset", "motion_preset_path", "motion_strength")
+                     "motion_preset", "motion_preset_path", "motion_strength",
+                     "min_silent",
+                     "sfx_dir", "sfx_volume", "sfx_volumes")
 
     def hash_essentials(self) -> str:
         """hash() minus the visual-only style flags (TTS/narration cache key)."""
@@ -266,7 +305,7 @@ _SENT_SPLIT_RE = re.compile(r"(?<=[.!?…\"'”’])\s+")
 
 def estimate_speech_seconds(text: str, cfg: VideoConfig) -> float:
     """Rough speech length for budgeting (conservative: errs slow so real
-    TTS audio lands inside the 5-7s window, never over it)."""
+    TTS audio lands inside the sub-5s window, never over it)."""
     return (_word_count(text) / cfg.speech_wpm) * 60.0 if text.strip() else 0.0
 
 
@@ -274,14 +313,26 @@ def fit_text_to_speech_window(text: str, cfg: VideoConfig) -> str:
     """Trim one panel's spoken text to whole sentences inside the window.
 
     Lines already under speech_max_seconds pass through untouched. Longer
-    lines keep leading whole sentences up to speech_target_seconds; a single
-    over-long sentence is hard-cut to the max budget with terminal
-    punctuation restored (TTS-friendly). Never returns non-lexical text.
+    lines keep leading whole sentences up to speech_target_seconds. A single
+    sentence that alone overruns the budget is NOT chopped mid-clause: per the
+    natural-flow design we let the narrator finish the thought and the panel
+    run to its absolute display ceiling (max_display_seconds). Only a runaway,
+    sentence-boundary-free run-on longer than that ceiling is hard-cut to the
+    max budget with terminal punctuation restored (TTS-friendly), so one
+    pathological line can never pin a frame forever. Never returns non-lexical
+    text.
     """
     if not cfg.speech_window or not text.strip():
         return text
     max_words = max(1, int(cfg.speech_max_seconds * cfg.speech_wpm / 60))
-    if _word_count(text) <= max_words:
+    # Whole-panel ceiling: a line short enough to be delivered inside
+    # max_display_seconds is spoken COMPLETE -- we never trim or chop it, so
+    # normal recap prose keeps every clause (the panel simply lasts as long as
+    # the voice, with no lingering because there is no trailing gap). Only a
+    # line past this ceiling is a candidate for trimming.
+    hold_words = max(max_words,
+                     int(cfg.max_display_seconds * cfg.speech_wpm / 60))
+    if _word_count(text) <= hold_words:
         return text
     target_words = max(1, int(cfg.speech_target_seconds * cfg.speech_wpm / 60))
     sentences = [s for s in _SENT_SPLIT_RE.split(text.strip()) if s.strip()]
@@ -296,11 +347,13 @@ def fit_text_to_speech_window(text: str, cfg: VideoConfig) -> str:
         if kept_words >= target_words:
             break
     if not kept:
-        # No sentence boundary at all: hard-cut to the max budget.
-        kept = [" ".join(re.findall(r"\S+", text.strip())[:max_words])]
-        kept_words = _word_count(kept[0])
-    if kept_words > max_words:
-        # Leading sentence(s) alone exceed the max: hard-cut whole words.
+        # No sentence boundary at all: treat the whole line as one run-on and
+        # let the hold ceiling below decide whether it is shortenable.
+        kept = [text.strip()]
+        kept_words = _word_count(text.strip())
+    if kept_words > hold_words:
+        # A single run-on past the whole-panel ceiling (no usable sentence
+        # break): hard-cut to the budget rather than hold one frame forever.
         kept = [" ".join(re.findall(r"\S+",
                                     " ".join(kept))[:max_words])]
     short = _normalise(" ".join(kept))
@@ -428,7 +481,8 @@ def _load_chapter_script(work_dir: Path) -> dict | None:
 
 
 def build_narration(artifact: CutArtifact, cfg: VideoConfig,
-                    *, panels_hash: str, work_dir: Path | None = None) -> NarrationArtifact:
+                    *, panels_hash: str, work_dir: Path | None = None,
+                    panels_dir: Path | None = None) -> NarrationArtifact:
     """Build narration entries for the video.
 
     Text source priority:
@@ -436,19 +490,34 @@ def build_narration(artifact: CutArtifact, cfg: VideoConfig,
          lines mapped onto panels; consecutive lines may skip panels.
       2. Per-panel captions (script_text) — legacy/offline path.
 
+    The chapter script is looked for in ``work_dir`` (the output folder) and
+    then beside ``panels.json`` (``panels_dir``): the script is a Phase 2.5
+    sibling of the cut, so `guided video DIR/panels.json --out elsewhere/x.mp4`
+    must still honour the persona pass rather than silently reverting to flat
+    per-panel captions.
+
     Either way:
-      * blank / context_only panels never get entries;
+      * blank panels never get an entry;
+      * a context_only (demoted bubble) panel never gets an entry of its OWN
+        and never a frame, but its dialogue is folded onto the nearest scene
+        panel so the story keeps hearing that line (voice-over carry-over);
       * non-lexical text ("...") never gets an entry;
       * a panel whose text is identical to the PREVIOUS spoken line gets
-        no entry (the voice repeats nothing; the panel can still appear
-        as a visual if it has audio-independent screen value — but with no
-        text it is dropped from the timeline as dead air).
+        no entry (the voice repeats nothing; the panel still appears in
+        the video as a silent beat).
+    Unspoken panels are NOT dropped from the timeline: the chapter script
+    deliberately speaks fewer lines than there are panels, and removing
+    the unspoken frames would visibly skip panels in the video. They stay
+    as silent beats (min_display_seconds) between their narrated
+    neighbours.
     """
     # Order by panel_index: panels_confirmed.json renumbers panel_index to
     # the user's confirmed order (Panel Review reordering must survive).
     # y_start is only a tiebreak for legacy artifacts with duplicate indices.
     panels = sorted(artifact.panels, key=lambda p: (p.panel_index, p.y_start))
     script = _load_chapter_script(work_dir) if work_dir is not None else None
+    if script is None and panels_dir is not None:
+        script = _load_chapter_script(panels_dir)
     by_id_line: dict[str, dict] = {}
     if script is not None:
         for ln in script.get("lines", []):
@@ -460,14 +529,48 @@ def build_narration(artifact: CutArtifact, cfg: VideoConfig,
 
     entries: list[NarrationEntry] = []
     prev_text = ""
+    pending_lead = ""  # bubble speech seen before any scene frame to carry it on
     for order, p in enumerate(panels, start=1):
         if getattr(p, "blank_flag", "normal") == "blank":
             # blank crops are never narrated or spoken
             continue
         if getattr(p, "context_only", False):
-            # text-bubble-only panel (panel_filter): its dialogue is
-            # context for the story reader, but it is never narrated or
-            # spoken — it would produce a redundant TTS line with no scene.
+            # Demoted bubble panel: it never gets its own frame (build_timeline
+            # still skips it), but dropping it outright would silently cut a
+            # line out of the story. Fold its own words onto the nearest scene
+            # panel so the narrator still speaks them as a voice-over.
+            # Speak the bubble's OWN words (its dialogue) — not the vision
+            # model's descriptive caption ("two speech bubbles float in white
+            # space"), which is meaningless as narration; fall back to the
+            # narration line only when there is no dialogue. "/"-separated
+            # bubbles are read as one continuous line.
+            ctext = ""
+            ln = by_id_line.get(p.id)
+            if ln and (ln.get("text") or "").strip():
+                ctext = _normalise(ln["text"])
+            else:
+                raw = (p.dialogue or "").strip() or (p.narration or "").strip()
+                ctext = _normalise(re.sub(r"\s*/\s*", " ", raw))
+            if any(ord(ch) > 127 for ch in ctext):
+                # This folded text is appended to a NEIGHBOURING entry below,
+                # so it never passes the spoken-line gate further down -- an
+                # untranslated bubble here would be spoken verbatim by TTS.
+                ctext = _normalise(strip_non_latin(ctext))
+            if is_non_lexical(ctext) or not ctext.strip() or ctext == prev_text:
+                continue
+            if is_promo_text(ctext, p.dialogue, p.narration):
+                # A demoted scanlation ad must stay SILENT, not be folded onto
+                # the next scene panel: the voice-over carry-over exists for
+                # real story dialogue, and "Read at SITE.COM" is not story.
+                log.info("panel %s: promo card text dropped (never voiced "
+                         "over)", p.id)
+                continue
+            if entries:
+                last = entries[-1]
+                entries[-1] = last.model_copy(
+                    update={"text": f"{last.text} {ctext}".strip()})
+            else:
+                pending_lead = f"{pending_lead} {ctext}".strip()
             continue
         if script is not None:
             # Phase 2.5 mapping: only panels the scriptwriter assigned a
@@ -494,6 +597,33 @@ def build_narration(artifact: CutArtifact, cfg: VideoConfig,
                 prev_text = text
             quotes = [q.strip() for q in re.findall(r"[\"“]([^\"”]+)[\"”]",
                                                     p.dialogue or "")]
+        # English-only at the LAST gate before TTS. Prompt-time cleaning only
+        # guards what goes INTO the model; a script written before that contract
+        # can still carry raw Hangul syllables or even an emoji (U+1F3B5) inside
+        # a spoken line, and edge-tts reads those literally. Stripping here makes
+        # already-narrated chapters safe without re-spending a vision call.
+        if text and any(ord(c) > 127 for c in text):
+            stripped = _normalise(strip_non_latin(text))
+            log.info("panel %s: stripped %d non-Latin char(s) from the spoken "
+                     "line", p.id, sum(1 for c in text if ord(c) > 127))
+            text = "" if is_non_lexical(stripped) else stripped
+        if quotes:
+            quotes = [q for q in (strip_non_latin(q).strip() for q in quotes)
+                      if q and not is_non_lexical(q)]
+        if text and is_promo_text(text, *quotes):
+            # The script pass can turn an ad panel into an ad LINE ("Read the
+            # full story at asurascans.com"), and a legacy caption can carry the
+            # URL itself. Panel demotion removes the frame; this removes the
+            # voice, otherwise the promo is still spoken over real art.
+            log.info("panel %s: narration line advertises a scan site; left "
+                     "unspoken", p.id)
+            text = ""
+            quotes = []
+        if pending_lead:
+            # a bubble panel that opened the chapter (no preceding scene):
+            # voice it over the first real scene frame we reach.
+            text = f"{pending_lead} {text}".strip()
+            pending_lead = ""
         entries.append(NarrationEntry(id=p.id, panel_id=p.id, order=order,
                                        speaker=None, text=text, quotes=quotes))
     result = NarrationArtifact(
@@ -523,6 +653,95 @@ def _clips_to_synthesize(narration: NarrationArtifact) -> list[str]:
         prev_text = text
         ids.append(e.id)
     return ids
+
+
+def fit_narration_clip(entry: AudioEntry, audio_dir: Path,
+                       cfg: VideoConfig, probe) -> AudioEntry:
+    """Enforce the speech budget on one MEASURED TTS clip.
+
+    The text trim keeps normal narration inside speech_max_seconds, but the
+    budget is an estimate: a slow voice (or a stale cached clip) can measure
+    over it. The clip file is tempo-adjusted with ffmpeg atempo (pitch
+    preserved) by exactly the overrun factor, bounded by
+    speech_fit_max_speedup; word timestamps are scaled to stay in sync so
+    SRT cues do not drift. If even max speed cannot fit, the tail is
+    trimmed at the budget with a loud warning (pathological audio only).
+    Returns the entry unchanged when it already fits.
+    """
+    if not cfg.speech_window or not cfg.speech_fit_audio:
+        return entry
+    budget = cfg.speech_max_seconds
+    dur = entry.duration_seconds
+    if dur <= budget or dur <= 0:
+        return entry
+    path = audio_dir / entry.path
+    if not path.is_file():
+        log.warning("narration fit skipped %s: clip file missing",
+                    entry.entry_id)
+        return entry
+    ffmpeg_exe = _resolve_ffmpeg(cfg.ffmpeg_exe)
+    factor = min(dur / budget, cfg.speech_fit_max_speedup)
+    tmp = path.with_name(f"{path.stem}.fit{path.suffix}")
+    cmd = [ffmpeg_exe, "-y", "-i", str(path),
+           "-filter:a", f"atempo={factor:.6f}", str(tmp)]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True,
+                              check=False, shell=False, timeout=120)
+        stderr = proc.stderr or ""
+        if proc.returncode != 0 or not tmp.is_file():
+            tmp.unlink(missing_ok=True)
+            log.warning("narration fit FAILED %s (%.2fs > %.2fs budget): %s",
+                        entry.entry_id, dur, budget, stderr.strip()[-200:])
+            return entry
+        new_dur = probe(tmp)
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        tmp.unlink(missing_ok=True)
+        log.warning("narration fit FAILED %s (%.2fs > %.2fs budget): %s",
+                    entry.entry_id, dur, budget, exc)
+        return entry
+    trimmed = False
+    if new_dur > budget:
+        # even max speedup cannot fit (pathological audio): trim the tail
+        trim_tmp = path.with_name(f"{path.stem}.trim{path.suffix}")
+        cmd = [ffmpeg_exe, "-y", "-i", str(tmp), "-t", f"{budget:.3f}",
+               str(trim_tmp)]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True,
+                                  check=False, shell=False, timeout=120)
+            if proc.returncode == 0 and trim_tmp.is_file():
+                trimmed = True
+                new_dur = probe(trim_tmp)
+                log.warning(
+                    "narration %s still %.2fs at max speedup %.2fx — trimmed "
+                    "to %.2fs (audio was pathological; check the voice or "
+                    "the speech_wpm estimate)", entry.entry_id, dur / factor,
+                    factor, new_dur)
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            log.warning("narration fit trim FAILED %s: %s",
+                        entry.entry_id, exc)
+        finally:
+            if trimmed:
+                trim_tmp.replace(path)
+            else:
+                trim_tmp.unlink(missing_ok=True)
+        tmp.unlink(missing_ok=True)
+        if not trimmed:
+            return entry
+    else:
+        tmp.replace(path)
+    scale = 1.0 / factor
+    scaled_words = [
+        {**w, "start": round(float(w.get("start", 0.0)) * scale, 3),
+         "end": round(float(w.get("end", 0.0)) * scale, 3)}
+        for w in entry.words]
+    if trimmed:
+        scaled_words = [w for w in scaled_words
+                        if float(w.get("start", 0.0)) < new_dur]
+    log.info("narration fit %s: %.2fs -> %.2fs (atempo %.2fx%s)",
+             entry.entry_id, dur, new_dur, factor,
+             ", trimmed" if trimmed else "")
+    return AudioEntry(entry_id=entry.entry_id, path=entry.path,
+                      duration_seconds=new_dur, words=scaled_words)
 
 
 def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
@@ -577,8 +796,18 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
                     if (audio_dir / e.path).is_file()}
         missing = [i for i in expected_ids if i not in reusable]
         if not missing:
+            # Re-apply the speech-budget fit even on a full cache hit. A clip
+            # cached by an earlier run — or one whose fit was skipped because
+            # ffmpeg was momentarily unavailable — can still measure over
+            # speech_max_seconds, which would push its panel past the sub-5s
+            # window. fit_narration_clip is a no-op for clips already inside
+            # the budget (no subprocess), so this only touches stragglers.
+            def _cache_probe(p: Path) -> float:
+                return probe_duration(p, cfg.ffprobe_exe)
+            fitted = [fit_narration_clip(e, audio_dir, cfg, _cache_probe)
+                      for e in prev.entries]
             log.info("audio cache hit (%d clips)", len(prev.entries))
-            return prev
+            return prev.model_copy(update={"entries": fitted})
         # Per-clip resume: only the missing clips are re-synthesized.
         log.warning(
             "audio.json is INCOMPLETE (%d of %d clips usable, missing: %s); "
@@ -610,6 +839,9 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
         progress_ctx = None
         task_id = None
     try:
+        def probe_fn(p: Path) -> float:
+            return probe_duration(p, cfg.ffprobe_exe)
+
         # Serial planning pass (cheap): drop empty/duplicate text, reuse
         # cached clips. The remaining entries are independent — each writes
         # its own file — so the network-bound synthesis can run concurrently.
@@ -630,7 +862,8 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
             order.append(e.id)
             hit = reusable.pop(e.id, None)
             if hit is not None:
-                by_id[e.id] = hit
+                by_id[e.id] = fit_narration_clip(hit, audio_dir, cfg,
+                                                 probe_fn)
                 done += 1
                 log.info("tts %d/%d  %s  %.2fs (reused cached clip)",
                          done, total, e.id, hit.duration_seconds)
@@ -658,7 +891,8 @@ def synthesize_audio(narration: NarrationArtifact, audio_dir: Path,
                 if err is not None or out is None:
                     log.warning("TTS skipped %s: %s", ent.id, err or "empty text")
                     continue
-                by_id[ent.id] = out
+                by_id[ent.id] = fit_narration_clip(out, audio_dir, cfg,
+                                                   probe_fn)
                 done += 1
                 log.info("tts %d/%d  %s  %.2fs", done, total, ent.id,
                          out.duration_seconds)
@@ -743,13 +977,16 @@ def _round_ms_up(x: float) -> float:
 
 def _speech_cap_seconds(cfg: VideoConfig,
                         audio_seconds: float | None) -> float | None:
-    """Backstop for the 5-7s speech window (None when disabled).
+    """Backstop for the natural-flow speech window (None when disabled).
 
     The cap sits at speech_max_seconds + gap but never below the measured
     audio + gap: narration must always finish; only trailing silence, pan
     padding and class-mult inflation get trimmed. The renderer plays each
-    pan inside the (possibly shortened) window via t/dur, so the camera
-    move stays in sync with the short narration.
+    pan inside the (possibly shortened) window via t/dur, so the camera move
+    stays in sync with the narration. Narration is never truncated or tempo-
+    shifted by default (gap_seconds is 0 and speech_fit_audio is off), so a
+    spoken panel lasts exactly its audio; the sub-5s result comes from
+    trimming the TEXT up front, not from touching the measured voice.
     """
     if not cfg.speech_window:
         return None
@@ -798,14 +1035,47 @@ def display_seconds(*, audio_seconds: float | None, words: int,
         if cap is not None:
             dur = min(dur, cap)
         return _round_ms_up(dur)
-    # silent panel: reading-speed heuristic (no audio => no drift possible)
+    # silent panel: reading-speed heuristic (no audio => no drift possible);
+    # the floor is min_silent so un-narrated montage beats stay short even
+    # when --min-display is generous
     read = (words / cfg.silent_wpm) * 60.0 if words else 0.0
-    dur = min(max(read + cfg.gap_seconds, cfg.min_display_seconds),
+    dur = min(max(read + cfg.gap_seconds, cfg.min_silent),
               cfg.max_display_seconds)
     cap = _speech_cap_seconds(cfg, None)
     if cap is not None:
-        dur = min(dur, cap)
-    return _round_ms_up(max(dur, pan_floor) * mult)
+        # speech window: same rule as the spoken branch — the pan plays
+        # inside the (possibly shortened) window via t/dur, so neither the
+        # pan floor nor the class multiplier may outlast the cap
+        dur = min(max(dur, pan_floor) * mult, cap)
+    else:
+        # legacy behaviour: pan floor always wins, applied after the cap
+        dur = max(dur, pan_floor) * mult
+    return _round_ms_up(dur)
+
+
+def _cap_filler_travel(motion: dict, cfg: VideoConfig) -> None:
+    """Keep an un-narrated beat short AND its pan readable.
+
+    display_seconds() floors a silent panel at min_silent, but the pan floor
+    (travel / max_pan_px_per_sec) can outlast it. With the closer 2.0/2.2x
+    framing the reveal is ~670px == a 1.5s floor, so a filler crop would either
+    inflate past min_silent (the dead air we removed) or, held at 1.0s, sweep
+    the panel at 670px/s (unreadable). Trimming the travel to what fits the
+    hold honours both contracts. Narrated panels are never touched: their audio
+    sets the duration.
+    """
+    travel = int(motion.get("travel_px") or 0)
+    allowed = int(cfg.min_silent * cfg.max_pan_px_per_sec)
+    if travel <= allowed or allowed <= 0:
+        return
+    factor = allowed / travel
+    motion["travel_px"] = allowed
+    # The renderer reads pan_x_px/pan_y_px as the final travel, so they must be
+    # rescaled with the cap or the pan floor and the picture would disagree.
+    motion["pan_x_px"] = round(float(motion.get("pan_x_px", 0.0) or 0.0)
+                               * factor, 3)
+    motion["pan_y_px"] = round(float(motion.get("pan_y_px", 0.0) or 0.0)
+                               * factor, 3)
 
 
 def _load_motion_preset(path: Path | str | None):  # type: ignore[no-untyped-def]
@@ -904,8 +1174,10 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
             continue
         if getattr(p, "context_only", False):
             # panel_filter demoted this text-only panel: no video frame.
-            # Its dialogue remains in panels.json for story context.
-            log.info("skipping panel %s in timeline: context_only", p.id)
+            # Its dialogue is not lost — build_narration already folded it
+            # onto the nearest scene panel's line (voice-over carry-over).
+            log.info("skipping panel %s in timeline: context_only "
+                     "(dialogue voiced over a neighbouring scene)", p.id)
             skipped.append({"panel_id": p.id, "reason": "context_only"})
             continue
         img = (panels_dir / p.image_file).resolve()
@@ -924,15 +1196,27 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
         a = by_audio.get(p.id)
         text = by_text[p.id].text if p.id in by_text else ""
         if not text.strip() and a is None:
-            # Dead-air drop (Fix): a panel with no narration line, no
-            # audio and no quotes is either a filler crop or one whose
-            # caption was deduplicated away. Holding it on screen for
-            # min_display_seconds produces silent empty frames — drop it
-            # and record the decision so the skip is auditable.
-            log.info("skipping panel %s in timeline: no narration, no "
-                     "audio (dead-air drop)", p.id)
-            skipped.append({"panel_id": p.id, "reason": "no_text_no_audio"})
-            continue
+            # Two contracts meet here. The chapter script deliberately speaks
+            # fewer lines than there are panels ("skip panels that add
+            # nothing"), so an unspoken panel may either stay as a short silent
+            # beat (min_silent > 0: the whole chapter is visible but the voice
+            # pauses) or be dropped (min_silent <= 0: the timeline is
+            # speech-driven, so the narrator never stops and no shot is rushed
+            # through a filler hold). The filler choice is only sane for a beat
+            # or two; a chapter whose script covers 11 of 68 panels turns it
+            # into minute-long silences and 1s pans.
+            if cfg.min_silent > 0:
+                log.info("panel %s: no narration/audio -> silent filler beat "
+                         "(kept on the timeline)", p.id)
+                skipped.append({"panel_id": p.id,
+                                "reason": "no_text_no_audio_silent_beat"})
+                # fall through: the panel stays usable with no audio
+            else:
+                log.info("skipping panel %s in timeline: no narration, no "
+                         "audio (dead-air drop)", p.id)
+                skipped.append({"panel_id": p.id,
+                                "reason": "no_text_no_audio_dead_air_drop"})
+                continue
         # Pan geometry must match the PNG on disk, NOT the source-strip
         # geometry: the cutter may normalize panel PNGs (390x[760,800]
         # center-crop/pad) while y_start/y_end/strip width remain source
@@ -997,6 +1281,10 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
                 canvas_h=canvas_h, seg=seg, preset=preset,
                 motion_strength=cfg.motion_strength,
                 blur_background=cfg.blur_background)
+            if not text.strip() and a is None:
+                # Un-narrated filler beat: shorten the reveal to fit the hold
+                # instead of stretching the hold to fit the reveal.
+                _cap_filler_travel(r, cfg)
             resolved.append(r)
             pan_probe = PanSpec(kind=r["kind"], scaled_w=r["scaled_w"],
                                 scaled_h=r["scaled_h"],
@@ -1011,11 +1299,29 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
                         for si in seg_indices) or 1.0
         scale = total_base / total_ref
         split_seen = 0  # ordinal of split panels, to alternate band-pan dirs
-        for order, ((p, img, png_w, png_h, _text, a), si, r, base) in enumerate(
+        for order, ((p, img, png_w, png_h, text, a), si, r, base) in enumerate(
                 zip(usable, seg_indices, resolved, bases, strict=True), start=1):
             seg = (preset.segments or [])[si]
             scaled_ref = seg.dur * scale
-            dur = _round_ms_up(max(base, scaled_ref))
+            if a is not None and a.duration_seconds:
+                # Narration is the clock: a spoken panel must advance to the
+                # next one the instant its line's audio ends. The reference
+                # template still shapes the camera MOVE inside the window (via
+                # t/dur), but it must never STRETCH a spoken panel past its
+                # measured audio — that is the audible "long pause" where the
+                # voice has stopped but the shot holds to hit the template
+                # beat. base is already audio-driven (audio + gap, with only
+                # the small min-display/pan floors as a lower bound). Silent
+                # beats (no audio) keep following the preset pace.
+                dur = base
+            elif not text.strip():
+                # Narration-less montage beat (the chapter script skipped
+                # this panel): fixed short hold from min_silent, never
+                # stretched by the reference template pacing — otherwise
+                # filler crops would bloat the runtime.
+                dur = _round_ms_up(base)
+            else:
+                dur = _round_ms_up(max(base, scaled_ref))
             cap = _speech_cap_seconds(
                 cfg, a.duration_seconds if a else None)
             if cap is not None:
@@ -1057,6 +1363,10 @@ def build_timeline(artifact: CutArtifact, panels_dir: Path,
                 "split_gap_frac": r.get("split_gap_frac", 0.05),
                 "split_pan_frac": r.get("split_pan_frac", 0.15),
                 "split_ss": r.get("split_ss", 3.0),
+                # How much of the closer crop this shot actually sweeps: the
+                # renderer multiplies its pan travel by it, which decouples
+                # framing tightness from camera speed.
+                "pan_travel_frac": r.get("pan_travel_frac", 1.0),
                 "rhythm_weight": seg.dur / total_ref,
                 "scaled_ref_seconds": round(scaled_ref, 3),
                 "source_panel": p.id,
@@ -1132,6 +1442,271 @@ def build_motion_report(timeline: TimelineArtifact) -> list[dict[str, Any]]:
 
 
 # --------------------------------------------------------------------------- #
+# Stage 3c — SFX plan (opt-in: cfg.sfx_dir)
+# --------------------------------------------------------------------------- #
+_SFX_AUDIO_EXTS = {".wav", ".mp3", ".ogg", ".m4a", ".flac"}
+SFX_KINDS = ("transition", "action", "reveal")
+
+# Action keywords that earn a precise, word-timed impact sound. Deliberately
+# regex (not LLM): deterministic, offline, cache-stable, and panel classes
+# from cinematic_effects.classify_panel already gate when it even applies.
+_SFX_ACTION_RE = re.compile(
+    r"\b(swung|swing|swings|drew|draws|unsheathe|unsheathed|unsheathes|"
+    r"slash|slashes|slashed|stab|stabs|stabbed|punch|punches|punched|"
+    r"slam|slams|slammed|smash|smashes|smashed|crash|crashes|crashed|"
+    r"shatter|shatters|shattered|exploded|explosion|blast|blasted|"
+    r"boom|thunder|roar|roared|scream|screamed|shriek|shrieked|"
+    r"clang|clanged|struck|strike|impact)\b", re.IGNORECASE)
+
+
+def _sfx_pick(pool: list[Path], seed: str) -> Path:
+    """Deterministic bank pick: same panel+kind+ordinal -> same file on every
+    run (the mixdown must be reproducible for the video cache)."""
+    h = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+    return pool[int(h[:8], 16) % len(pool)]
+
+
+def _sfx_source_ref(sound: Path, bank_dir: Path) -> str:
+    """Store the plan's source RELATIVE to the bank root, keeping the category
+    subfolder (e.g. ``transition/whoosh.wav``), so ``mix_sfx`` can resolve
+    ``bank_dir / source``. A bare basename would drop the subfolder and miss
+    the file entirely — ``load_sfx_bank`` keeps sounds under ``<bank>/<kind>/``
+    — which silently drops every SFX event at mixdown."""
+    try:
+        return sound.resolve().relative_to(bank_dir.resolve()).as_posix()
+    except ValueError:
+        return sound.name
+
+
+def _sfx_volume_for(cfg: VideoConfig, kind: str) -> float:
+    mults = cast(dict[str, float], cfg.sfx_volumes)
+    return round(min(max(mults.get(kind, 0.7) * cfg.sfx_volume, 0.0), 2.0), 3)
+
+
+def _sfx_bank_hash(bank: dict[str, list[Path]], bank_root: Path) -> str:
+    parts = [f"{p.relative_to(bank_root).as_posix()}:{_sha256_file(p)}"
+             for files in bank.values() for p in files]
+    return _sha256_text("\n".join(sorted(parts)))
+
+
+def load_sfx_bank(sfx_dir: Path | str) -> dict[str, list[Path]]:
+    """Discover the sound bank: <dir>/<kind>/* (default/ fills any empty
+    category). Deterministic order; raises on a missing/empty bank."""
+    bank_root = Path(sfx_dir)
+    if not bank_root.is_dir():
+        raise VideoError(f"--sfx-dir not found: {bank_root}")
+
+    def _files(cat: Path) -> list[Path]:
+        if not cat.is_dir():
+            return []
+        return sorted(p for p in cat.iterdir()
+                      if p.is_file() and p.suffix.lower() in _SFX_AUDIO_EXTS)
+
+    bank: dict[str, list[Path]] = {k: _files(bank_root / k)
+                                   for k in SFX_KINDS}
+    fallback = _files(bank_root / "default")
+    for kind in SFX_KINDS:
+        if not bank[kind] and fallback:
+            bank[kind] = fallback
+    if not any(bank.values()):
+        raise VideoError(
+            f"--sfx-dir has no audio files: {bank_root} (expected "
+            "transition/ action/ reveal/ subfolders with .wav/.mp3/.ogg/"
+            ".m4a/.flac)")
+    for kind in SFX_KINDS:
+        if not bank[kind]:
+            log.warning("sfx bank: no %r sounds and no default/ fallback; "
+                        "%s events will be skipped", kind, kind)
+    return bank
+
+
+def _panel_class_for_sfx(text: str, quotes: list[str]) -> str:
+    try:
+        from cinematic_effects import classify_panel
+        return classify_panel({"narration": text or "",
+                               "dialogue": " ".join(q for q in quotes if q)})
+    except Exception:  # noqa: BLE001 - pacing must survive a broken helper
+        return "calm"
+
+
+def _sfx_action_time(entry: TimelineEntry, text: str,
+                     words: list[dict]) -> tuple[float, str]:
+    """When to fire the action hit: at the MEASURED timestamp of the matching
+    keyword word when word timings exist, else just after the panel cut."""
+    m = _SFX_ACTION_RE.search(text or "")
+    if m:
+        kw = m.group(1).lower()
+        for w in words:
+            wt = str(w.get("text", "")).strip(".,!?…\"'“”’ ").lower()
+            if wt == kw:
+                return entry.start_seconds + float(w.get("start", 0.0)), \
+                    f"keyword:{kw}"
+    return entry.start_seconds + 0.15, "panel_class:action"
+
+
+def build_sfx_plan(timeline: TimelineArtifact, narration: NarrationArtifact,
+                   audio: AudioArtifact, cfg: VideoConfig) -> SfxArtifact:
+    """Tag panel cuts and narration beats with sound effects.
+
+    Rules (at most 3 events per panel, so dense scenes stay tasteful):
+      * transition — a whoosh/page-flick at every panel cut except the video's
+        first start;
+      * action     — an impact hit on action-class panels, at the keyword
+        word's measured timestamp when word timings are available;
+      * reveal     — a riser/rumble right after a reveal-class panel's cut.
+    Silent/dialogue/calm panels get no beat sounds. All times are absolute
+    in the finished video and clamped to its bounds.
+    """
+    if not cfg.sfx_dir:
+        raise VideoError("build_sfx_plan requires cfg.sfx_dir")
+    bank = load_sfx_bank(cfg.sfx_dir)
+    bank_dir = Path(cfg.sfx_dir)
+    by_text = {n.id: n for n in narration.entries}
+    by_audio = {a.entry_id: a for a in audio.entries}
+    total = total_seconds(timeline)
+    events: list[SfxEvent] = []
+    for i, e in enumerate(timeline.entries):
+        n = by_text.get(e.panel_id)
+        text = n.text if n else ""
+        quotes = list(n.quotes) if n else []
+        words = by_audio[e.panel_id].words if e.panel_id in by_audio else []
+        if i > 0 and bank["transition"] and e.audio_path:
+            # Transition whoosh at cuts that OPEN a spoken beat only: with
+            # un-narrated filler beats in the timeline the cut density would
+            # otherwise turn the whoosh bank into machine-gun sfx.
+            events.append(SfxEvent(
+                id=f"sfx_{len(events) + 1:03d}", kind="transition",
+                panel_id=e.panel_id, at_seconds=round(e.start_seconds, 3),
+                source=_sfx_source_ref(
+                    _sfx_pick(bank["transition"],
+                              f"{e.panel_id}:transition"), bank_dir),
+                volume=_sfx_volume_for(cfg, "transition"),
+                trigger="panel_cut"))
+        cls = _panel_class_for_sfx(text, quotes)
+        if cls == "action" and bank["action"]:
+            at, trigger = _sfx_action_time(e, text, words)
+            events.append(SfxEvent(
+                id=f"sfx_{len(events) + 1:03d}", kind="action",
+                panel_id=e.panel_id, at_seconds=round(at, 3),
+                source=_sfx_source_ref(
+                    _sfx_pick(bank["action"],
+                              f"{e.panel_id}:action"), bank_dir),
+                volume=_sfx_volume_for(cfg, "action"), trigger=trigger,
+                text=text[:120]))
+        elif cls == "reveal" and bank["reveal"]:
+            events.append(SfxEvent(
+                id=f"sfx_{len(events) + 1:03d}", kind="reveal",
+                panel_id=e.panel_id,
+                at_seconds=round(e.start_seconds + 0.1, 3),
+                source=_sfx_source_ref(
+                    _sfx_pick(bank["reveal"],
+                              f"{e.panel_id}:reveal"), bank_dir),
+                volume=_sfx_volume_for(cfg, "reveal"),
+                trigger="panel_class:reveal", text=text[:120]))
+    for ev in events:
+        ev.at_seconds = round(min(max(ev.at_seconds, 0.0),
+                                  max(total - 0.2, 0.0)), 3)
+    plan = SfxArtifact(
+        meta=_meta(cfg.hash(), {
+            "timeline.json": _sha256_text(timeline.model_dump_json()),
+            "sfx_bank": _sfx_bank_hash(bank, bank_dir)}),
+        bank_dir=str(bank_dir), events=events)
+    log.info("build_sfx_plan events=%d (transition=%d action=%d reveal=%d) "
+             "total=%.2fs", len(events),
+             sum(1 for x in events if x.kind == "transition"),
+             sum(1 for x in events if x.kind == "action"),
+             sum(1 for x in events if x.kind == "reveal"), total)
+    return plan
+
+
+def mix_sfx(video_path: Path, plan: SfxArtifact,
+            cfg: VideoConfig) -> bool:
+    """Post-render audio mixdown: overlay the plan's SFX onto the finished
+    video. The video stream is stream-copied (bytes untouched), so this is
+    cheap and only runs right after a fresh render — never on a video cache
+    hit, where the mp4 already contains the mix. Returns True when mixed.
+    """
+    if not cfg.sfx_dir or not plan.events:
+        return False
+    bank_dir = Path(cfg.sfx_dir)
+    events: list[SfxEvent] = []
+    for ev in plan.events:
+        if (bank_dir / ev.source).is_file():
+            events.append(ev)
+        else:
+            log.warning("mix_sfx: skipping %s — bank file missing: %s",
+                        ev.id, ev.source)
+    if not events:
+        return False
+    exe = _resolve_ffmpeg(cfg.ffmpeg_exe)
+
+    def _mix_cmd(event_list: list[SfxEvent],
+                 normalize: bool) -> tuple[list[str], list[str]]:
+        chains, labels = [], []
+        for i, ev in enumerate(event_list):
+            delay_ms = int(round(max(ev.at_seconds, 0.0) * 1000))
+            chains.append(
+                f"[{i + 1}:a]aresample=48000,aformat=channel_layouts=stereo,"
+                f"volume={ev.volume:.3f},adelay={delay_ms}:all=1[s{i}]")
+            labels.append(f"[s{i}]")
+        mix = (f"amix=inputs={len(event_list) + 1}:duration=first"
+               + (":normalize=0" if normalize else ""))
+        # [0:a] (the rendered narration track) MUST be the first amix input:
+        # with duration=first the mix ends when the FIRST input ends. If a
+        # delayed SFX clip came first instead, everything past that clip —
+        # i.e. all narration after the first few seconds — would be silently
+        # truncated from the output.
+        filt = (";".join(chains) + ";[0:a]" + "".join(labels)
+                + f"{mix}[aout]")
+        cmd = [exe, "-y", "-i", str(video_path)]
+        for ev in event_list:
+            cmd += ["-i", str(bank_dir / ev.source)]
+        cmd += ["-filter_complex", filt, "-map", "0:v", "-map", "[aout]",
+                "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+                "-movflags", "+faststart"]
+        return filt, cmd
+
+    tmp = video_path.with_name(video_path.stem + ".sfx.mp4")
+    filt, cmd = _mix_cmd(events, normalize=True)
+    ok = False
+    try:
+        proc = subprocess.run(cmd + [str(tmp)], capture_output=True,
+                              text=True, check=False, shell=False,
+                              timeout=600)
+        ok = proc.returncode == 0 and tmp.is_file()
+        if not ok:
+            log.warning("mix_sfx failed (%.300s) — retrying with the legacy "
+                        "amix volume-scaling fallback", (proc.stderr or ""))
+    except (OSError, subprocess.SubprocessError) as exc:
+        log.warning("mix_sfx failed: %s — retrying with the legacy amix "
+                    "volume-scaling fallback", exc)
+    if not ok:
+        # Legacy ffmpeg without amix normalize= : emulate it by pre-scaling
+        # every event down (normalize divides each input by N).
+        scaled = [ev.model_copy(update={"volume": ev.volume / len(events)})
+                  for ev in events]
+        filt, cmd = _mix_cmd(scaled, normalize=False)
+        try:
+            proc = subprocess.run(cmd + [str(tmp)], capture_output=True,
+                                  text=True, check=False, shell=False,
+                                  timeout=600)
+            ok = proc.returncode == 0 and tmp.is_file()
+            if not ok:
+                log.warning("mix_sfx legacy fallback failed: %.300s",
+                            (proc.stderr or ""))
+        except (OSError, subprocess.SubprocessError) as exc:
+            log.warning("mix_sfx legacy fallback failed: %s", exc)
+    if not ok:
+        tmp.unlink(missing_ok=True)
+        log.warning("mix_sfx: keeping the un-mixed video (SFX skipped); "
+                    "re-run with --force after fixing the bank/ffmpeg")
+        return False
+    tmp.replace(video_path)
+    log.info("mix_sfx complete: %d events over %s", len(events), video_path)
+    return True
+
+
+# --------------------------------------------------------------------------- #
 # Stage 5 — captions
 # --------------------------------------------------------------------------- #
 def srt_time(seconds: float) -> str:
@@ -1189,9 +1764,13 @@ def write_srt(timeline: TimelineArtifact, narration: NarrationArtifact,
 def render_video(timeline: TimelineArtifact, out_path: Path,
                  cfg: VideoConfig) -> None:
     exe = _resolve_ffmpeg(cfg.ffmpeg_exe)
-    from adapters.render_ffmpeg import (RenderError, StyleConfig,
-                                        pick_render_strategy, render,
-                                        render_chunked)
+    from adapters.render_ffmpeg import (
+        RenderError,
+        StyleConfig,
+        pick_render_strategy,
+        render,
+        render_chunked,
+    )
     out_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = out_path.with_name(out_path.stem + ".partial.mp4")
     style = StyleConfig(
@@ -1208,16 +1787,54 @@ def render_video(timeline: TimelineArtifact, out_path: Path,
     t0 = time.time()
     strategy = pick_render_strategy(len(timeline.entries), total_seconds(timeline))
     log.info("render strategy=%s", strategy)
+    # The render is the long silent phase of a CLI run: show a live rich bar
+    # (interactive) or a throttled INFO line every 10% (embedded/webapp, who
+    # must not paint on the uvicorn console and track progress via job
+    # records instead). ffmpeg's own time= output drives the fraction, so it
+    # stays honest even for the chunked strategy (seconds across all segs).
+    bar_ctx: Progress | None = None
+    task_id = None
+    _last_pct = [-10]
+
+    def _report(frac: float, msg: str) -> None:
+        if bar_ctx is not None:
+            desc = f"[cyan]Rendering video ({strategy})"
+            if msg:
+                desc += f" · {msg}"
+            bar_ctx.update(task_id, completed=frac, description=desc)
+            return
+        pct = int(frac * 100) // 10 * 10
+        if pct >= _last_pct[0] + 10:
+            _last_pct[0] = pct
+            el = time.time() - t0
+            eta = (el / frac - el) if 0 < frac < 1 else 0.0
+            log.info("render %3d%% (%.0fs elapsed, ~%.0fs left)%s",
+                     min(pct, 100), el, eta, f" [{msg}]" if msg else "")
+
+    if _HAS_RICH and not EMBEDDED_MODE:
+        bar_ctx = Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+        )
+        bar_ctx.start()
+        task_id = bar_ctx.add_task(f"[cyan]Rendering video ({strategy})",
+                                   total=1.0)
     try:
         if strategy == "chunked":
             render_chunked(
                 timeline, tmp, ffmpeg_exe=exe, chunk_size=12,
                 profile={"preset": "veryfast", "crf": "23", "threads": "4"},
-                style=style)
+                style=style, progress_cb=_report)
         else:
-            render(timeline, tmp, ffmpeg_exe=exe, style=style)
+            render(timeline, tmp, ffmpeg_exe=exe, style=style,
+                   progress_cb=_report)
     except RenderError as exc:
         raise VideoError(str(exc)) from exc
+    finally:
+        if bar_ctx is not None:
+            bar_ctx.stop()
     elapsed = time.time() - t0
     tmp.replace(out_path)
     # +faststart is folded into the encode itself (build_command /
@@ -1259,7 +1876,7 @@ def make_recap_video(panels_json: Path, out_path: Path,
 
     # 1. narration
     narration = build_narration(artifact, cfg, panels_hash=panels_hash,
-                                work_dir=work)
+                                work_dir=work, panels_dir=panels_dir)
     _write_atomic(work / "narration.json",
                   narration.model_dump_json(indent=2) + "\n")
     spoken = sum(1 for e in narration.entries if e.text.strip())
@@ -1307,6 +1924,14 @@ def make_recap_video(panels_json: Path, out_path: Path,
         _write_atomic(work / "motion_report.json",
                       json.dumps(motion_report, indent=2) + "\n")
 
+    # 3c. sfx plan (opt-in: cfg.sfx_dir) — deterministic, before the render
+    # so a render failure still leaves the auditable plan sidecar.
+    sfx: SfxArtifact | None = None
+    if cfg.sfx_dir:
+        sfx = build_sfx_plan(timeline, narration, audio, cfg)
+        _write_atomic(work / "sfx.json",
+                      sfx.model_dump_json(indent=2) + "\n")
+
     # 5. captions (before render so a render failure still leaves them)
     srt_path = out_path.with_suffix(".srt")
     cues = write_srt(timeline, narration, audio, srt_path)
@@ -1323,20 +1948,28 @@ def make_recap_video(panels_json: Path, out_path: Path,
         "motion_preset": cfg.motion_preset,
         "motion_report": (str(work / "motion_report.json")
                           if motion_report else None),
+        "sfx": (str(work / "sfx.json") if sfx is not None else None),
+        "sfx_events": (len(sfx.events) if sfx is not None else 0),
     }
     if dry_run:
         log.info("make_recap_video dry_run summary=%s", summary)
         return summary
 
-    # 4. render (cache: skip when the timeline hash is unchanged)
+    # 4. render (cache: skip when the timeline hash AND sfx plan are unchanged;
+    # a cache hit means the mp4 already contains the SFX mixdown)
     stamp = out_path.with_name(out_path.name + ".hash")
     tl_hash = _sha256_text(timeline.model_dump_json())
+    sfx_hash = (_sha256_text(sfx.model_dump_json())
+                if sfx is not None else "off")
+    render_key = f"{tl_hash}:{sfx_hash}"
     if (out_path.is_file() and stamp.is_file() and not force
-            and stamp.read_text("utf-8").strip() == tl_hash):
+            and stamp.read_text("utf-8").strip() == render_key):
         log.info("video cache hit: %s", out_path)
     else:
         render_video(timeline, out_path, cfg)
-        _write_atomic(stamp, tl_hash + "\n")
+        if sfx is not None:
+            mix_sfx(out_path, sfx, cfg)
+        _write_atomic(stamp, render_key + "\n")
     summary["video"] = str(out_path)
     log.info("make_recap_video complete summary=%s", summary)
     return summary

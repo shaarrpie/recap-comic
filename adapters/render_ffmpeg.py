@@ -24,7 +24,10 @@ the 1080x1920 frame (overflow axis gets the pan; exact-fit gets static).
 """
 from __future__ import annotations
 
+import re
 import subprocess
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -96,7 +99,8 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
                    columns: int = 0, split_dir: int = 1,
                    gap_frac: float = 0.05,
                    pan_overflow: float = 0.15,
-                   split_ss: float = 3.0) -> str:
+                   split_ss: float = 3.0,
+                   pan_travel_frac: float = 1.0) -> str:
     """One panel composited onto a neutral blurred full-frame copy of itself.
 
     Background branch (always): cover-scaled to the canvas and centre-cropped
@@ -181,7 +185,8 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
         return f"{head}{bg};{chain}"
 
     # ---- cinematic, kind-driven Ken Burns (only when a motion preset set kind)
-    if kind in ("zoom_in", "zoom_out", "pan_down", "pan_up") and dur > 0:
+    if kind in ("zoom_in", "zoom_out", "pan_down", "pan_up",
+                "pan_left", "pan_right") and dur > 0:
         zm = max(zoom_mag, float(zoom or 0.0))
         if kind == "zoom_in":
             zexpr = f"(({h}/ih)*(1+{zm:g}*t/{dur:.3f}))"
@@ -195,10 +200,26 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
             return f"{head}{bg};{fg};{centre}"
         # pan_down / pan_up: hold the foreground taller than the frame so the
         # camera drifts through the artwork; width stays contain (pillars).
+        # pan_left / pan_right: same closer framing, but the whole panel slides
+        # ACROSS the blurred backdrop -- it needs no horizontal overflow, so it
+        # adds lateral variety without cropping any art away.
         s = f"({h}/ih)*(1+{pan_frac:g})"
         fg = (f"[fgr{i}]scale=w='iw*{s}':h='ih*{s}'"
               f":eval=frame:flags=lanczos[fg{i}]")
-        travel = h * pan_frac
+        # The resolver already applied its travel fraction, so pan_x/pan_y are
+        # FINAL canvas px and must not be scaled a second time (double-scaling
+        # turned a 154px slide into an imperceptible 54px drift). The
+        # h*pan_frac*pan_travel_frac form is only the fallback for timelines
+        # that carry no per-panel travel.
+        if kind in ("pan_left", "pan_right"):
+            travel = abs(pan_x) if pan_x else h * pan_frac * pan_travel_frac
+            if kind == "pan_right":
+                ox = f"(W-w)/2-{travel:.3f}+{2 * travel:.3f}*t/{dur:.3f}"
+            else:
+                ox = f"(W-w)/2+{travel:.3f}-{2 * travel:.3f}*t/{dur:.3f}"
+            overlay = f"[bg{i}][fg{i}]overlay=x='{ox}':y=(H-h)/2"
+            return f"{head}{bg};{fg};{overlay}"
+        travel = abs(pan_y) if pan_y else h * pan_frac * pan_travel_frac
         if kind == "pan_down":
             oy = f"(H-h)/2+{travel:.3f}-{travel:.3f}*t/{dur:.3f}"
         else:
@@ -319,18 +340,23 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
             # Ken-Burns move per shot (the edit-rotation cycle). Without a
             # preset, kind stays None and the legacy push-in is reproduced.
             ref_kind = kind if motion.get("preset") else None
-            # Tall/long panels: bring the foreground closer with a fixed
-            # scale bump (panel_scale, e.g. 1.2) and reveal the crop with a
-            # vertical pan only. The _blur_bg_chain pan branch holds the
-            # foreground at (h/ih)*(1+pan_frac) and drifts by canvas*pan_frac,
-            # so pan_frac = panel_scale - 1 traverses exactly the new overflow
-            # with no zoom. Normal panels keep the 0.32 default unchanged.
+            # Closer framing: the resolver reports the scale each shot is held
+            # at (tall art AND normal art both get one now). The pan branch
+            # holds the foreground at (h/ih)*(1+pan_frac) and drifts by
+            # canvas*pan_frac*pan_travel_frac, so pan_frac = panel_scale - 1
+            # traverses the new overflow, slowed by the travel fraction.
+            # Panels with no reported scale keep the 0.32 default.
             pan_frac = 0.32
-            if motion.get("tall_panel"):
-                try:
-                    pan_frac = max(0.0, float(motion.get("panel_scale", 1.2)) - 1.0)
-                except (TypeError, ValueError):
-                    pan_frac = 0.2
+            try:
+                _scale = motion.get("panel_scale")
+                if _scale is not None:
+                    pan_frac = max(0.0, float(_scale) - 1.0)
+            except (TypeError, ValueError):
+                pan_frac = 0.2
+            try:
+                travel_frac = float(motion.get("pan_travel_frac", 1.0) or 1.0)
+            except (TypeError, ValueError):
+                travel_frac = 1.0
             vf = _blur_bg_chain(i, tw, th, style.blur_sigma,
                                 zoom=panel_zoom,
                                 dur=e.duration_seconds,
@@ -345,7 +371,8 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
                                 pan_overflow=float(motion.get(
                                     "split_pan_frac", 0.15) or 0.15),
                                 split_ss=float(motion.get(
-                                    "split_ss", 3.0) or 3.0))
+                                    "split_ss", 3.0) or 3.0),
+                                pan_travel_frac=travel_frac)
         else:
             motion = e.motion or {}
             default_zoom = style.zoom_strength if style else 0.3
@@ -477,10 +504,87 @@ def _build_xfade_command(cmd: list[str], timeline: TimelineArtifact,
     return cmd
 
 
+# --------------------------------------------------------------------------- #
+# Live render progress (ffmpeg streams "time=HH:MM:SS.xx" status lines)
+# --------------------------------------------------------------------------- #
+_FFMPEG_TIME_RE = re.compile(r"time=(\d+):(\d{2}):(\d{2}(?:[.,]\d+)?)")
+
+
+def parse_ffmpeg_time(line: str) -> float | None:
+    """Finished-seconds from an ffmpeg status line ('... time=00:01:23.45')."""
+    m = _FFMPEG_TIME_RE.search(line or "")
+    if not m:
+        return None
+    h, mi, s = m.groups()
+    try:
+        return int(h) * 3600 + int(mi) * 60 + float(s.replace(",", "."))
+    except ValueError:
+        return None
+
+
+def timeline_seconds(timeline: TimelineArtifact) -> float:
+    """Approximate finished duration; mirrors recap_video.total_seconds
+    (duplicated so adapters never import upward out of the adapter layer)."""
+    return round(sum(e.duration_seconds for e in timeline.entries), 3)
+
+
+def _run_ffmpeg_progress(cmd: list[str], total_s: float,
+                         progress_cb: Callable[[float, str], None] | None,
+                         timeout: int) -> tuple[int, str]:
+    """Run ffmpeg with streamed stderr, reporting fraction done to progress_cb.
+
+    Only used on the progress path; plain subprocess.run stays for every
+    other caller. A watchdog timer kills ffmpeg past `timeout` and re-raises
+    subprocess.TimeoutExpired, because the stderr read loop cannot enforce
+    one itself on a silent hang; error contract matches render()'s.
+    """
+    timed_out = False
+
+    def _kill() -> None:
+        nonlocal timed_out
+        timed_out = True
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+    proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.PIPE, text=True,
+                            errors="replace", shell=False)
+    watchdog = threading.Timer(max(1, timeout), _kill)
+    watchdog.daemon = True
+    watchdog.start()
+    tail: list[str] = []
+    try:
+        assert proc.stderr is not None
+        for line in proc.stderr:
+            tail.append(line.rstrip("\n"))
+            del tail[:-20]
+            if total_s > 0 and progress_cb is not None:
+                done_s = parse_ffmpeg_time(line)
+                if done_s is not None:
+                    progress_cb(min(1.0, done_s / total_s), "")
+        rc = proc.wait(timeout=60)
+    finally:
+        watchdog.cancel()
+    if timed_out:
+        raise subprocess.TimeoutExpired(cmd, timeout)
+    return rc, "\n".join(tail[-20:])
+
+
 def render(timeline: TimelineArtifact, out_path: Path,
            ffmpeg_exe: str = "ffmpeg", timeout: int = 3600,
-           style: StyleConfig | None = None) -> None:
+           style: StyleConfig | None = None,
+           progress_cb: Callable[[float, str], None] | None = None) -> None:
     cmd = build_command(timeline, out_path, ffmpeg_exe, style=style)
+    if progress_cb is not None:
+        # Streaming variant so the caller sees live percentage; identical
+        # contract (rc!=0 -> RenderError, timeout -> TimeoutExpired).
+        rc, tail = _run_ffmpeg_progress(cmd, timeline_seconds(timeline),
+                                        progress_cb, timeout)
+        if rc != 0:
+            raise RenderError(cmd, tail)
+        return
     proc = subprocess.run(cmd, capture_output=True, text=True,
                           timeout=timeout, shell=False,  # NEVER shell=True
                           check=False)  # returncode handled explicitly below
@@ -534,6 +638,12 @@ def build_command_chunked(timeline: TimelineArtifact, out_path: Path,
     list_file.write_text("".join(f"file '{s.resolve()}'\n" for _, s in segs))
     concat_cmd = [ffmpeg_exe, "-y", "-nostdin", "-f", "concat", "-safe", "0",
                   "-i", str(list_file), "-c", "copy",
+                  # Pin the video timescale to what a direct (non-chunked)
+                  # mp4 render gets from ffmpeg (fps*512; 15360 at 30fps):
+                  # mpegts segments otherwise carry a 90k tbn, and mixing
+                  # timebases breaks any later -c copy concat of chapter
+                  # mp4s (observed: video duration inflated ~7x vs audio).
+                  "-video_track_timescale", str(timeline.fps * 512),
                   # moov at the head for immediate web playback; the per-segment
                   # .ts files are stream copies, so this is the only place it
                   # matters for the final mp4.
@@ -547,17 +657,48 @@ def render_chunked(timeline: TimelineArtifact, out_path: Path,
                    chunk_size: int = 12,
                    profile: dict | None = None,
                    timeout: int = 3600,
-                   style: StyleConfig | None = None) -> None:
-    """Render large timelines in chunks to bound memory usage."""
+                   style: StyleConfig | None = None,
+                   progress_cb: Callable[[float, str], None] | None = None
+                   ) -> None:
+    """Render large timelines in chunks to bound memory usage.
+
+    With progress_cb the per-segment ffmpeg runs stream their status lines so
+    the reported fraction is real (seconds done across ALL segments, plus a
+    'segment k/n' label); without it behaviour is the original blocking one.
+    """
     segs, concat_cmd, tmp = build_command_chunked(
         timeline, out_path, ffmpeg_exe, chunk_size, profile, style=style)
+    entries = timeline.entries
+    chunk_secs: list[float] = []
+    if progress_cb is not None:
+        for i in range(0, len(entries), chunk_size):
+            chunk_secs.append(round(
+                sum(e.duration_seconds for e in entries[i:i + chunk_size]),
+                3))
+    total_s = sum(chunk_secs) or 1.0
+    done_s = 0.0
     try:
-        for cmd, seg in segs:
-            proc = subprocess.run(cmd, capture_output=True, text=True,
-                                  timeout=timeout, shell=False, check=False)
-            if proc.returncode != 0:
-                tail = "\n".join(proc.stderr.splitlines()[-20:])
-                raise RenderError(cmd, tail)
+        for k, (cmd, seg) in enumerate(segs):
+            if progress_cb is not None:
+                part = chunk_secs[k] if k < len(chunk_secs) else 0.0
+                msg = f"segment {k + 1}/{len(segs)}"
+                rc, tail = _run_ffmpeg_progress(
+                    cmd, part,
+                    # `_ignored` absorbs the (always-empty) message the stream
+                    # runner passes positionally; the segment label must win.
+                    lambda f, _ignored=None, _m=msg, _p=part, _d=done_s, _t=total_s:
+                    progress_cb(min(1.0, (_d + f * _p) / _t), _m),
+                    timeout)
+                if rc != 0:
+                    raise RenderError(cmd, tail)
+                done_s += part
+            else:
+                proc = subprocess.run(cmd, capture_output=True, text=True,
+                                      timeout=timeout, shell=False,
+                                      check=False)
+                if proc.returncode != 0:
+                    tail = "\n".join(proc.stderr.splitlines()[-20:])
+                    raise RenderError(cmd, tail)
             if not seg.is_file():
                 raise RenderError(cmd, f"segment {seg} not produced")
         proc = subprocess.run(concat_cmd, capture_output=True, text=True,
@@ -565,6 +706,8 @@ def render_chunked(timeline: TimelineArtifact, out_path: Path,
         if proc.returncode != 0:
             tail = "\n".join(proc.stderr.splitlines()[-20:])
             raise RenderError(concat_cmd, tail)
+        if progress_cb is not None:
+            progress_cb(1.0, "concatenating")
     finally:
         # clean up temp segment files
         import contextlib

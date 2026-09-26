@@ -27,10 +27,10 @@ from pathlib import Path
 import numpy as np
 import pytest
 from PIL import Image
+from pydantic import ValidationError
 
 import panel_filter as pf
 from guided_cutter import CutArtifact, CutPanel
-from pydantic import ValidationError
 
 W = 800  # strip width used by every fixture
 
@@ -98,12 +98,63 @@ CFG = pf.FilterConfig()
 
 
 # --------------------------------------------------------------------------- #
+# scanlation promo demotion (FILTER_VERSION 7)
+# --------------------------------------------------------------------------- #
+def test_promo_splash_demotes_even_though_it_is_colourful_art(tmp_path):
+    """A promo splash is DRAWN art (paint-splash graphics + a URL), so every
+    pixel gate legitimately keeps it -- yet the one-line-per-panel script
+    contract then forces the narrator to hype a scan site. The text rule
+    demotes it on its own content instead."""
+    panels = [panel_dict(1, 0, 600, narration="the hero draws his sword"),
+              panel_dict(2, 600, 1360, narration="a purple banner",
+                         dialogue="Read at ASURASCANS.COM for the fastest "
+                                  "releases")]
+    d = build_session(tmp_path, [art_block(600), art_block(760)], panels)
+    res = pf.filter_panels(d)
+    out = json.loads((d / "panels_filtered.json").read_text("utf-8"))
+    by_id = {p["id"]: p for p in out["panels"]}
+    assert not by_id["001"].get("context_only")     # story art untouched
+    assert by_id["002"]["context_only"] is True     # ad demoted, still present
+    assert res["context_only"] == 1
+    assert res["kept"] == 1
+    side = json.loads((d / "filter_summary.json").read_text("utf-8"))
+    assert side["filter_version"] == pf.FILTER_VERSION
+    dec = {str(e["id"]): e for e in side["decisions"]}
+    assert dec["002"]["decision"] == pf.DECISION_CONTEXT_ONLY
+
+
+def test_promo_rule_never_demotes_a_story_technique_card(tmp_path):
+    """'FOG SWORD: RUSHING FOG STORM' is a technique title card. An unanchored
+    credit-label alternative (rd:) in the promo regex matched inside SWORD: and
+    deleted real story art, so the word boundary is the regression guard."""
+    panels = [panel_dict(1, 0, 760,
+                         narration="FOG SWORD: RUSHING FOG STORM",
+                         dialogue="IS HE A HIGHER UP?")]
+    d = build_session(tmp_path, [art_block(760)], panels)
+    res = pf.filter_panels(d)
+    out = json.loads((d / "panels_filtered.json").read_text("utf-8"))
+    assert res["context_only"] == 0
+    assert out["panels"][0].get("context_only") is not True
+
+
+def test_promo_rule_respects_a_user_confirmed_panel(tmp_path):
+    """A confirmed panel was reviewed by a human: no automatic rule, promo or
+    otherwise, may override that decision."""
+    panels = [panel_dict(1, 0, 760, dialogue="ASURASCANS.COM", confirmed=True)]
+    d = build_session(tmp_path, [art_block(760)], panels)
+    res = pf.filter_panels(d)
+    out = json.loads((d / "panels_filtered.json").read_text("utf-8"))
+    assert res["context_only"] == 0
+    assert out["panels"][0].get("context_only") is not True
+
+
+# --------------------------------------------------------------------------- #
 # _score_array
 # --------------------------------------------------------------------------- #
 def test_score_array_zero_size_returns_zeros():
     s = pf._score_array(np.zeros((0, 10, 3), dtype=np.uint8), CFG)
     assert s == {"white_of_content": 0.0, "color_ratio": 0.0,
-                 "edge_density": 0.0}
+                 "edge_density": 0.0, "uniform_ratio": 0.0}
 
 
 def test_score_array_uniform_colours():
@@ -112,15 +163,18 @@ def test_score_array_uniform_colours():
     assert s["white_of_content"] == 1.0
     assert s["color_ratio"] == 0.0
     assert s["edge_density"] == pytest.approx(0.0, abs=1e-4)
-    # black page: no white, no saturation, no edges
+    assert s["uniform_ratio"] == 1.0
+    # black page: no white, no saturation, no edges — but still a solid card
     s = pf._score_array(uniform_block(600, (0, 0, 0)), CFG)
     assert s["white_of_content"] == 0.0
     assert s["color_ratio"] == 0.0
     assert s["edge_density"] == pytest.approx(0.0, abs=1e-4)
-    # saturated pastel: every non-white pixel is coloured
+    assert s["uniform_ratio"] == 1.0
+    # saturated pastel: every non-white pixel is coloured — and still solid
     s = pf._score_array(uniform_block(600, (120, 180, 220)), CFG)
     assert s["white_of_content"] == 0.0
     assert s["color_ratio"] == 1.0
+    assert s["uniform_ratio"] == 1.0
 
 
 def test_score_array_art_and_text_signatures():
@@ -200,7 +254,7 @@ def test_blank_flag_missing_falls_back_to_score():
 
 
 # --------------------------------------------------------------------------- #
-# _is_text_only (Tier 2: all gates must pass)
+# _is_text_only (Tier 2: solid-card path, else all gates must pass)
 # --------------------------------------------------------------------------- #
 THR_FIXED = {
     "method": "fixed", "n_panels": 3,
@@ -214,7 +268,7 @@ THR_FIXED = {
 def test_text_only_all_gates_pass():
     score = pf._score_array(text_block(800), CFG)
     assert pf._is_text_only({"dialogue": "You're too slow!"},
-                            score, THR_FIXED) is True
+                            score, THR_FIXED, CFG) is True
 
 
 @pytest.mark.parametrize("mutate,reason", [
@@ -227,19 +281,54 @@ def test_text_only_content_gate_vetoes(mutate, reason):
     score = pf._score_array(text_block(800), CFG)
     panel = {"dialogue": "hi", "panel_type": "single"}
     panel.update(mutate)
-    assert pf._is_text_only(panel, score, THR_FIXED) is False, reason
+    assert pf._is_text_only(panel, score, THR_FIXED, CFG) is False, reason
 
 
 def test_text_only_pixel_gates_veto():
-    # saturated art crop with dialogue: white gate fails (and color gate)
+    # saturated art crop with dialogue: not white, not uniform, strong edges
+    # -> the pixel gates veto it (kept as a scene panel)
     art = pf._score_array(art_block(800), CFG)
-    assert pf._is_text_only({"dialogue": "hi"}, art, THR_FIXED) is False
-    # pure white with dialogue: zero edges -> no strokes -> fail
-    pure = pf._score_array(uniform_block(800, (255, 255, 255)), CFG)
-    assert pf._is_text_only({"dialogue": "hi"}, pure, THR_FIXED) is False
-    # saturated-but-white page: color gate fails
-    pink = pf._score_array(uniform_block(800, (250, 120, 180)), CFG)
-    assert pf._is_text_only({"dialogue": "hi"}, pink, THR_FIXED) is False
+    assert art["uniform_ratio"] < CFG.uniform_fill_ratio
+    assert pf._is_text_only({"dialogue": "hi"}, art, THR_FIXED, CFG) is False
+
+
+def test_text_only_solid_fill_demoted_any_hue():
+    # A flat single-colour card with dialogue demotes regardless of hue:
+    # pure white (zero edges — strokes the AI only *claimed*), saturated
+    # pink/red, black, navy — uniformity is the honest signal, not whiteness.
+    for rgb in [(255, 255, 255), (250, 120, 180), (0, 0, 0), (10, 20, 80),
+                (200, 30, 30)]:
+        s = pf._score_array(uniform_block(800, rgb), CFG)
+        assert s["uniform_ratio"] >= CFG.uniform_fill_ratio, rgb
+        assert pf._is_text_only({"dialogue": "hi"}, s, THR_FIXED, CFG) is True, rgb
+
+
+def test_text_only_solid_fill_still_needs_text():
+    # Solid-coloured ART (a title card with NO dialogue) must never demote
+    # on pixels alone — the content gate still applies to the solid path.
+    s = pf._score_array(uniform_block(800, (0, 0, 0)), CFG)
+    assert pf._is_text_only({"dialogue": ""}, s, THR_FIXED, CFG) is False
+    assert pf._is_text_only({"dialogue": "   "}, s, THR_FIXED, CFG) is False
+
+
+def test_text_only_bubble_card_with_art_sliver():
+    # Regression (panel_004): a near-white speech-bubble card — flat field +
+    # sparse thin text + a small coloured scene sliver at the bottom edge.
+    # The generous uniform tolerance treats the card's own antialiased field
+    # as uniform (real art spans the palette and would not), so it demotes on
+    # the solid-fill path even though its colour_ratio is far too high for the
+    # text-on-white 4-gate path to catch. A tight ±14 tolerance scored this
+    # ~0.84 and let the bubble panel reach the video.
+    block = np.full((800, W, 3), 250, dtype=np.uint8)
+    for y in range(150, 470, 42):            # sparse "dialogue" strokes
+        block[y:y + 3, 150:W - 150] = (25, 25, 25)
+    block[748:772, :, :] = (170, 210, 235)   # small coloured art sliver
+    s = pf._score_array(block, CFG)
+    assert s["uniform_ratio"] >= CFG.uniform_fill_ratio
+    assert s["color_ratio"] > CFG.fixed_text_color_ratio  # 4-gate would miss it
+    assert pf._is_text_only(
+        {"dialogue": "Today, we take down the guardian."},
+        s, THR_FIXED, CFG) is True
 
 
 def test_text_only_bw_session_skips_saturation_gate():
@@ -254,12 +343,12 @@ def test_text_only_bw_session_skips_saturation_gate():
     assert tinted["edge_density"] > CFG.fixed_text_edge_floor
     assert tinted["color_ratio"] > 0.9  # nearly every stroke pixel is coloured
     thr_bw = {**THR_FIXED, "is_bw_session": True}
-    assert pf._is_text_only({"dialogue": "hi"}, tinted, thr_bw) is True
-    assert pf._is_text_only({"dialogue": "hi"}, tinted, THR_FIXED) is False
+    assert pf._is_text_only({"dialogue": "hi"}, tinted, thr_bw, CFG) is True
+    assert pf._is_text_only({"dialogue": "hi"}, tinted, THR_FIXED, CFG) is False
 
 
 def test_text_only_missing_score_keeps():
-    assert pf._is_text_only({"dialogue": "hi"}, {}, THR_FIXED) is False
+    assert pf._is_text_only({"dialogue": "hi"}, {}, THR_FIXED, CFG) is False
 
 
 # --------------------------------------------------------------------------- #
@@ -628,10 +717,11 @@ def test_filter_config_with_overrides():
 
 
 # --------------------------------------------------------------------------- #
-# Downstream contract: context_only panels are skipped by narration and
-# the video timeline (the reason the field exists)
+# Downstream contract: a context_only panel gets no frame of its own, but its
+# dialogue is carried as a voice-over onto the nearest scene panel so the
+# story never loses the line.
 # --------------------------------------------------------------------------- #
-def test_context_only_skipped_by_downstream_stages(tmp_path):
+def test_context_only_frame_skipped_but_dialogue_carried(tmp_path):
     import narrator
     import recap_video as rv
 
@@ -658,14 +748,41 @@ def test_context_only_skipped_by_downstream_stages(tmp_path):
     assert "Scene one." in script and "Scene two." in script
     assert "Text box." not in script
 
-    # video: no narration entry, no timeline frame
+    # video: no entry of its own, no timeline frame
     cfg = rv.VideoConfig(tts="none")
     nar = rv.build_narration(art, cfg, panels_hash="h")
     assert [e.panel_id for e in nar.entries] == ["001", "003"]
+    # ...but the demoted bubble's words are folded onto the preceding scene
+    # panel (001) as a voice-over, so the story still hears them.
+    by_id = {e.panel_id: e for e in nar.entries}
+    assert "inner monologue" in by_id["001"].text
     aud = rv.synthesize_audio(nar, tmp_path / "audio", cfg)
     tl = rv.build_timeline(art, tmp_path, nar, aud, tmp_path / "audio",
                            cfg, panels_hash="h")
     assert [e.panel_id for e in tl.entries] == ["001", "003"]
+
+
+def test_context_only_leading_bubble_carries_onto_first_scene(tmp_path):
+    # A bubble panel that opens the chapter (no preceding scene) must still be
+    # voiced: its line is prepended to the first real scene panel's entry.
+    import recap_video as rv
+    panels = [
+        CutPanel(id="001", panel_index=1, y_start=0, y_end=800,
+                 narration="", dialogue="PREVIOUSLY ON THE TOWER",
+                 panel_type="single", confidence=0.9,
+                 image_file="panel_001.png", context_only=True),
+        CutPanel(id="002", panel_index=2, y_start=800, y_end=1600,
+                 narration="He climbed.", dialogue="", panel_type="single",
+                 confidence=0.9, image_file="panel_002.png"),
+    ]
+    for p in panels:
+        Image.new("RGB", (800, p.y_end - p.y_start), "white").save(
+            tmp_path / p.image_file)
+    art = CutArtifact(source="strip.png", width=800, height=1600,
+                      plan_hash="x", config={}, panels=panels)
+    nar = rv.build_narration(art, rv.VideoConfig(tts="none"), panels_hash="h")
+    assert [e.panel_id for e in nar.entries] == ["002"]  # no frame for 001
+    assert "PREVIOUSLY ON THE TOWER" in nar.entries[0].text
 
 
 def test_cut_panel_context_only_survives_json_roundtrip():

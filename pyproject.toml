@@ -36,6 +36,8 @@ render = ["moviepy==2.2.1", "imageio-ffmpeg==0.6.0"]
 ocr = ["pytesseract==0.3.13"]
 # Webapp
 web = ["fastapi==0.115.0", "uvicorn==0.30.0", "python-multipart==0.0.12"]
+# Website image downloader (recap_comic `download` commands)
+download = ["requests>=2.31"]
 # Development / testing
 dev = [
     "pytest==9.1.1",
@@ -56,6 +58,9 @@ py-modules = [
     "guided_pipeline",
     "strip_analyzer",
     "narrator",
+    "narrator_prompt",
+    "text_clean",
+    "recap_script",
     "report",
     "debug_view",
     "bubble_detector",
@@ -65,6 +70,7 @@ py-modules = [
     "panel_filter",
     "story_context",
     "cinematic_effects",
+    "website_downloader",
 ]
 
 [tool.setuptools.package-data]

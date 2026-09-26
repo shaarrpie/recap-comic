@@ -232,7 +232,8 @@ def _empty_context() -> dict:
         "locations": {},      # name -> {description, first_seen, last_seen}
         "story_threads": [],  # [{id, summary, status: active|resolved}]
         "key_events": [],     # [{panel, summary}] capped at _MAX_KEY_EVENTS
-        "_meta": {"last_panel": 0, "seed_built": False, "version": _VERSION},
+        "_meta": {"last_panel": 0, "seed_built": False,
+                  "image_seed_built": False, "version": _VERSION},
     }
 
 
@@ -668,6 +669,52 @@ def inject_into_prompt(ctx: dict, panel_index: int,
 # ---------------------------------------------------------------------------
 # Seed pass
 # ---------------------------------------------------------------------------
+def _ingest_seed(ctx: dict, seed: dict) -> None:
+    """Merge a seed JSON object (series_title / characters / locations /
+    story_threads) into ctx IN PLACE, isolating failures per field so one
+    malformed list cannot discard the rest of the roster. Shared by the text
+    seed (build_seed_context) and the vision cast survey below."""
+    ctx["series_title"] = (ctx.get("series_title")
+                           or _sanitize(seed.get("series_title", ""), 100))
+    chars = ctx.setdefault("characters", {})
+    locs = ctx.setdefault("locations", {})
+    ctx.setdefault("story_threads", [])
+
+    def _seed_characters() -> None:
+        for c in _as_list_of_dicts(seed.get("characters")):
+            name = _sanitize(c.get("name", ""))
+            if name and find_entity_key(name, chars) is None:
+                chars[name] = {
+                    "role": _clean_choice(c.get("role", "unknown"), "unknown"),
+                    "description": _sanitize(c.get("description", "")),
+                    "first_seen": 0,
+                    "last_seen": 0,
+                    "aliases": [_sanitize(a) for a in
+                                _as_list(c.get("aliases"), str) if a],
+                    "status": "active",
+                    "associated_locations": [],
+                    "relationships": {},
+                }
+
+    def _seed_locations() -> None:
+        for loc in _as_list_of_dicts(seed.get("locations")):
+            name = _sanitize(loc.get("name", ""))
+            if name and find_entity_key(name, locs) is None:
+                locs[name] = {
+                    "description": _sanitize(loc.get("description", "")),
+                    "first_seen": 0,
+                    "last_seen": 0,
+                }
+
+    def _seed_threads() -> None:
+        for t in _as_list_of_dicts(seed.get("story_threads")):
+            _add_thread(ctx["story_threads"], t.get("summary", ""))
+
+    _safe("seed characters", 0, _seed_characters)
+    _safe("seed locations", 0, _seed_locations)
+    _safe("seed threads", 0, _seed_threads)
+
+
 def build_seed_context(
     panels: list[dict],
     session_dir: str | Path,
@@ -737,47 +784,114 @@ def build_seed_context(
         save_context(ctx, session_dir)
         return ctx
 
-    ctx["series_title"] = (ctx["series_title"]
-                           or _sanitize(seed.get("series_title", ""), 100))
-
-    def _seed_characters() -> None:
-        for c in _as_list_of_dicts(seed.get("characters")):
-            name = _sanitize(c.get("name", ""))
-            if name and find_entity_key(name, ctx["characters"]) is None:
-                ctx["characters"][name] = {
-                    "role": _clean_choice(c.get("role", "unknown"), "unknown"),
-                    "description": _sanitize(c.get("description", "")),
-                    "first_seen": 0,
-                    "last_seen": 0,
-                    "aliases": [_sanitize(a) for a in
-                                _as_list(c.get("aliases"), str) if a],
-                    "status": "active",
-                    "associated_locations": [],
-                    "relationships": {},
-                }
-
-    def _seed_locations() -> None:
-        for loc in _as_list_of_dicts(seed.get("locations")):
-            name = _sanitize(loc.get("name", ""))
-            if name and find_entity_key(name, ctx["locations"]) is None:
-                ctx["locations"][name] = {
-                    "description": _sanitize(loc.get("description", "")),
-                    "first_seen": 0,
-                    "last_seen": 0,
-                }
-
-    def _seed_threads() -> None:
-        for t in _as_list_of_dicts(seed.get("story_threads")):
-            _add_thread(ctx["story_threads"], t.get("summary", ""))
-
-    _safe("seed characters", 0, _seed_characters)
-    _safe("seed locations", 0, _seed_locations)
-    _safe("seed threads", 0, _seed_threads)
+    _ingest_seed(ctx, seed)
 
     ctx["_meta"]["seed_built"] = True  # only on success
     save_context(ctx, session_dir)
     log.info("[story_context] seed complete: %d characters, %d locations, "
              "%d active threads",
+             len(ctx["characters"]), len(ctx["locations"]),
+             sum(1 for t in ctx["story_threads"]
+                 if t.get("status") == "active"))
+    return ctx
+
+
+# ---------------------------------------------------------------------------
+# Vision cast survey (seed the roster from the ART when there is no text)
+# ---------------------------------------------------------------------------
+# A fresh cut has empty dialogue/narration until the vision loop fills it, so
+# the text-only seed above has nothing to read. This is the pre-narration
+# fallback: ONE vision call over a contact-sheet of every panel identifies the
+# recurring cast and setting, so even the opening panels get continuity.
+_SEED_IMAGE_SYSTEM = (
+    "You are pre-reading a manhwa/webtoon chapter from a single contact-sheet "
+    "image of all its panels (reading order: left-to-right, top-to-bottom) to "
+    "build a cast and location list BEFORE any narration is written. Identify "
+    "RECURRING characters by appearance and any NAMES legible on the page "
+    "(name cards, speech bubbles); give each a role and a short visual "
+    "description. Return ONLY a JSON object (no markdown, no fences, no "
+    'prose) shaped exactly: {"series_title": "", "characters": [{"name": '
+    '"", "role": "protagonist|antagonist|ally|minor|unknown", '
+    '"description": "", "aliases": []}], "locations": [{"name": "", '
+    '"description": ""}], "story_threads": [{"summary": ""}]}'
+)
+
+
+def make_vision_seed_call(
+    api_key: str | None = None,
+    base_url: str | None = None,
+    model: str = "",
+    request_fn: Callable[..., str] | None = None,
+) -> Callable[[str], str]:
+    """Build an ``(image_b64 -> response text)`` callable for the cast survey.
+
+    Mirrors make_text_model_call but sends a real image through the project's
+    Agnes primary->fallback vision endpoint. ``request_fn(model, prompt,
+    b64)`` injects a fake transport in tests.
+    """
+    from adapters import ai_models as _ai
+
+    primary = model or _ai.PRIMARY_MODEL
+
+    def call(image_b64: str) -> str:
+        outcome = _ai.generate_vision_with_fallback(
+            _SEED_IMAGE_SYSTEM, image_b64,
+            operation="story-context-seed-images",
+            api_key=api_key, base_url=base_url,
+            primary_model=primary, request_fn=request_fn)
+        return outcome.result
+
+    return call
+
+
+def build_seed_context_from_images(
+    image_b64: str,
+    session_dir: str | Path,
+    vision_call: Callable[[str], str],
+    series_title: str = "",
+    chapter: int | None = None,
+    force_rebuild: bool = False,
+) -> dict:
+    """Seed the roster from a single contact-sheet vision pass, in place.
+
+    Only meant to run when the text seed produced nothing (a fresh cut). It
+    skips when a cast already exists or an earlier attempt already ran (so a
+    chapter never hammers the vision API on every re-run). Any failure is
+    non-fatal: the context is left untouched and ``image_seed_built`` stays
+    False so a later run retries. Returns the (possibly unchanged) context.
+    """
+    ctx = load_context(session_dir)
+    if (ctx.get("characters") or ctx.get("locations")) and not force_rebuild:
+        log.info("[story_context] cast already present -- image seed skipped")
+        return ctx
+    if ctx["_meta"].get("image_seed_built") and not force_rebuild:
+        log.info("[story_context] image seed already attempted -- skipping")
+        return ctx
+
+    ctx["series_title"] = ctx.get("series_title") or series_title
+    ctx["chapter"] = chapter
+    log.info("[story_context] running vision cast survey (contact sheet)...")
+    try:
+        raw = vision_call(image_b64)
+        first = raw.find("{")
+        last = raw.rfind("}")
+        if first == -1 or last <= first:
+            raise ValueError("no JSON object found in image-seed response")
+        seed = json.loads(raw[first:last + 1])
+        if not isinstance(seed, dict):
+            raise ValueError("image-seed response is not a JSON object")
+    except Exception as exc:  # noqa: BLE001 - leave image_seed_built False
+        log.warning("[story_context] image cast seed failed (%s) -- will "
+                    "retry next run", exc)
+        save_context(ctx, session_dir)
+        return ctx
+
+    _ingest_seed(ctx, seed)
+    ctx["_meta"]["image_seed_built"] = True
+    ctx["_meta"]["seed_built"] = True
+    save_context(ctx, session_dir)
+    log.info("[story_context] image cast survey complete: %d characters, "
+             "%d locations, %d active threads",
              len(ctx["characters"]), len(ctx["locations"]),
              sum(1 for t in ctx["story_threads"]
                  if t.get("status") == "active"))

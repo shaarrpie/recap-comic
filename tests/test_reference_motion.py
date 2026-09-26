@@ -1,7 +1,8 @@
 """Offline tests for the reference-motion preset (no ffmpeg / TTS).
 
-The shipped preset is a STRICT sequential cycle: 1) zoom_in 2) pan_down
-3) pan_up 4) zoom_out, repeated continuously (panel i -> segment i mod 4).
+The shipped preset is a STRICT sequential 8-beat cycle: 1) zoom_in 2) pan_down
+3) pan_right 4) zoom_out 5) pan_up 6) pan_left 7) zoom_in 8) pan_down, repeated
+continuously (panel i -> segment i mod 8).
 """
 from __future__ import annotations
 
@@ -43,15 +44,18 @@ def _meta() -> Meta:
 
 
 # ------------------------------------------------------------ preset loading
-def test_preset_loads_4_beat_cycle_in_order():
+def test_preset_loads_8_beat_cycle_in_order():
     p = _preset()
-    assert len(p) == 4
-    assert [s.seg for s in (p.segments or [])] == [1, 2, 3, 4]
-    assert abs(p.total_duration - 9.0) < 0.05
+    assert len(p) == 8
+    assert [s.seg for s in (p.segments or [])] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert abs(p.total_duration - 18.0) < 0.05
     assert p.reference_width == pytest.approx(1312.0)
-    # The strict cycle contract: zoom in -> pan down -> pan up -> zoom out.
+    # The strict cycle contract. The old 4-beat template could only ever
+    # produce zoom + vertical pan; the 8-beat one adds lateral slides and a
+    # second zoom pass so a recap is not nothing-but-up-and-down sliding.
     kinds = [mp.pan_kind_for_seg(s, p) for s in (p.segments or [])]
-    assert kinds == ["zoom_in", "pan_down", "pan_up", "zoom_out"]
+    assert kinds == ["zoom_in", "pan_down", "pan_right", "zoom_out",
+                     "pan_up", "pan_left", "zoom_in", "pan_down"]
 
 
 def test_normalized_movement_uses_reference_dims():
@@ -103,17 +107,21 @@ def test_pan_kind_sign_convention():
     p = _preset()
     segs = {s.seg: s for s in (p.segments or [])}
     assert mp.pan_kind_for_seg(segs[1], p) == "zoom_in"    # static + zoom in
-    assert mp.pan_kind_for_seg(segs[2], p) == "pan_down"   # dy>0
-    assert mp.pan_kind_for_seg(segs[3], p) == "pan_up"     # dy<0
+    assert mp.pan_kind_for_seg(segs[2], p) == "pan_down"   # dy>0 dominant
+    assert mp.pan_kind_for_seg(segs[3], p) == "pan_right"  # dx>0 dominant
     assert mp.pan_kind_for_seg(segs[4], p) == "zoom_out"   # static + zoom out
+    assert mp.pan_kind_for_seg(segs[5], p) == "pan_up"     # dy<0 dominant
+    assert mp.pan_kind_for_seg(segs[6], p) == "pan_left"   # dx<0 dominant
+    assert mp.pan_kind_for_seg(segs[7], p) == "zoom_in"
+    assert mp.pan_kind_for_seg(segs[8], p) == "pan_down"
 
 
 def test_mapping_cycles_strictly_from_first_beat():
     p = _preset()
     assert mp.map_segments_to_panels(4, p) == [0, 1, 2, 3]
-    # More panels than beats: the 4-beat pattern repeats continuously.
-    assert mp.map_segments_to_panels(6, p) == [0, 1, 2, 3, 0, 1]
-    assert mp.map_segments_to_panels(9, p) == [0, 1, 2, 3, 0, 1, 2, 3, 0]
+    # More panels than beats: the 8-beat pattern repeats continuously.
+    assert mp.map_segments_to_panels(16, p) == list(range(8)) * 2
+    assert mp.map_segments_to_panels(9, p) == [0, 1, 2, 3, 4, 5, 6, 7, 0]
     # Fewer panels than beats: truncate IN ORDER from beat 1 (never an
     # off-beat or mid-pattern start).
     assert mp.map_segments_to_panels(3, p) == [0, 1, 2]
@@ -130,8 +138,28 @@ def test_blur_resolve_never_reveals_empty_and_keeps_direction():
                              blur_background=True)
     assert r["kind"] == "pan_down"
     assert r["pan_y_px"] > 0  # downward preserved
-    assert abs(r["pan_y_px"]) <= 1920 * 0.08 + 1e-6
+    # The swept distance is a fixed fraction of the closer crop's hidden
+    # height. The old "never pan more than 8% of the canvas" clamp is gone: it
+    # was written for the bare contain-fit and would have neutralised the
+    # 2.0-2.2x framing entirely.
+    assert r["travel_px"] == round((r["panel_scale"] - 1.0) * 1920
+                                   * mp.PAN_TRAVEL_FRACTION)
     assert r["ndy"] == pytest.approx(150.0 / p.reference_height)
+    # Safety invariant for EVERY beat and panel shape: the renderer holds the
+    # foreground at canvas_h * panel_scale, so a vertical reveal can never
+    # exceed (panel_scale - 1) * canvas_h, and a lateral slide is bounded by
+    # LATERAL_SLIDE_FRACTION of the canvas width (the panel drifts over the
+    # blurred backdrop, which always fills the frame, so no empty area exists).
+    for seg in (p.segments or []):
+        for pw, ph in ((390, 800), (800, 1600), (900, 700), (200, 3000)):
+            rr = mp.resolve_for_panel(png_w=pw, png_h=ph, canvas_w=1080,
+                                      canvas_h=1920, seg=seg, preset=p,
+                                      blur_background=True)
+            assert abs(rr["pan_y_px"]) \
+                <= (rr["panel_scale"] - 1.0) * 1920 + 1
+            assert abs(rr["pan_x_px"]) \
+                <= mp.LATERAL_SLIDE_FRACTION * 1080 + 1
+            assert rr["travel_px"] >= 0
 
 
 def test_blur_static_seg_has_no_pan_but_keeps_zoom():
@@ -190,9 +218,9 @@ def test_timeline_threads_strict_cycle_and_preserves_rhythm(tmp_path: Path):
     tl = _timeline_with_preset(tmp_path, 9)
     assert len(tl.entries) == 9
     kinds = [e.pan.kind for e in tl.entries]
-    # The 4-beat cycle, repeated continuously in strict order.
-    assert kinds == ["zoom_in", "pan_down", "pan_up", "zoom_out",
-                     "zoom_in", "pan_down", "pan_up", "zoom_out",
+    # The 8-beat cycle, repeated continuously in strict order.
+    assert kinds == ["zoom_in", "pan_down", "pan_right", "zoom_out",
+                     "pan_up", "pan_left", "zoom_in", "pan_down",
                      "zoom_in"]
     # Longer beats stay long relative to shorter ones (rhythm preserved).
     durs = [e.duration_seconds for e in tl.entries]
@@ -205,11 +233,18 @@ def test_timeline_threads_strict_cycle_and_preserves_rhythm(tmp_path: Path):
 
 def test_default_video_config_enforces_the_cycle(tmp_path: Path):
     """The default pipeline now reproduces the strict cycle: every timeline
-    entry carries motion metadata and the kinds follow the 4-beat order."""
+    entry carries motion metadata and the kinds follow the 8-beat order."""
     tl = _timeline_with_preset(tmp_path, 4)
     assert [e.pan.kind for e in tl.entries] == \
-        ["zoom_in", "pan_down", "pan_up", "zoom_out"]
+        ["zoom_in", "pan_down", "pan_right", "zoom_out"]
     assert tl.entries[0].motion is not None
+    # Every shot is framed closer than the contain-fit, and the shot only
+    # sweeps a fraction of that crop so the camera drifts instead of racing.
+    for e in tl.entries:
+        assert e.motion["panel_scale"] == pytest.approx(
+            mp.NORMAL_PANEL_SCALE)
+        assert e.motion["pan_travel_frac"] == pytest.approx(
+            mp.PAN_TRAVEL_FRACTION)
 
 
 def test_motion_report_rows(tmp_path: Path):
@@ -298,29 +333,47 @@ def test_build_command_uses_cinematic_kind_when_preset_present():
 
 
 # ------------------------------------------------------- tall/long panels
-def test_resolve_tall_panel_is_closer_and_pan_only():
-    """A tall/long panel (aspect >= 1.5) is brought closer to 1.2x and MUST
-    reveal via a vertical pan only -- no zoom strength -- even when the cycle
-    beat was originally a zoom_in / zoom_out."""
+def test_resolve_tall_panel_is_closer_and_honours_the_beat():
+    """Narrow portrait art is framed at TALL_PANEL_SCALE and the BEAT chooses
+    the move.
+
+    The resolver used to hard-code `pan_down if beat even else pan_up` for tall
+    panels, which threw away every zoom and slide beat -- that is why a whole
+    recap slid only up and down. Travel is now only PAN_TRAVEL_FRACTION of the
+    hidden height, so the framing stays close while the camera drifts.
+    """
     p = _preset()
     segs = p.segments or []
-    zoom_in_seg = segs[0]    # beat 1 -> would normally be zoom_in
-    zoom_out_seg = segs[3]   # beat 4 -> would normally be zoom_out
-    r_in = mp.resolve_for_panel(
-        png_w=800, png_h=1600, canvas_w=1920, canvas_h=1080,
-        seg=zoom_in_seg, preset=p, blur_background=True)
-    r_out = mp.resolve_for_panel(
-        png_w=800, png_h=1600, canvas_w=1920, canvas_h=1080,
-        seg=zoom_out_seg, preset=p, blur_background=True)
-    for r in (r_in, r_out):
+    kw = dict(png_w=800, png_h=1600, canvas_w=1920, canvas_h=1080,
+              preset=p, blur_background=True)
+    hidden = (mp.TALL_PANEL_SCALE - 1.0) * 1080        # 1296px out of frame
+    v_travel = round(hidden * mp.PAN_TRAVEL_FRACTION)  # 454px swept
+    h_travel = round(1920 * mp.LATERAL_SLIDE_FRACTION)  # 154px sideways
+    r_zoom = mp.resolve_for_panel(seg=segs[0], **kw)    # zoom_in beat
+    r_vpan = mp.resolve_for_panel(seg=segs[1], **kw)    # pan_down beat
+    r_slide = mp.resolve_for_panel(seg=segs[2], **kw)   # pan_right beat
+    for r in (r_zoom, r_vpan, r_slide):
         assert r["tall_panel"] is True
-        assert r["panel_scale"] == pytest.approx(1.2)
-        assert r["zoom_strength"] == 0.0            # never a zoom animation
-        assert r["kind"] in ("pan_down", "pan_up")  # coerced to a pan
-        assert r["travel_px"] == round(0.2 * 1080)  # == 216px reveal
-    # Direction alternates on the beat parity (odd -> up, even -> down).
-    assert r_in["kind"] == "pan_up"
-    assert r_out["kind"] == "pan_down"
+        assert r["panel_scale"] == pytest.approx(mp.TALL_PANEL_SCALE)
+        assert r["pan_travel_frac"] == pytest.approx(mp.PAN_TRAVEL_FRACTION)
+        assert 0 <= r["travel_px"] <= max(hidden, h_travel)
+    # A zoom beat stays a zoom on tall art (previously coerced into a pan).
+    assert r_zoom["kind"] == "zoom_in"
+    assert r_zoom["travel_px"] == 0
+    assert r_zoom["zoom_strength"] > 0.0
+    # Vertical pan: swept fraction of the hidden height, direction from beat.
+    assert r_vpan["kind"] == "pan_down"
+    assert r_vpan["travel_px"] == v_travel
+    assert r_vpan["pan_y_px"] == pytest.approx(float(v_travel))
+    # Lateral slide: whole-panel drift over the blurred backdrop.
+    assert r_slide["kind"] == "pan_right"
+    assert r_slide["travel_px"] == h_travel
+    assert r_slide["pan_x_px"] == pytest.approx(float(h_travel))
+    assert r_slide["pan_y_px"] == 0.0
+    # Direction comes from the beat, never from parity.
+    r_up = mp.resolve_for_panel(seg=segs[4], **kw)      # pan_up beat
+    assert r_up["kind"] == "pan_up"
+    assert r_up["pan_y_px"] < 0
 
 
 def test_resolve_normal_panel_is_not_tall():
@@ -330,7 +383,10 @@ def test_resolve_normal_panel_is_not_tall():
         png_w=1000, png_h=1000, canvas_w=1920, canvas_h=1080,
         seg=seg, preset=p, blur_background=True)
     assert r["tall_panel"] is False
-    assert r["panel_scale"] == pytest.approx(1.0)
+    # Wide art gets its own closer framing too (not the bare contain-fit):
+    # the blurred pillars around a contain-fit panel are what read as "blank
+    # space around the manhwa".
+    assert r["panel_scale"] == pytest.approx(mp.NORMAL_PANEL_SCALE)
     assert r["kind"] == "zoom_in"
     assert r["zoom_strength"] > 0.0
 
@@ -367,8 +423,9 @@ def test_build_command_tall_panel_closer_and_no_zoom():
 
 # ------------------------------------------------- super-tall split layout
 def test_resolve_super_tall_panel_splits_side_by_side():
-    """An 8:1 strip is too thin to read at 1.2x, so it splits into two bands
-    shown side by side (whole panel ~2x closer at once, static, no pan)."""
+    """An 8:1 strip is too thin to read even closer, so it splits into two
+    bands shown side by side (whole panel SPLIT_CLOSENESS x closer at once,
+    static, no overlay pan -- the bands drift per-band in the renderer)."""
     p = _preset()
     seg = (p.segments or [])[0]
     r = mp.resolve_for_panel(
@@ -381,7 +438,10 @@ def test_resolve_super_tall_panel_splits_side_by_side():
     assert r["zoom_strength"] == 0.0       # never a zoom
     assert r["split_dir"] == 1             # first split panel default
     assert r["split_gap_frac"] == pytest.approx(0.05)
-    assert r["split_pan_frac"] == pytest.approx(0.15)
+    # SPLIT_CLOSENESS is the requested whole-panel closeness; the per-band
+    # overflow follows from it (2.5 / 2 bands - 1 = 0.25, was 0.15).
+    assert r["split_pan_frac"] == pytest.approx(
+        mp.SPLIT_CLOSENESS / mp.SPLIT_COLUMNS - 1.0)
     # composite (two 800x3197 bands side by side) contained to 1920x1080:
     # ~540 wide (side pillars remain), ~1080 tall.
     assert 500 <= r["scaled_w"] <= 600
@@ -391,14 +451,19 @@ def test_resolve_super_tall_panel_splits_side_by_side():
 
 def test_resolve_moderately_tall_panel_not_split():
     p = _preset()
-    seg = (p.segments or [])[0]
-    r = mp.resolve_for_panel(
-        png_w=800, png_h=1645, canvas_w=1920, canvas_h=1080,  # 2.06:1 < 3.0
-        seg=seg, preset=p, blur_background=True)
+    segs = p.segments or []
+    kw = dict(png_w=800, png_h=1645, canvas_w=1920, canvas_h=1080,
+              preset=p, blur_background=True)  # 2.06:1 < SPLIT_MIN_ASPECT 3.0
+    r = mp.resolve_for_panel(seg=segs[0], **kw)
     assert r["split_columns"] == 0
-    assert r["tall_panel"] is True         # still the 1.2x + pan path
-    assert r["panel_scale"] == pytest.approx(1.2)
-    assert r["kind"] in ("pan_down", "pan_up")
+    assert r["tall_panel"] is True             # still the closer + pan path
+    assert r["panel_scale"] == pytest.approx(mp.TALL_PANEL_SCALE)
+    assert r["kind"] == "zoom_in"              # beat 1 honoured, not coerced
+    r2 = mp.resolve_for_panel(seg=segs[1], **kw)   # beat 2 is a vertical pan
+    assert r2["split_columns"] == 0
+    assert r2["kind"] == "pan_down"
+    assert r2["travel_px"] == round((mp.TALL_PANEL_SCALE - 1.0) * 1080
+                                    * mp.PAN_TRAVEL_FRACTION)
 
 
 def test_blur_chain_split_has_gap_and_overlays_on_bg():
@@ -438,6 +503,26 @@ def test_blur_chain_split_supersamples_for_smoothness():
     # vh=round(1080*4)=4320, bh=round(1080*1.15*4)=4968, travel=648
     assert "crop=iw:4320:0:'648.000*t/6.000'[cd0_0]" in chain
     assert "[cd0_0]scale=-2:1080:flags=lanczos[vp0_0]" in chain
+
+
+def test_blur_chain_lateral_uses_resolver_travel():
+    """pan_left/pan_right travel comes from the resolver's pan_x_px, which
+    already includes PAN_TRAVEL_FRACTION -- multiplying it a second time made
+    the slide imperceptible (54px instead of 154px). Same for the vertical
+    reveal: a supplied pan_y_px wins over the derived fallback."""
+    right = _blur_bg_chain(0, 1920, 1080, 40.0, dur=2.0, kind="pan_right",
+                           pan_x=154.0, pan_frac=1.2, pan_travel_frac=0.35)
+    assert "x='(W-w)/2-154.000+308.000*t/2.000'" in right
+    left = _blur_bg_chain(0, 1920, 1080, 40.0, dur=2.0, kind="pan_left",
+                          pan_x=-154.0, pan_frac=1.2, pan_travel_frac=0.35)
+    assert "x='(W-w)/2+154.000-308.000*t/2.000'" in left
+    down = _blur_bg_chain(0, 1920, 1080, 40.0, dur=2.0, kind="pan_down",
+                          pan_y=454.0, pan_frac=1.2, pan_travel_frac=0.35)
+    assert "y='(H-h)/2+454.000-454.000*t/2.000'" in down
+    # Legacy timeline entry with no per-panel travel keeps the derived form.
+    legacy = _blur_bg_chain(0, 1920, 1080, 40.0, dur=2.0, kind="pan_down",
+                            pan_frac=1.2, pan_travel_frac=0.35)
+    assert "y='(H-h)/2+453.600-453.600*t/2.000'" in legacy
 
 
 def test_build_command_super_tall_uses_split():

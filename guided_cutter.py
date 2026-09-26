@@ -111,7 +111,17 @@ class CutterConfig:
     output_width: int = 390
     min_output_height: int = 760
     max_output_height: int = 800
+    # Center-pad a short panel with black up to min_output_height. Off by
+    # default: it manufactured the dead space trim_flat_margins exists to
+    # remove (a 390x380 crop became a 390x760 image that is 50% black).
+    pad_short_panels: bool = False
     normalize_output: bool = True  # False restores legacy full-res crops
+    # Blank-margin trim: drop the flat white/black gutters that the boundary
+    # snap drags into the crop (and the black padding this stage used to add)
+    # so the art fills the frame instead of the video panning across dead
+    # space. Deterministic, capped at 25% per dimension; see
+    # trim_flat_margins. False keeps the crop exactly as snapped.
+    trim_margins: bool = True
     # Structure-first mode (fallback-provenance plans): a boundary is never
     # dropped just because no strict gutter run exists between two entries.
     # AI plans keep merge-on-continuous-art; valley/fallback plans keep every
@@ -176,7 +186,7 @@ class CutPanel(BaseModel):
     context_only: bool = False
 
     @model_validator(mode="after")
-    def _context_only_must_not_be_blank(self) -> "CutPanel":
+    def _context_only_must_not_be_blank(self) -> CutPanel:
         # context_only=True means "kept for story context, skipped by
         # narration/TTS/timeline" — the narration field is INTENTIONALLY
         # retained as context, so a non-empty narration here is correct,
@@ -222,19 +232,81 @@ def row_edge_density(gray: np.ndarray, y0: int, y1: int) -> np.ndarray:
     return mag[y0:y1].mean(axis=1)
 
 
+def trim_flat_margins(piece: Image.Image, *,
+                      tol: int = 14,
+                      max_fraction: float = 0.25,
+                      min_band: int = 8,
+                      min_keep: int = 64) -> tuple[Image.Image, dict[str, int]]:
+    """Deterministically drop uniform blank bands from the edges of a crop.
+
+    Why: scanlated pages carry wide flat gutters (white or black) and the
+    boundary snap routinely lands just OUTSIDE them, so the saved panel PNG
+    ships with dead space baked in. Measured on two real chapters, ~15% of all
+    panel pixels were flat margin and 85% of panels carried more than 120px of
+    it -- which shrinks the art on screen and forces the camera to travel
+    further to cover the same story beats.
+
+    A band is trimmed only when EVERY pixel of that row/column is flat within
+    `tol` per channel, so real artwork (which always has some edge somewhere in
+    a full-width line) survives. Guards: never take more than `max_fraction`
+    from one dimension, always keep at least `min_keep` pixels of the other
+    dimension, and ignore sub-`min_band` noise so near-clean crops are
+    untouched. Fully-blank crops collapse to `min_keep` and are handled by the
+    blank detector as before.
+
+    Returns (image, removed_px) where removed_px has left/right/top/bottom.
+    """
+    if piece.width <= 0 or piece.height <= 0:
+        raise ValueError("cannot trim an empty panel image")
+    arr = np.asarray(piece.convert("RGB"))
+    h, w, _ = arr.shape
+    # per-column / per-row channel spread across the whole line
+    flat_col = (arr.max(axis=(0, 2)) - arr.min(axis=(0, 2))) <= tol
+    flat_row = (arr.max(axis=(1, 2)) - arr.min(axis=(1, 2))) <= tol
+    lim_x, lim_y = int(w * max_fraction), int(h * max_fraction)
+
+    left = 0
+    while left < lim_x and left < w - min_keep and flat_col[left]:
+        left += 1
+    right = 0
+    while right < lim_x and right < w - min_keep - left and flat_col[w - 1 - right]:
+        right += 1
+    top = 0
+    while top < lim_y and top < h - min_keep and flat_row[top]:
+        top += 1
+    bottom = 0
+    while (bottom < lim_y and bottom < h - min_keep - top
+           and flat_row[h - 1 - bottom]):
+        bottom += 1
+
+    removed = {"left": left, "right": right, "top": top, "bottom": bottom}
+    if left + right + top + bottom < min_band:
+        return piece, {k: 0 for k in removed}
+    box = (left, top, w - right, h - bottom)
+    return piece.crop(box), removed
+
+
 def normalize_panel_image(piece: Image.Image, *,
                           output_width: int = 390,
                           min_output_height: int = 760,
-                          max_output_height: int = 800) -> Image.Image:
-    """Normalize one source crop to 390x[760,800] — or keep it FULL-RES
-    when it is a continuous-art mega-panel.
+                          max_output_height: int = 800,
+                          pad_short: bool = False) -> Image.Image:
+    """Normalize one source crop to `output_width` px wide -- or keep it
+    FULL-RES when it is a continuous-art mega-panel.
 
-    Step 1: aspect-preserving resize so the width is exactly `output_width`
-    (LANCZOS; height rounded to the nearest int, minimum 1px). Step 2: if
-    the resized height is below `min_output_height`, center-pad with black
-    to the min. Otherwise the resized image is returned unchanged.
+    Aspect-preserving resize so the width is exactly `output_width` (LANCZOS;
+    height rounded to the nearest int, minimum 1px). Panels taller than
+    `max_output_height` are NOT cropped: the ORIGINAL full-resolution piece is
+    returned so the video can pan through all of it (see the note below).
 
-    NEVER center-crops — and returns the ORIGINAL full-resolution piece
+    `pad_short=True` restores the old behaviour of center-padding a short panel
+    with black up to `min_output_height`. It now defaults to False: measured on
+    real cuts, that padding was the single biggest source of dead space (a
+    390x380 panel became 390x760, i.e. 50% black), and the renderer sizes each
+    shot from its own output_width/output_height, so a short panel simply shows
+    short instead of arriving letterboxed.
+
+    NEVER center-crops -- and returns the ORIGINAL full-resolution piece
     when the resize would exceed `max_output_height`. Such panels are
     mega-groups that `_split_panel` kept whole on purpose (no structurally
     valid internal gutter — continuous action art). The video stage pans
@@ -260,7 +332,7 @@ def normalize_panel_image(piece: Image.Image, *,
         # full-resolution crop so the render pans through all of it.
         return piece
     resized = piece.resize((output_width, scaled_h), Image.Resampling.LANCZOS)
-    if scaled_h < min_output_height:
+    if pad_short and scaled_h < min_output_height:
         canvas = Image.new("RGB", (output_width, min_output_height), (0, 0, 0))
         canvas.paste(resized, (0, (min_output_height - scaled_h) // 2))
         return canvas
@@ -1106,19 +1178,35 @@ def guided_cut(strip_path: str | Path, plan: PanelPlan, out_dir: str | Path,
             continue
         # Output-size policy: keep the full-resolution source crop for
         # geometry/scoring, then normalize ONLY the PNG written to disk to
-        # exactly 390px wide with height in [760, 800]px. Source
-        # coordinates (y_start/y_end, artifact width/height) are untouched.
+        # exactly 390px wide. Source coordinates (y_start/y_end, artifact
+        # width/height) are untouched.
         out_piece = piece
+        trim: dict[str, int] = {}
+        # The trim is only valid in normalized mode, where the resulting bytes
+        # are recorded as output_width/output_height. In legacy mode those stay
+        # None and recap_video derives the pan geometry from y_end - y_start,
+        # so a trimmed PNG would silently disagree with the travel it is given.
+        # Legacy therefore means "crop exactly as snapped".
+        if config.trim_margins and config.normalize_output:
+            out_piece, trim = trim_flat_margins(out_piece)
         if config.normalize_output:
             out_piece = normalize_panel_image(
-                piece,
+                out_piece,
                 output_width=config.output_width,
                 min_output_height=config.min_output_height,
-                max_output_height=config.max_output_height)
+                max_output_height=config.max_output_height,
+                pad_short=config.pad_short_panels)
             c = c.model_copy(update={
                 "output_width": out_piece.width,
                 "output_height": out_piece.height})
         out_piece.save(dest, "PNG")
+        if any(trim.values()):
+            log.info("panel %s: trimmed blank margin L%d R%d T%d B%d "
+                     "(%dx%d -> %dx%d)", c.id,
+                     trim.get("left", 0), trim.get("right", 0),
+                     trim.get("top", 0), trim.get("bottom", 0),
+                     piece.width, piece.height,
+                     out_piece.width, out_piece.height)
         log.debug("saved panel %s y=[%d,%d] source=%dx%d output=%dx%d",
                   c.id, y0, y1, piece.width, piece.height,
                   out_piece.width, out_piece.height)

@@ -85,16 +85,20 @@ class Harness:
     """
 
     VISION_MARK = "You are narrating ONE cropped comic/manhwa panel"
+    IMAGE_SEED_MARK = "contact-sheet"
     SEED_USER_MARK = "Panel text in order:"
     SCRIPT_USER_MARK = "Write the recap narration for this chapter"
 
     def __init__(self, vision_texts: list[str], seed_text: str = SEED_JSON,
-                 script_text: str = "not-a-lines-response"):
+                 script_text: str = "not-a-lines-response",
+                 image_seed_text: str = SEED_JSON):
         self.vision_texts = list(vision_texts)
         self.seed_text = seed_text
         self.script_text = script_text
+        self.image_seed_text = image_seed_text
         self.vision_calls: list[dict] = []
         self.seed_calls: list[str] = []
+        self.image_seed_calls: list[dict] = []
         self.script_calls: list[str] = []
 
     def request_fn(self, model: str, prompt: str, third: str = "") -> str:
@@ -104,6 +108,9 @@ class Harness:
             if not self.vision_texts:
                 raise RuntimeError("no scripted vision response")
             return self.vision_texts.pop(0)
+        if self.IMAGE_SEED_MARK in prompt:
+            self.image_seed_calls.append({"model": model, "b64": third[:16]})
+            return self.image_seed_text
         if self.SEED_USER_MARK in third:
             self.seed_calls.append(third)
             return self.seed_text
@@ -196,7 +203,7 @@ def test_seed_failure_is_non_fatal(session):
 
     h = Boom([_vision_response("No memory narration.", ""),
               _vision_response("Still narrates.", "")])
-    summary = _narrate(session, h, call_id="boom")
+    summary = _narrate(session, h, call_id="boom", seed_cast_from_images=False)
     assert summary["narrated"] == 2
     # memory field present (seed failed -> False)
     assert "story_memory" in summary
@@ -246,3 +253,58 @@ def test_chapter_script_pass_runs_after_narration(session, monkeypatch):
     assert summary["script_pass"]["status"] == "built"
     # narration.txt comes from the script pass
     assert (session / "narration.txt").read_text("utf-8") == "Hook."
+
+
+# --------------------------------------------------- vision cast survey (seed)
+@pytest.fixture()
+def empty_session(tmp_path: Path) -> Path:
+    """A fresh cut: no dialogue/narration yet, so the text seed is empty."""
+    panels = [_panel(1), _panel(2)]
+    art = CutArtifact(source="strip.png", width=800, height=1600,
+                      plan_hash="x", config={}, panels=panels)
+    (tmp_path / "panels.json").write_text(art.model_dump_json(), "utf-8")
+    for p in panels:
+        Image.new("RGB", (800, 800), "white").save(tmp_path / p.image_file)
+    return tmp_path
+
+
+def test_image_seed_fires_when_panels_have_no_text(empty_session):
+    h = Harness([_vision_response("A boy stands at a gate.", ""),
+                 _vision_response("The boy runs.", "")],
+                image_seed_text=SEED_JSON)
+    summary = _narrate(empty_session, h, call_id="imgseed")
+    assert summary["narrated"] == 2
+    # no panel text -> the text seed made NO model call at all
+    assert h.seed_calls == []
+    # exactly ONE vision cast-survey over the contact sheet
+    assert len(h.image_seed_calls) == 1
+    ctx = json.loads(
+        (empty_session / "story_context.json").read_text("utf-8"))
+    assert "Bam" in ctx["characters"]
+    assert ctx["_meta"]["image_seed_built"] is True
+    # the surveyed cast reached the 2nd panel's memory-augmented prompt
+    assert "[STORY MEMORY" in h.vision_calls[1]["prompt"]
+    assert "Bam" in h.vision_calls[1]["prompt"]
+
+
+def test_image_seed_skipped_when_text_present(session):
+    h = Harness([_vision_response("Bam stands.", ""),
+                 _vision_response("Bam runs.", "")])
+    _narrate(session, h, call_id="imgskip")
+    # panels carry dialogue -> text seed succeeds -> no extra vision call
+    assert len(h.seed_calls) == 1
+    assert h.image_seed_calls == []
+
+
+def test_image_seed_failure_is_non_fatal(empty_session):
+    h = Harness([_vision_response("No memory.", ""),
+                 _vision_response("Narrates anyway.", "")],
+                image_seed_text="this is not json")
+    summary = _narrate(empty_session, h, call_id="imgboom")
+    assert summary["narrated"] == 2
+    assert len(h.image_seed_calls) == 1
+    ctx = json.loads(
+        (empty_session / "story_context.json").read_text("utf-8"))
+    # unparseable survey leaves the cast empty (retryable) but never crashes
+    assert ctx["characters"] == {}
+    assert ctx["_meta"]["image_seed_built"] is not True

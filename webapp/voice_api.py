@@ -24,7 +24,7 @@ from fastapi import HTTPException
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 OUTPUT_DIR = Path(os.environ.get("RECAP_OUTPUT_DIR") or BASE_DIR / "webapp_output")
-PROVIDERS = ("kokoro", "none")
+PROVIDERS = ("kokoro", "edge", "none")
 
 DEFAULT_VOICE = {
     "provider": "kokoro",
@@ -64,6 +64,47 @@ KOKORO_VOICES = [
 
 SAMPLE_TEXT = ("The protagonist suddenly realizes something is wrong. "
                "The city will never be the same again.")
+
+DEFAULT_EDGE_VOICE = "en-US-AriaNeural"
+
+# Common Microsoft Edge neural voices (cloud TTS). The dispatcher in
+# adapters.tts routes provider=="edge" to adapters.tts_edge. An Edge voice id
+# MUST end in "Neural": handing edge-tts a Kokoro id (af_heart) makes it fail
+# with no audio (see the project pitfall notes), so we never let a stored
+# provider/voice pair disagree.
+EDGE_VOICES = [
+    {"id": "en-US-AriaNeural", "shortname": "Aria", "gender": "Female",
+     "locale": "en-US", "language": "en"},
+    {"id": "en-US-GuyNeural", "shortname": "Guy", "gender": "Male",
+     "locale": "en-US", "language": "en"},
+    {"id": "en-US-JennyNeural", "shortname": "Jenny", "gender": "Female",
+     "locale": "en-US", "language": "en"},
+    {"id": "en-US-ChristopherNeural", "shortname": "Christopher",
+     "gender": "Male", "locale": "en-US", "language": "en"},
+    {"id": "en-GB-SoniaNeural", "shortname": "Sonia", "gender": "Female",
+     "locale": "en-GB", "language": "en"},
+    {"id": "en-GB-RyanNeural", "shortname": "Ryan", "gender": "Male",
+     "locale": "en-GB", "language": "en"},
+]
+
+
+def _is_edge_voice(voice: str) -> bool:
+    """Edge ids always end in 'Neural'; Kokoro ids never do."""
+    return isinstance(voice, str) and voice.endswith("Neural")
+
+
+def _cohere_voice(provider: str, voice: str) -> str:
+    """Return a voice valid for ``provider``.
+
+    Keeps a stored (provider, voice) pair coherent so edge never receives a
+    Kokoro id (silent failure) and Kokoro never receives a *Neural id.
+    """
+    v = (voice or "").strip()
+    if provider == "edge":
+        return v if _is_edge_voice(v) else DEFAULT_EDGE_VOICE
+    if provider == "kokoro":
+        return "af_heart" if (not v or _is_edge_voice(v)) else v
+    return v or DEFAULT_VOICE["voice"]
 
 
 def _session_dir(session: str, *, create: bool = False) -> Path:
@@ -133,12 +174,12 @@ def get_voice(session: str) -> dict:
                 if k in loaded:
                     with contextlib.suppress(HTTPException):
                         cfg[k] = _coerce_voice_value(k, loaded[k])
-    # Migrate legacy cloud providers to local Kokoro on read (never persist
-    # here; put_voice normalizes on the next save).
+    # Migrate unknown/legacy providers to a valid one on read, then keep the
+    # (provider, voice) pair coherent so a stored edge config never carries a
+    # Kokoro voice id (which makes cloud TTS fail with no audio).
     if cfg.get("provider") not in PROVIDERS:
         cfg["provider"] = "kokoro"
-    if not (cfg.get("voice") or "").strip():
-        cfg["voice"] = DEFAULT_VOICE["voice"]
+    cfg["voice"] = _cohere_voice(cfg["provider"], cfg.get("voice", ""))
     return cfg
 
 
@@ -151,6 +192,9 @@ def put_voice(session: str, cfg: dict) -> dict:
     for k in DEFAULT_VOICE:
         if k in cfg:
             cur[k] = _coerce_voice_value(k, cfg[k])
+    # Never persist a broken provider/voice pair (edge + af_heart, etc.).
+    cur["voice"] = _cohere_voice(cur.get("provider", "kokoro"),
+                                  cur.get("voice", ""))
     p = _session_dir(session, create=True) / "voice.json"
     tmp = p.with_suffix(".tmp")
     tmp.write_text(json.dumps(cur, indent=2), "utf-8")
@@ -166,10 +210,14 @@ def put_voice(session: str, cfg: dict) -> dict:
 
 
 async def list_voices(provider: str = "kokoro") -> dict:
-    if provider != "kokoro":
+    if provider == "edge":
+        voices = sorted(EDGE_VOICES,
+                        key=lambda v: (v["language"], v["shortname"]))
+    elif provider == "kokoro":
+        voices = sorted(KOKORO_VOICES,
+                        key=lambda v: (v["language"], v["shortname"]))
+    else:
         raise HTTPException(400, f"provider {provider!r} exposes no catalogue")
-    voices = sorted(KOKORO_VOICES,
-                    key=lambda v: (v["language"], v["shortname"]))
     return {"provider": provider, "count": len(voices), "voices": voices}
 
 
@@ -185,23 +233,40 @@ def _speed_value(cfg: dict) -> float:
 async def _preview_mp3(session: str, cfg: dict, text: str) -> Path:
     from . import tts_helpers
 
+    provider = cfg.get("provider") or "kokoro"
     d = _session_dir(session, create=True)
     pre = d / ".previews"
     pre.mkdir(exist_ok=True)
-    voice = (cfg.get("voice") or DEFAULT_VOICE["voice"]).strip()
-    speed = _speed_value(cfg)
+    raw_voice = (cfg.get("voice") or "").strip()
+    if provider == "edge":
+        voice = _cohere_voice("edge", raw_voice)
+        rate = f"{int(cfg.get('rate', 0) or 0):+d}%"
+        pitch = f"{int(cfg.get('pitch', 0) or 0):+d}Hz"
+        speed = 1.0
+    else:
+        voice = _cohere_voice("kokoro", raw_voice)
+        rate = pitch = ""
+        speed = _speed_value(cfg)
     text = (text or "").strip() or SAMPLE_TEXT
     key = hashlib.sha1(
-        f"kokoro|{voice}|{speed}|{text}".encode()
+        f"{provider}|{voice}|{rate}|{pitch}|{text}".encode()
     ).hexdigest()[:16]
     out = pre / f"ui-{key}.mp3"
     if out.is_file():
         return out
     try:
-        # tts_helpers resolves Kokoro weights (or raises with fetch
-        # instructions).
-        await tts_helpers.synth_one(text, voice, out, speed=speed,
-                                    timeout_s=180)
+        if provider == "edge":
+            # Cloud call: only taken when the user explicitly picked edge.
+            await tts_helpers.synth_one_edge(text, voice, out,
+                                             rate=rate, pitch=pitch,
+                                             timeout_s=180)
+        else:
+            # tts_helpers resolves Kokoro weights (or raises with fetch
+            # instructions).
+            await tts_helpers.synth_one(text, voice, out, speed=speed,
+                                        timeout_s=180)
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(502, f"preview synthesis failed: {exc}") from exc
     # prune old previews (keep newest 30 by mtime)

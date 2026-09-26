@@ -232,6 +232,30 @@ def set_style(session: str, style: str) -> dict:
     return get_narration(session)
 
 
+def _regen_system(first_panel: bool = False) -> str:
+    """Narrator persona + pipeline contract for single-panel regen.
+
+    first_panel marks the chapter's opening image — the only place the
+    SWEAR BUDGET allows severe profanity (it is heard inside the video's
+    first seconds); every other line sticks to occasional mild curses.
+    """
+    from narrator_prompt import NARRATOR_STYLE_PROMPT
+    if first_panel:
+        swear = ("SWEAR BUDGET: this IS the video's opening line, the only "
+                 "place severe profanity (fuck/shit/etc.) is allowed.")
+    else:
+        swear = ("SWEAR BUDGET: severe profanity (fuck/shit/etc.) is "
+                 "allowed ONLY in the video's opening line; this line may "
+                 "use at most an occasional mild curse (damn/hell/crap), "
+                 "never a severe one.")
+    return NARRATOR_STYLE_PROMPT + (
+        "\n\nPIPELINE CONTRACT (overrides any conflicting instruction "
+        "above): You are rewriting the narrator line for ONE panel of a "
+        "manhwa recap. Use ONLY the provided OCR text. Exactly 1 line, "
+        "1-2 short sentences. Output ONLY JSON. The line goes straight "
+        "into TTS: never emit censor placeholders like [__]. " + swear)
+
+
 def regenerate(session: str, panel_id: str, *, api_key: str = "",
                model: str = "") -> dict:
     """Regenerate ONE panel's narration; stores it as an override.
@@ -246,6 +270,9 @@ def regenerate(session: str, panel_id: str, *, api_key: str = "",
     panel = next((p for p in state["panels"] if p["id"] == panel_id), None)
     if panel is None:
         raise HTTPException(404, "panel is deleted; restore it first")
+    # state["panels"] keeps video order (deleted ones dropped): [0] is the
+    # opening image whose line is heard in the video's first seconds.
+    first_panel_id = state["panels"][0]["id"]
 
     from adapters import ai_models as _ai
     key = api_key or _ai.api_key_from_env() or ""
@@ -289,8 +316,7 @@ def regenerate(session: str, panel_id: str, *, api_key: str = "",
     with _regenerate_lock:
         try:
             outcome = _ai.generate_text_with_fallback(
-                "You are the narrator for a recap video of a manhwa chapter. "
-                "Use ONLY the provided OCR text. Output ONLY JSON.",
+                _regen_system(panel_id == first_panel_id),
                 request, operation=f"narration-regenerate:{panel_id}",
                 api_key=key,
                 primary_model=model or _ai.PRIMARY_MODEL)

@@ -40,13 +40,16 @@ from story_context import (
     ENTITIES_RULE,
     ENTITIES_SCHEMA_FRAGMENT,
     build_seed_context,
+    build_seed_context_from_images,
     extract_entities_from_response,
     inject_into_prompt,
     make_text_model_call,
+    make_vision_seed_call,
     prompt_sha,
     scrub_fences,
     update_context,
 )
+from text_clean import clean_text
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +101,49 @@ def _image_sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def _build_contact_sheet(session: Path, panels, *, max_panels: int = 24,
+                         cell_w: int = 320, cell_h: int = 460) -> bytes | None:
+    """Grid of downscaled panel thumbnails (PNG bytes) for ONE cast-survey
+    vision call. Bounded to `max_panels`; returns None when PIL or the images
+    are unavailable so the caller can fall back to no memory (never fatal)."""
+    try:
+        from io import BytesIO
+
+        from PIL import Image
+    except ImportError:
+        return None
+    thumbs = []
+    for p in list(panels)[:max_panels]:
+        path = session / p.image_file
+        if not path.is_file():
+            continue
+        try:
+            im = Image.open(path)
+            im.load()
+            im.thumbnail((cell_w, cell_h))
+            if im.mode != "RGB":
+                im = im.convert("RGB")
+            thumbs.append(im)
+        except Exception as exc:  # noqa: BLE001 - one bad image can't kill it
+            log.warning("[AI] contact-sheet skipped %s: %s", p.image_file, exc)
+    if not thumbs:
+        return None
+    cols = min(4, len(thumbs))
+    rows = (len(thumbs) + cols - 1) // cols
+    gap = 8
+    sheet = Image.new(
+        "RGB", (cols * cell_w + (cols + 1) * gap,
+                rows * cell_h + (rows + 1) * gap), (255, 255, 255))
+    for i, im in enumerate(thumbs):
+        r, c = divmod(i, cols)
+        x = gap + c * (cell_w + gap) + (cell_w - im.width) // 2
+        y = gap + r * (cell_h + gap) + (cell_h - im.height) // 2
+        sheet.paste(im, (x, y))
+    buf = BytesIO()
+    sheet.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 def narrate_cropped_panels(
     session_dir: str | Path,
     *,
@@ -109,6 +155,7 @@ def narrate_cropped_panels(
     gap_s: float = 1.0,
     cache_dir: str | Path | None = None,
     request_fn: Callable[..., str] | None = None,
+    seed_cast_from_images: bool = True,
 ) -> dict[str, Any]:
     """Fill narration/dialogue for cropped panels via Agnes (primary ->
     fallback).
@@ -137,6 +184,11 @@ def narrate_cropped_panels(
     cache_root = Path(cache_dir) if cache_dir is not None else (
         Path(__file__).resolve().parent.parent / ".cache" / "ai-narration")
     cache_root.mkdir(parents=True, exist_ok=True)
+    # `key` is only an existence check (api_key_from_env returns the first).
+    # Every downstream call gets the ORIGINAL api_key (None for the CLI), so
+    # ai_models.api_key_pool(None) expands to the full AGNES_API_KEY +
+    # AGNES_API_KEYS pool and rotates across keys on 429s. Passing a resolved
+    # single key here would collapse the pool to one key.
     key = api_key or _ai.api_key_from_env()
     if not key and request_fn is None:
         raise RuntimeError(
@@ -152,13 +204,31 @@ def narrate_cropped_panels(
         ctx = build_seed_context(
             panels_for_seed, session,
             model_call=make_text_model_call(
-                api_key=key, base_url=base_url, model=model,
+                api_key=api_key, base_url=base_url, model=model,
                 request_fn=request_fn),
             series_title=artifact.source,
             force_rebuild=False)
     except Exception as exc:  # noqa: BLE001 - memory is an enhancement
         log.warning("[AI] story-context seed skipped (%s); narrating "
                     "without memory", exc)
+
+    # Fresh-cut fallback: when the text seed found no cast (empty dialogue on a
+    # first pass), run ONE vision cast-survey over a contact-sheet so even the
+    # opening panels get named continuity. Skipped when a roster already exists
+    # or no vision backend is available; failure is never fatal.
+    if seed_cast_from_images and (key or request_fn) and \
+            not (ctx.get("characters") or ctx.get("locations")):
+        try:
+            sheet = _build_contact_sheet(session, artifact.panels)
+            if sheet is not None:
+                ctx = build_seed_context_from_images(
+                    base64.b64encode(sheet).decode("ascii"), session,
+                    vision_call=make_vision_seed_call(
+                        api_key=api_key, base_url=base_url, model=model,
+                        request_fn=request_fn),
+                    series_title=artifact.source, force_rebuild=force)
+        except Exception as exc:  # noqa: BLE001 - image seed is an enhancement
+            log.warning("[AI] image cast seed skipped (%s)", exc)
 
     summary: dict[str, Any] = {
         "panels": len(artifact.panels), "narrated": 0, "cached": 0,
@@ -209,11 +279,31 @@ def narrate_cropped_panels(
                 outcome = _ai.generate_vision_with_fallback(
                     final_prompt, b64,
                     operation=f"ai-narrate:{panel.id}",
-                    api_key=key, base_url=base_url,
+                    api_key=api_key, base_url=base_url,
                     primary_model=model or _ai.PRIMARY_MODEL,
+                    # These are reasoning models: they spend part of the
+                    # completion budget on hidden reasoning_content before any
+                    # visible text. At the 2048 default a panel could come
+                    # back HTTP 200 with content == "" and be recorded as a
+                    # failure (losing its caption, which later starves the
+                    # script pass of lines to speak). The cache key is
+                    # image+prompt+models, so raising this only affects panels
+                    # that never cached (i.e. exactly those failures).
+                    max_tokens=6000,
                     request_fn=request_fn)
                 narration, dialogue = _parse_narration(outcome.result)
                 narration = scrub_fences(narration)      # TTS safety net
+                # English-only before it is cached: the vision model sometimes
+                # transcribes untranslated bubbles (or emits mojibake for them)
+                # and edge-tts would read those characters literally. Cleaning
+                # here means the cache stores speakable text; the PANEL
+                # NARRATION PROMPT itself is deliberately untouched because the
+                # cache key hashes it -- rewording it would re-spend every
+                # caption in every chapter for no extra safety.
+                narration, dialogue, dropped = clean_text(narration, dialogue)
+                if dropped:
+                    log.info("[AI] panel %s dropped %d non-English bubble "
+                             "segment(s) from TTS text", panel.id, dropped)
                 used, fb = outcome.model_used, outcome.fallback_used
                 # Merge the optional entities update into memory (best
                 # effort; a malformed block never kills the narration).
@@ -272,12 +362,17 @@ def narrate_cropped_panels(
     script_summary: dict[str, Any] = {}
     try:
         from recap_script import build_chapter_script
+        # Deliberately NOT passing model_call: make_text_model_call is the
+        # story-memory SEED adapter (it sends `_SEED_SYSTEM` as the system
+        # prompt with the default output budget), so handing it to the script
+        # pass replaced the narrator persona contract with the seed contract
+        # and capped the response at 4096 tokens -- far too small for the
+        # one-line-per-panel script. Without it, recap_script uses its own
+        # SYSTEM_PROMPT + SCRIPT_MAX_TOKENS and expands the key pool itself
+        # (api_key stays None, so rotation across accounts keeps working).
         script_summary = build_chapter_script(
-            session, api_key=key, base_url=base_url, model=model,
+            session, api_key=api_key, base_url=base_url, model=model,
             request_fn=request_fn,
-            model_call=make_text_model_call(
-                api_key=key, base_url=base_url, model=model,
-                request_fn=request_fn) if (key or request_fn) else None,
             force=force) or {}
         summary["script_pass"] = script_summary
         script_text_val = script_summary.get("text")

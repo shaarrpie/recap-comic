@@ -39,9 +39,18 @@ class RenderWorker:
     def __init__(self, job_id: str, build_cmd, out_path: Path,
                  on_done=None, stall_seconds: int = 90,
                  cancel_event: threading.Event | None = None,
-                 owns_render_slot: bool = True):
+                 owns_render_slot: bool = True,
+                 progress_cb=None, total_seconds: float | None = None):
         self.job_id, self.on_done = job_id, on_done
         self.build_cmd = build_cmd
+        # Optional live progress: progress_cb(fraction) fired from the stderr
+        # drain whenever ffmpeg prints a `time=` status line. total_seconds is
+        # the finished-video duration (denominator). Both default to None =>
+        # drain behaves exactly like before (tail capture only).
+        self.progress_cb = progress_cb
+        self.total_seconds = total_seconds
+        self._last_report_frac = -1.0
+        self._last_report_at = 0.0
         self.out = Path(out_path)
         self.tmp = self.out.with_name(self.out.stem + ".tmp.mp4")
         self.proc: subprocess.Popen | None = None
@@ -110,12 +119,36 @@ class RenderWorker:
                 _RENDER_SEM.release()
 
     def _drain_stderr(self, tail: list[bytes]):
-        """Consume stderr, keeping the last ~1500 bytes for error reports."""
+        """Consume stderr, keeping the last ~1500 bytes for error reports.
+
+        When a progress_cb was supplied, also parse ffmpeg `time=` status
+        lines into a 0..1 fraction. Throttled (>=2% or >=2s since the last
+        report) so a chatty ffmpeg never floods the job store, and a broken
+        callback must never kill the drain (the stall/timeout paths still
+        need the stderr tail more than the UI needs percent done).
+        """
         try:
             if self.proc and self.proc.stderr:
                 for line in iter(self.proc.stderr.readline, b""):
                     tail.append(line)
                     del tail[:-40]        # bound memory: keep last 40 lines
+                    if self.progress_cb is None or not self.total_seconds:
+                        continue
+                    try:
+                        from adapters.render_ffmpeg import parse_ffmpeg_time
+                        done_s = parse_ffmpeg_time(
+                            line.decode("utf-8", "replace"))
+                        if done_s is None:
+                            continue
+                        frac = min(1.0, done_s / self.total_seconds)
+                        now = time.time()
+                        if (frac - self._last_report_frac >= 0.02
+                                or now - self._last_report_at >= 2.0):
+                            self._last_report_frac = frac
+                            self._last_report_at = now
+                            self.progress_cb(frac)
+                    except Exception:  # noqa: BLE001 - drain outlives cb
+                        pass
         except Exception:
             pass
 

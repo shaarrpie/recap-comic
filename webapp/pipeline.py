@@ -850,9 +850,18 @@ def _render_video(job: Job, **kwargs: Any) -> None:
     def _style(key: str, default):
         v = job.config.get(key)
         return default if v is None else v
+    provider = voice_cfg.get("provider") or job.config.get("tts", "kokoro")
+    _voice = voice_cfg.get("voice") or job.config.get("voice", "af_heart")
+    # Guard the edge/Kokoro voice footgun: edge-tts fails SILENTLY when handed
+    # a Kokoro id (af_heart) and vice-versa, so reconcile the pair here even
+    # if the caller bypassed voice_api validation.
+    if provider == "edge" and not _voice.endswith("Neural"):
+        _voice = "en-US-AriaNeural"
+    elif provider == "kokoro" and _voice.endswith("Neural"):
+        _voice = "af_heart"
     cfg = VideoConfig(
-        tts=voice_cfg.get("provider") or job.config.get("tts", "kokoro"),
-        voice=voice_cfg.get("voice") or job.config.get("voice", "af_heart"),
+        tts=provider,
+        voice=_voice,
         rate=_pct("rate", 0) if voice_cfg else "+0%",
         pitch=_pct("pitch", 0) if voice_cfg else "+0Hz",
         speed=float(voice_cfg.get("speed", 1.0) or 1.0),
@@ -869,7 +878,20 @@ def _render_video(job: Job, **kwargs: Any) -> None:
         speech_target_seconds=_style("speech_target_seconds",
                                      VideoConfig.speech_target_seconds),
         speech_max_seconds=_style("speech_max_seconds",
-                                  VideoConfig.speech_max_seconds))
+                                  VideoConfig.speech_max_seconds),
+        # Canvas / pacing / resource knobs that were previously pinned to the
+        # VideoConfig defaults (so the webapp was 9:16 portrait, 30fps only).
+        canvas_w=_style("canvas_w", VideoConfig.canvas_w),
+        canvas_h=_style("canvas_h", VideoConfig.canvas_h),
+        fps=_style("fps", VideoConfig.fps),
+        tts_concurrency=_style("tts_concurrency", VideoConfig.tts_concurrency),
+        include_dialogue=_style("include_dialogue",
+                                VideoConfig.include_dialogue),
+        gap_seconds=_style("gap_seconds", VideoConfig.gap_seconds),
+        min_display_seconds=_style("min_display_seconds",
+                                   VideoConfig.min_display_seconds),
+        max_display_seconds=_style("max_display_seconds",
+                                   VideoConfig.max_display_seconds))
     job.log("INFO",
             f"render input={panels_json.name} tts={cfg.tts} "
             f"voice={cfg.voice} rate={cfg.rate} pitch={cfg.pitch} "
@@ -928,11 +950,23 @@ def _render_video(job: Job, **kwargs: Any) -> None:
         # cancellable while chunking.
         try:
             with render_slot() as cancel_event:
-                for chunk_cmd in _chunk_commands(ta, out_tmp, ffmpeg_exe, prof):
+                # Materialise the command list so each finished chunk can move
+                # the job bar (60 -> 95): without this the UI sat frozen at 60
+                # for the entire multi-chapter render. The final command is the
+                # concat demuxer pass (near-instant), so it maps to the top.
+                cmds = list(_chunk_commands(ta, out_tmp, ffmpeg_exe, prof))
+                n_cmds = max(1, len(cmds))
+                for idx, chunk_cmd in enumerate(cmds):
                     job.check_cancelled()
                     if cancel_event is not None and cancel_event.is_set():
                         raise CancelledError("render cancelled")
                     _run_render_subprocess(job.id, chunk_cmd)
+                    pct = min(94, 60 + int(35 * (idx + 1) / n_cmds))
+                    if pct > job.progress:
+                        job.progress = pct
+                    job.log("INFO",
+                            f"render chunk {idx + 1}/{n_cmds} done "
+                            f"({job.progress}%)", "render_video")
                 if out_tmp.is_file():
                     out_tmp.replace(out_mp4)
                 else:
@@ -958,9 +992,19 @@ def _render_video(job: Job, **kwargs: Any) -> None:
                 res["ok"] = ok
                 res["err"] = err
                 done.set()
+            # Live percentage: RenderWorker parses ffmpeg `time=` lines and we
+            # map the 0..1 fraction into the render window (60 -> 95) of the
+            # job bar. Strictly increasing so a segment restart never walks
+            # the bar backwards.
+            def on_render_progress(frac):
+                pct = min(94, 60 + int(frac * 35))
+                if pct > job.progress:
+                    job.progress = pct
             worker = RenderWorker(job.id, build_cmd, out_tmp, on_done=on_done,
                                   cancel_event=cancel_event,
-                                  owns_render_slot=False)
+                                  owns_render_slot=False,
+                                  progress_cb=on_render_progress,
+                                  total_seconds=duration_s)
             worker.start()
             try:
                 while not done.wait(0.5):

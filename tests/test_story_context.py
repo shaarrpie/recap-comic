@@ -161,6 +161,56 @@ def test_seed_no_text_marks_built_nothing_to_retry(tmp_path):
     assert ctx["characters"] == {}
 
 
+# ------------------------------------------------------- vision cast survey --
+def test_image_seed_populates_roster(tmp_path):
+    vc = FakeModel([SEED_JSON])
+    ctx = sc.build_seed_context_from_images("ZmFrZQ==", tmp_path,
+                                            vision_call=vc)
+    assert ctx["_meta"]["image_seed_built"] is True
+    assert ctx["_meta"]["seed_built"] is True
+    assert set(ctx["characters"]) == {"Bam", "Khun"}
+    assert vc.prompts == ["ZmFrZQ=="]        # one vision call with the sheet
+
+
+def test_image_seed_skipped_when_cast_present(tmp_path):
+    seeded_ctx(tmp_path)                      # text seed already filled roster
+    vc = FakeModel([])                        # raises if called -> proves skip
+    ctx = sc.build_seed_context_from_images("x", tmp_path, vision_call=vc)
+    assert vc.prompts == []
+    assert set(ctx["characters"]) == {"Bam", "Khun"}
+
+
+def test_image_seed_failure_retries_next_run(tmp_path):
+    boom = FakeModel([])                      # vision call raises: non-fatal
+    ctx = sc.build_seed_context_from_images("x", tmp_path, vision_call=boom)
+    assert ctx["characters"] == {}
+    assert ctx["_meta"]["image_seed_built"] is not True
+    ok = FakeModel([SEED_JSON])               # next run retries and succeeds
+    ctx2 = sc.build_seed_context_from_images("x", tmp_path, vision_call=ok)
+    assert set(ctx2["characters"]) == {"Bam", "Khun"}
+
+
+def test_image_seed_unparseable_response_is_non_fatal(tmp_path):
+    vc = FakeModel(["not json at all"])
+    ctx = sc.build_seed_context_from_images("x", tmp_path, vision_call=vc)
+    assert ctx["characters"] == {}
+    assert ctx["_meta"]["image_seed_built"] is not True
+    assert len(vc.prompts) == 1
+
+
+def test_image_seed_attempted_flag_blocks_rehammer(tmp_path):
+    # A successful survey that finds no cast still sets the attempt flag, so a
+    # later run does not re-call the vision API for the same chapter.
+    empty = json.dumps({"characters": [], "locations": [],
+                        "story_threads": []})
+    sc.build_seed_context_from_images("x", tmp_path,
+                                      vision_call=FakeModel([empty]))
+    vc2 = FakeModel([])                       # would raise if called
+    ctx = sc.build_seed_context_from_images("x", tmp_path, vision_call=vc2)
+    assert vc2.prompts == []
+    assert ctx["_meta"]["image_seed_built"] is True
+
+
 def test_seed_text_block_cap_checked_before_overflow(tmp_path):
     big = [{"panel_index": i, "dialogue": "x" * 400}
            for i in range(1, 100)]

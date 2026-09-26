@@ -149,7 +149,7 @@ def test_display_seconds_rules():
     # pan floor always wins, silent capped only by max_display_seconds.
     cfg = rv.VideoConfig(gap_seconds=0.35, min_display_seconds=2.0,
                          max_pan_px_per_sec=450, silent_wpm=120,
-                         speech_window=False)
+                         min_silent=2.0, speech_window=False)
     # spoken: audio + gap, never below min
     assert rv.display_seconds(audio_seconds=0.5, words=3, travel_px=0,
                               cfg=cfg) == 2.0
@@ -163,6 +163,11 @@ def test_display_seconds_rules():
                               cfg=cfg) == 12.0
     assert rv.display_seconds(audio_seconds=None, words=0, travel_px=0,
                               cfg=cfg) == 2.0
+    # default min_silent: narration-less panels stay SHORT even when
+    # --min-display is generous (un-narrated montage beats)
+    assert rv.display_seconds(audio_seconds=None, words=0, travel_px=0,
+                              cfg=rv.VideoConfig(min_display_seconds=5.0),
+                              ) == rv.VideoConfig().min_silent
 
 
 # ---------------------------------------------------------------- timeline --
@@ -175,10 +180,11 @@ def test_timeline_is_contiguous_and_silent_mode(cut_dir):
     aud = rv.synthesize_audio(nar, d / "audio", cfg)
     assert aud.entries == [] and aud.voice == "none"
     tl = rv.build_timeline(art, d, nar, aud, d / "audio", cfg, panels_hash="h")
-    # Panel 003 has empty narration + no audio: dead-air drop (it used to
-    # get a silent min_display hold — silent empty frames over nothing).
-    assert [e.panel_id for e in tl.entries] == ["001", "002"]
-    assert {"panel_id": "003", "reason": "no_text_no_audio"} in tl.skipped_panels
+    # Panel 003 has empty narration + no audio: it STAYS as a silent beat
+    # (the chapter script skips many panels; the video must not skip them).
+    assert [e.panel_id for e in tl.entries] == ["001", "002", "003"]
+    assert {"panel_id": "003",
+            "reason": "no_text_no_audio_silent_beat"} in tl.skipped_panels
     t = 0.0
     for e in tl.entries:
         assert e.start_seconds == pytest.approx(t, abs=1e-3)
@@ -204,10 +210,14 @@ def test_timeline_uses_measured_audio(cut_dir):
         AudioEntry(entry_id="002", path="002.mp3", duration_seconds=1.0),
     ])
     tl = rv.build_timeline(art, d, nar, aud, d / "audio", cfg, panels_hash="h")
-    assert tl.entries[0].duration_seconds == pytest.approx(3.55)
+    assert tl.entries[0].duration_seconds == pytest.approx(
+        3.2 + cfg.gap_seconds)
     assert tl.entries[0].audio_path.endswith("001.mp3")
-    # panel 2: 1.0s audio but 2940px of pan -> pan floor 6.533s
-    assert tl.entries[1].duration_seconds == pytest.approx(2940 / 450, abs=1e-3)
+    # panel 2: 1.0s audio but 2940px of pan -> legacy pan floor 6.533s, which
+    # the sub-5s speech window cuts to the backstop (the renderer plays the
+    # full travel inside the shortened window via t/dur)
+    assert tl.entries[1].duration_seconds == pytest.approx(
+        cfg.speech_max_seconds + cfg.gap_seconds, abs=1e-3)
 
 
 def test_missing_panel_image_is_skipped_not_an_error(cut_dir):
@@ -266,16 +276,14 @@ def test_render_command_builds_without_ffmpeg(cut_dir):
     cmd = build_command(tl, d / "recap.mp4")
     assert cmd[0] == "ffmpeg" and "-filter_complex" in cmd
     fc = cmd[cmd.index("-filter_complex") + 1]
-    # panel 3 is a dead-air drop -> only 2 entries concat
-    assert "concat=n=2:v=1:a=0" in fc
+    # panel 3 is a silent beat -> all 3 entries concat
+    assert "concat=n=3:v=1:a=0" in fc
     assert "anullsrc" in " ".join(cmd)          # silent panels get silence
     assert "loudnorm" not in fc                 # no audio -> no loudnorm
 
 
 def _tl(pan: rv.PanSpec, w: int, h: int):
-    from adapters.schemas import (BBox, Meta, PanSpec, TimelineArtifact,
-                                  TimelineEntry)
-    from adapters.render_ffmpeg import build_command as _bc
+    from adapters.schemas import BBox, Meta, TimelineArtifact, TimelineEntry
     return TimelineArtifact(
         meta=Meta(schema_version="1", generator="t", config_hash="h",
                   input_hashes={}),
@@ -321,15 +329,16 @@ def test_make_recap_video_dry_run_writes_sidecars(cut_dir):
     summary = rv.make_recap_video(d / "panels.json", d / "recap.mp4",
                                   rv.VideoConfig(tts="none"), dry_run=True)
     assert summary["video"] is None
-    # panel 3 (empty narration, no audio) is a dead-air drop
-    assert summary["panels"] == 2
+    # panel 3 (empty narration, no audio) stays as a silent beat
+    assert summary["panels"] == 3
     assert (d / "timeline.json").is_file()
     assert (d / "narration.json").is_file()
     assert (d / "recap.srt").is_file()
     tl = json.loads((d / "timeline.json").read_text("utf-8"))
     assert tl["width"] == 1080 and tl["height"] == 1920
-    assert len(tl["entries"]) == 2
-    assert {"panel_id": "003", "reason": "no_text_no_audio"} in tl["skipped_panels"]
+    assert len(tl["entries"]) == 3
+    assert {"panel_id": "003",
+            "reason": "no_text_no_audio_silent_beat"} in tl["skipped_panels"]
 
 # --------------------------------------------------- TTS cache integrity --
 # A transient TTS failure used to be written into audio.json and then reused

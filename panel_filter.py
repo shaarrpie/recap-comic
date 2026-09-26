@@ -18,7 +18,10 @@ Design rules (aligned with blank_detector.py's philosophy):
     * NEVER classify blank by darkness/brightness. blank_flag/blank_score
       written by guided_cutter are the single source of truth; a missing
       field means 'keep' (fail-safe).
-    * Text-only detection requires MULTIPLE independent signals: low
+    * Text-only detection requires MULTIPLE independent signals. A
+      SOLID-FILL card (flat single colour of ANY hue — title card,
+      transition, empty bubble crop) with text demotes on uniformity alone,
+      since the text-on-white gates assume a white page. Otherwise: low
       saturation + high white dominance + edge structure + actual dialogue
       text on the panel (panel_type/dialogue from the plan). Pixels alone
       are the weakest evidence; a muted scene panel must never be
@@ -62,9 +65,15 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from text_clean import is_promo_text
+
 log = logging.getLogger(__name__)
 
-FILTER_VERSION = 4
+# v7: text-based scanlation PROMO detection. Ad/credit splashes ("Read at
+# GROUP.COM for the fastest releases") are drawn art, so the pixel gates below
+# legitimately refuse to demote them, while the one-line-per-panel script
+# contract forced the narrator to speak them. v6 had no such rule.
+FILTER_VERSION = 7
 
 # Decisions ---------------------------------------------------------------
 DECISION_KEEP = "keep"
@@ -102,6 +111,19 @@ class FilterConfig:
     dark_pixel_threshold: int = 25     # used only to trim black padding
     color_sat_gap: int = 25            # max-min channel gap for "colour"
 
+    # Uniform-fill (solid colour card) detection. Title cards and transition
+    # panels are a SINGLE flat colour, and not always white — a black, navy,
+    # or red card must demote exactly like a white one. A panel counts as
+    # uniform-fill when this fraction of its pixels sit within
+    # uniform_color_tolerance of the panel's median colour. The tolerance is
+    # deliberately generous (±60/255): a speech-bubble card is one flat field
+    # plus thin text and its antialiased halos, which sit near the card colour
+    # and must NOT be counted as "different" — a tight tolerance (±14) scored a
+    # 90%-white bubble panel as only ~0.84 uniform and let it through. Real
+    # art spans the palette and stays well under the ratio even at ±60.
+    uniform_fill_ratio: float = 0.92
+    uniform_color_tolerance: int = 60  # per-channel distance from the median
+
     def with_overrides(self, **ov: Any) -> FilterConfig:
         valid = set(self.__dataclass_fields__)
         bad = set(ov) - valid
@@ -126,7 +148,7 @@ def _score_array(arr: np.ndarray, cfg: FilterConfig) -> dict[str, float]:
     total = h * w
     if total == 0:
         return {"white_of_content": 0.0, "color_ratio": 0.0,
-                "edge_density": 0.0}
+                "edge_density": 0.0, "uniform_ratio": 0.0}
 
     flat = arr.reshape(-1, 3)
     white_mask = ((flat[:, 0] > cfg.white_pixel_threshold)
@@ -148,9 +170,19 @@ def _score_array(arr: np.ndarray, cfg: FilterConfig) -> dict[str, float]:
     gy = np.diff(gray, axis=0, append=gray[-1:, :])
     edge_density = float(np.hypot(gx, gy).mean()) / 255.0
 
+    # Uniform-fill: fraction of pixels hugging the panel's MEDIAN colour.
+    # Hue-agnostic — a solid white, black, navy or red card all score ~1.0,
+    # real artwork (spread palette) scores low. This is the signal that lets
+    # a non-white solid card demote exactly like a white text page.
+    med = np.median(flat.astype(np.int16), axis=0)
+    near = (np.abs(flat.astype(np.int16) - med)
+            <= cfg.uniform_color_tolerance).all(axis=1)
+    uniform_ratio = float(near.sum()) / total
+
     return {"white_of_content": round(white_of_content, 5),
             "color_ratio": round(color_ratio, 5),
-            "edge_density": round(edge_density, 6)}
+            "edge_density": round(edge_density, 6),
+            "uniform_ratio": round(uniform_ratio, 5)}
 
 
 def _trim_black_padding(arr: np.ndarray, dark_thr: int) -> np.ndarray:
@@ -288,21 +320,42 @@ def _is_blank(panel: dict[str, Any], cfg: FilterConfig) -> bool:
     return False
 
 
+def _is_promo(panel: dict[str, Any]) -> bool:
+    """True when the panel's OWN text identifies a scanlation ad/credit card.
+
+    Deliberately independent of the pixel gates: a promo splash is drawn
+    artwork (a purple paint splash with a URL in it), so it is colourful and
+    non-uniform and would survive every pixel test -- yet it is not story, and
+    the one-line-per-panel script contract would otherwise make the narrator
+    invent a hype line for it. Fail-safe: a panel with no text is never promo.
+    """
+    if panel.get("context_only"):
+        return False  # already demoted; idempotent
+    return is_promo_text(str(panel.get("dialogue") or ""),
+                         str(panel.get("narration") or ""))
+
+
 def _is_text_only(panel: dict[str, Any], score: dict[str, float],
-                  thr: dict[str, Any]) -> bool:
-    """Four-signal text-only test. ALL gates must pass:
+                  thr: dict[str, Any], cfg: FilterConfig) -> bool:
+    """Text-only / solid-card test.
+
+    A SOLID-FILL card (flat single colour, any hue — title card, transition,
+    empty bubble crop) with text demotes immediately; uniformity is
+    hue-agnostic, so this path does not assume a white page.
+
+    Otherwise the classic four-signal text-on-white test — ALL gates pass:
 
       1. content gate  — the panel actually carries dialogue text
-                          (dialogue non-empty or panel_type is a text type).
-                          Pixel signals alone are too weak to remove a
-                          panel; this makes scene-panel false positives
-                          structurally impossible.
+                           (dialogue non-empty or panel_type is a text type).
+                           Pixel signals alone are too weak to remove a
+                           panel; this makes scene-panel false positives
+                           structurally impossible.
       2. saturation    — color_ratio below threshold (skipped on B&W
-                          sessions where it cannot discriminate).
+                           sessions where it cannot discriminate).
       3. white         — white_of_content above cutoff (text pages are
-                          mostly white).
+                           mostly white).
       4. edges         — edge_density above floor (strokes present; a pure
-                          blank is near-zero and would fail here too).
+                           blank is near-zero and would fail here too).
     """
     if not score:
         return False
@@ -312,6 +365,15 @@ def _is_text_only(panel: dict[str, Any], score: dict[str, float],
         str(panel.get("panel_type") or "").lower() in TEXT_PANEL_TYPES
     if not has_text:
         return False
+    # Solid-fill card: a flat single-colour panel (title card / transition /
+    # empty bubble crop) of ANY hue. The text-on-white gates below assume a
+    # white page, so a black/navy/red card — or a white card whose strokes
+    # the AI merely *claimed* — slips past them. Uniformity is the honest
+    # signal: it demotes a flat card regardless of colour, saturation, or
+    # edge content. Still requires has_text, so flat-coloured ART without
+    # dialogue is never demoted on pixels alone.
+    if score.get("uniform_ratio", 0.0) >= cfg.uniform_fill_ratio:
+        return True
     color_ok = (bool(thr["is_bw_session"])
                 or score["color_ratio"] < thr["text_color_threshold"])
     white_ok = score["white_of_content"] > thr["white_dominance_cutoff"]
@@ -457,6 +519,21 @@ def filter_panels(
                      pid, p.get("blank_flag", "?"), p.get("blank_score", 0))
             continue
 
+        if _is_promo(p):
+            # Demoted on its own TEXT, before any pixel evidence: a promo
+            # splash is colourful artwork, so the uniform-fill and text-on-white
+            # gates would (correctly, for art) keep it. Runs before the
+            # unscorable-keep branch, so it works even without the strip.
+            entry["_decision"] = DECISION_CONTEXT_ONLY
+            entry["_promo_card"] = True
+            annotated.append(entry)
+            q = {**p, "context_only": True}
+            out_panels.append(q)
+            context_only_ids.add(pid)
+            log.info("[C] %-18s context-only (scanlation promo/credit text)",
+                     pid)
+            continue
+
         if method in ("missing", "error") or not score:
             # unscorable -> keep (fail safe; blank already handled above)
             entry["_decision"] = DECISION_KEEP
@@ -464,7 +541,7 @@ def filter_panels(
             out_panels.append(p)
             continue
 
-        if _is_text_only(p, score, thresholds):
+        if _is_text_only(p, score, thresholds, cfg):
             entry["_decision"] = DECISION_CONTEXT_ONLY
             annotated.append(entry)
             q = {**p, "context_only": True}

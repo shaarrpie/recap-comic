@@ -211,6 +211,10 @@ app = typer.Typer(
     help="manhwa-recap: AI-guided panels & narration for long strips")
 guided_app = typer.Typer(help="AI-guided panel segmentation & narration")
 app.add_typer(guided_app, name="guided")
+download_app = typer.Typer(help="Download manhwa/webtoon chapter page images "
+                                "from scanlation sites (Asura/Vortex/Drake "
+                                "Scans, LeviScanner/Madara themes, generic).")
+app.add_typer(download_app, name="download")
 
 
 def _default_cache_dir() -> Path:
@@ -722,6 +726,69 @@ def guided_narrate_ai(
         typer.echo(f"  kept old text: {f}", err=True)
 
 
+@guided_app.command("title")
+def guided_title(
+    session_dir: Path = typer.Argument(
+        ..., exists=True, file_okay=False,
+        help="cut session dir holding script.json (from 'guided narrate-ai')"),
+    model: str | None = typer.Option(
+        None, "--model", help="text model id (default agnes-2.5-flash)"),
+    write: bool = typer.Option(
+        True, "--write/--no-write",
+        help="also save the primary title to <session_dir>/title.txt"),
+    log_level: str = typer.Option("INFO", "--log-level"),
+) -> None:
+    """Generate a CTR YouTube title for the recap (AI-narrator metadata).
+
+    Derives a click-worthy title (plus 2 alternatives) from the finished
+    script.json narration WITHOUT rewriting the recap lines. Best-effort and
+    offline-safe: needs an AGNES_API_KEY for the live call.
+    """
+    _configure_logging(log_level)
+    import json
+
+    from guided_cutter import CutArtifact
+    from recap_script import generate_recap_title, load_script
+    # Title is metadata: reuse the current-version script, but also accept an
+    # existing (even older-version) script.json's text so a title can be minted
+    # WITHOUT rewriting the recap lines.
+    text = (load_script(session_dir) or {}).get("text") or ""
+    if not text.strip():
+        try:
+            text = json.loads(
+                (session_dir / "script.json").read_text("utf-8")
+            ).get("text", "") or ""
+        except (OSError, ValueError):
+            text = ""
+    if not text.strip():
+        typer.echo("ERROR: no script.json with narration in this session; run "
+                   "'guided narrate-ai <dir>' first.", err=True)
+        raise typer.Exit(1)
+    series_title = ""
+    try:
+        art = CutArtifact.model_validate_json(
+            (session_dir / "panels.json").read_text("utf-8"))
+        series_title = str(art.source or "")
+    except Exception:  # noqa: BLE001 - series is just extra title context
+        pass
+    from adapters import ai_models as _ai
+    res = generate_recap_title(
+        text, series_title=series_title,
+        api_key=_ai.api_key_from_env(), model=model or "")
+    title = res.get("title")
+    if not title:
+        typer.echo("ERROR: title generation failed (model unavailable or "
+                   "bad response).", err=True)
+        raise typer.Exit(1)
+    typer.echo(f"TITLE: {title}")
+    for i, alt in enumerate(res.get("alternatives") or [], 1):
+        typer.echo(f"  alt {i}: {alt}")
+    if write:
+        out = session_dir / "title.txt"
+        out.write_text(title + "\n", "utf-8")
+        typer.echo(f"saved: {out}")
+
+
 @guided_app.command("video")
 def guided_video(
     panels: Path = typer.Argument(
@@ -747,7 +814,10 @@ def guided_video(
     dialogue: bool = typer.Option(
         True, "--dialogue/--no-dialogue",
         help="also read each panel's dialogue after its narration"),
-    gap: float = typer.Option(0.35, "--gap", help="silence after each panel (s)"),
+    gap: float = typer.Option(
+        0.0, "--gap",
+        help="silence after each panel (s); 0 keeps the narrator flowing so "
+             "panels catch up to the voice instead of pausing on it"),
     min_display: float = typer.Option(
         2.0, "--min-display", help="minimum seconds a panel stays on screen"),
     max_display: float = typer.Option(
@@ -804,17 +874,32 @@ def guided_video(
              "motion_report.json next to the timeline"),
     speech_window: bool = typer.Option(
         True, "--speech-window/--no-speech-window",
-        help="keep each spoken panel to 5-7s: trim narration to whole "
-             "sentences inside the target and backstop durations at the max "
-             "(panels cut in sync; camera moves fit the window)"),
+        help="trim narration to whole sentences inside the target and stop a "
+             "frame from lingering past its (natural-pace) voice; never speeds "
+             "up or truncates speech"),
     speech_target: float = typer.Option(
-        6.0, "--speech-target",
-        help="trim budget aim per panel in seconds (middle of the 5-7s "
-             "window)"),
+        4.0, "--speech-target",
+        help="trim budget aim per panel in seconds (sub-5s window)"),
     speech_max: float = typer.Option(
-        7.0, "--speech-max",
+        4.6, "--speech-max",
         help="hard backstop per spoken panel in seconds (never cuts speech "
-             "short, only trims trailing silence/padding)"),
+             "short, only trims trailing silence/padding; with the default "
+             "0-gap the narrator is never sped up or paused)"),
+    sfx_dir: Path | None = typer.Option(
+        None, "--sfx-dir",
+        help="sound-effect bank folder with transition/ action/ reveal/ "
+             "subfolders (.wav/.mp3/.ogg/.m4a/.flac; an optional default/ "
+             "fills any empty category) — enables automatic SFX mixing"),
+    min_silent: float = typer.Option(
+        1.0, "--min-silent",
+        help="seconds a narration-less panel shows between its narrated "
+             "neighbours (panels skipped by the chapter script stay visible "
+             "as silent beats); 0 drops them so the timeline is speech-driven "
+             "and the narrator never pauses"),
+    sfx_volume: float = typer.Option(
+        0.9, "--sfx-volume",
+        help="global SFX loudness multiplier (per-kind volumes multiply "
+             "on top: transition 0.5, action 0.9, reveal 0.6)"),
     ffmpeg: str = typer.Option("ffmpeg", "--ffmpeg", help="ffmpeg executable"),
     ffprobe: str = typer.Option("ffprobe", "--ffprobe", help="ffprobe executable"),
     dry_run: bool = typer.Option(
@@ -873,12 +958,16 @@ def guided_video(
         typer.echo("ERROR: require 0 < --speech-target <= --speech-max",
                    err=True)
         raise typer.Exit(1)
+    if sfx_dir is not None and not sfx_dir.is_dir():
+        typer.echo(f"ERROR: --sfx-dir not found: {sfx_dir}", err=True)
+        raise typer.Exit(1)
     out_path = out or panels.parent / "recap.mp4"
     cfg = VideoConfig(
         tts=tts,  # type: ignore[arg-type]
         voice=voice, rate=rate, pitch=pitch, speed=speed,
         include_dialogue=dialogue, gap_seconds=gap,
         min_display_seconds=min_display, max_display_seconds=max_display,
+        min_silent=min_silent,
         max_pan_px_per_sec=pan_speed, pan_fit_speech=pan_fit_speech,
         fps=fps, canvas_w=canvas_w, canvas_h=canvas_h,
         blur_background=blur_background, color_grade=color_grade,
@@ -888,6 +977,7 @@ def guided_video(
         motion_strength=motion_strength,
         speech_window=speech_window, speech_target_seconds=speech_target,
         speech_max_seconds=speech_max,
+        sfx_dir=sfx_dir, sfx_volume=sfx_volume,
         ffmpeg_exe=ffmpeg, ffprobe_exe=ffprobe,
         kokoro_model_path=kokoro_model_path,
         kokoro_voices_path=kokoro_voices_path)
@@ -911,6 +1001,8 @@ def guided_video(
                f"  voice: {summary['voice']}  length: {int(mins)}m{secs:04.1f}s")
     typer.echo(f"timeline: {summary['timeline']}")
     typer.echo(f"captions: {summary['srt']} ({summary['srt_cues']} cues)")
+    if summary.get("sfx"):
+        typer.echo(f"sfx: {summary['sfx']} ({summary['sfx_events']} events)")
     if summary.get("motion_preset") and summary["motion_preset"] != "none":
         typer.echo(f"motion preset: {summary['motion_preset']}"
                    + (f" ({summary.get('motion_report')})"
@@ -1021,6 +1113,110 @@ def manual(
     for p in artifact.panels:
         typer.echo(f"  {p.panel_index:02d}  y=[{p.y_start},{p.y_end}]  "
                    f"{p.y_end - p.y_start}px  {p.image_file}")
+
+
+# --------------------------------------------------------------------------- #
+# Website image downloader (website_downloader.py)
+# --------------------------------------------------------------------------- #
+def _download_progress(done: int, total: int, msg: str) -> None:
+    typer.echo(f"  [{done}/{total}] {msg}")
+
+
+@download_app.command("chapter")
+def download_chapter(
+    url: str = typer.Argument(...,
+                              help="chapter reader page URL (Asura/Vortex/"
+                                   "Drake Scans, any LeviScanner/Madara or "
+                                   "generic site)"),
+    out: Path = typer.Option(..., "--out", "-o", file_okay=False,
+                             help="folder for numbered page images "
+                                  "(page_001.webp ...)"),
+    concurrency: int = typer.Option(
+        4, "--concurrency", "-c", min=1, max=16,
+        help="parallel image downloads (lower on weak connections)"),
+    force: bool = typer.Option(
+        False, "--force", help="re-download pages that already exist"),
+    inspect: bool = typer.Option(
+        False, "--inspect",
+        help="print detected image URLs and exit (download nothing) -- "
+             "verify the scraper on an unknown site"),
+    log_level: str = typer.Option("INFO", "--log-level"),
+) -> None:
+    """Download every page image of ONE chapter reader page.
+
+    Feeds the recap pipeline directly: point scripts/cut_pages_and_merge.py
+    (or `guided run` on a CBZ) at the output folder afterwards.
+    """
+    _configure_logging(log_level)
+    import website_downloader as wd
+    try:
+        if inspect:
+            session = wd.make_session()
+            html = wd.fetch_html(url, session)
+            for u in wd.extract_image_urls(html, url):
+                typer.echo(u)
+            return
+        res = wd.download_chapter(url, out, concurrency=concurrency,
+                                  force=force, on_progress=_download_progress)
+    except Exception as exc:  # noqa: BLE001 - surface a clean CLI error
+        log.exception("download chapter failed")
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"saved {res.page_count} pages -> {out}")
+    if res.skipped:
+        typer.echo(f"skipped {len(res.skipped)} existing (use --force to redo)")
+    if res.failed:
+        typer.echo(f"FAILED {len(res.failed)} page(s): "
+                   + ", ".join(res.failed[:5]), err=True)
+        raise typer.Exit(2)
+
+
+@download_app.command("series")
+def download_series(
+    url: str = typer.Argument(..., help="series page URL (has a chapter list)"),
+    out: Path = typer.Option(..., "--out", "-o", file_okay=False,
+                             help="root folder; one sub-folder per chapter"),
+    chapters: str = typer.Option(
+        "last", "--chapters", "-c",
+        help="which chapters: 'last' (default) | 'all' | a range like "
+             "'1-10' | a list like '1,3,5-8'"),
+    concurrency: int = typer.Option(4, "--concurrency", "-x", min=1, max=16),
+    force: bool = typer.Option(False, "--force"),
+    list_only: bool = typer.Option(
+        False, "--list", help="print the detected chapter list and exit"),
+    log_level: str = typer.Option("INFO", "--log-level"),
+) -> None:
+    """Download a range of chapters from a series page (one folder each).
+
+    Parses the series chapter list, selects the requested range, then reuses
+    the `chapter` downloader per chapter. Site chapter lists are matched
+    loosely (any link that smells like a chapter) so it survives theme drift.
+    """
+    _configure_logging(log_level)
+    import website_downloader as wd
+    try:
+        session = wd.make_session()
+        links = wd.select_chapters(
+            wd.parse_chapter_links(wd.fetch_html(url, session), url),
+            "all" if list_only else chapters)
+        if list_only:
+            for c in links:
+                typer.echo(f"  {c.number if c.number is not None else '?':>6}  "
+                           f"{c.label or c.url}  {c.url}")
+            return
+        results = wd.download_series(url, out, chapters=chapters,
+                                     session=session, concurrency=concurrency,
+                                     force=force, on_progress=_download_progress)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("download series failed")
+        typer.echo(f"ERROR: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    total = sum(r.page_count for r in results)
+    typer.echo(f"downloaded {len(results)} chapter(s), {total} pages -> {out}")
+    failed = [f for r in results for f in r.failed]
+    if failed:
+        typer.echo(f"FAILED {len(failed)} page(s) across chapters", err=True)
+        raise typer.Exit(2)
 
 
 # Cinematic effects subcommand (cinematic_effects.py). Registered at module

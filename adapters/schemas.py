@@ -139,3 +139,23 @@ class TimelineArtifact(BaseModel):
     # Panels deliberately excluded from the timeline (dead-air drops,
     # blanks, context_only) with the reason, so skips are auditable.
     skipped_panels: list[dict] = []
+
+
+SfxKind = Literal["transition", "action", "reveal"]
+
+
+class SfxEvent(BaseModel):
+    id: str                       # sfx_001
+    kind: SfxKind
+    panel_id: PanelId
+    at_seconds: float             # absolute position in the finished video
+    source: str                   # sound file, relative to the bank dir
+    volume: float                 # linear multiplier applied in the mixdown
+    trigger: str                  # "panel_cut" | "keyword:<word>" | "panel_class:<class>"
+    text: str = ""                # narration text that triggered it (auditable)
+
+
+class SfxArtifact(BaseModel):
+    meta: Meta
+    bank_dir: str
+    events: list[SfxEvent]

@@ -79,6 +79,29 @@ def test_is_non_lexical():
 
 
 # -------------------------------------------------------------- built path --
+def test_panel_list_block_scrubs_non_english_text():
+    """Mojibake and untranslated bubbles cached in an OLD panels.json must not
+    reach the model (and from there edge-tts). Cleaning happens at prompt-build
+    time, so already-narrated chapters are fixed without re-spending a single
+    vision call."""
+    hangul = "\uc544\uc774\uc2a1"
+    mojibake = "\u03c6\u00f2\u00ff\u221e"
+    p = CutPanel(id="001", panel_index=1, y_start=0, y_end=800,
+                 narration=f"A man shouts {mojibake} in anger",
+                 dialogue=f"{hangul} / WHERE THE HELL DO YOU THINK YOU ARE",
+                 panel_type="single", confidence=0.9,
+                 image_file="panel_001.png")
+    art = CutArtifact(source="s.png", width=800, height=800, plan_hash="x",
+                      config={}, panels=[p])
+    rows = rs._panel_list_block(art)
+    assert len(rows) == 1
+    assert rows[0]["visual"] == "A man shouts in anger"
+    assert rows[0]["dialogue"] == "WHERE THE HELL DO YOU THINK YOU ARE"
+    # the rendered prompt row is pure ASCII: nothing for TTS to misread
+    line = rs._panel_row(rows[0])
+    assert all(ord(c) < 128 for c in line)
+
+
 def test_build_writes_script_json_with_validated_lines(session):
     d, _ = session
     model = FakeModel([GOOD_LINES])
@@ -86,22 +109,61 @@ def test_build_writes_script_json_with_validated_lines(session):
 
     assert res["status"] == "built"
     assert res["used_fallback"] is False
-    assert len(res["lines"]) == 3
+    # panels 1/4/5 came from the model; 2 is caption-filled because the
+    # gap-fill round had no scripted response left; 3 has nothing speakable
+    # ("..." caption, no dialogue) so it stays unspoken by design.
+    assert len(res["lines"]) == 4
     # validated mapping: panel_index -> panel_id from panels.json,
     # and lines are sorted into panel order (narrator speaks in order)
     assert [ln["panel_id"] for ln in res["lines"]] == \
-        ["panel_001", "panel_004", "panel_005"]
+        ["panel_001", "panel_002", "panel_004", "panel_005"]
     assert [ln["part"] for ln in res["lines"]] == \
-        ["hook", "escalation", "cliffhanger"]
+        ["hook", "escalation", "escalation", "cliffhanger"]
+    assert [ln["source"] for ln in res["lines"]] == \
+        ["script", "caption_fill", "script", "script"]
     assert res["lines"][0]["quote"] == "Where am I?"
-    assert res["lines"][1]["quote"] is None
+    assert res["lines"][2]["quote"] is None
     # text = joined line texts (TTS-ready, punctuation enforced)
     assert res["text"].startswith("Jin was an ordinary guy")
+    # coverage audit
+    cov = res["coverage"]
+    assert (cov["panels"], cov["model_lines"], cov["caption_fill_lines"],
+            cov["unspoken_panels"]) == (5, 3, 1, 1)
     # script.json on disk matches
     on_disk = json.loads((d / "script.json").read_text("utf-8"))
     assert on_disk["version"] == rs.SCRIPT_VERSION
     assert on_disk["input_hash"] == res["input_hash"]
-    assert len(on_disk["lines"]) == 3
+    assert len(on_disk["lines"]) == 4
+
+
+def test_gap_fill_covers_panels_the_main_call_missed(session):
+    """A short main response triggers a bounded gap-fill pass, and the model's
+    own words win over the caption fallback."""
+    d, _ = session
+    gap = json.dumps({"lines": [
+        {"panel_index": 2, "text": "His guide tells him to follow.",
+         "part": "setup", "quote": "Follow me."},
+        {"panel_index": 3, "text": "Silence answers from the dark.",
+         "part": "setup", "quote": None},
+    ]})
+    model = FakeModel([GOOD_LINES, gap])
+    res = rs.build_chapter_script(d, model_call=model)
+
+    by_id = {ln["panel_id"]: ln for ln in res["lines"]}
+    assert by_id["panel_002"]["source"] == "gap_fill"
+    assert by_id["panel_002"]["text"] == "His guide tells him to follow."
+    assert by_id["panel_003"]["source"] == "gap_fill"
+    assert res["coverage"]["caption_fill_lines"] == 0
+    assert res["coverage"]["gap_fill_lines"] == 2
+    # every panel of the chapter is now spoken
+    assert res["coverage"]["unspoken_panels"] == 0
+    assert len(res["lines"]) == 5
+    # and the gap prompt carried only the missing panels + the running context
+    gap_prompt = model.prompts[1]
+    assert "still have NO" in gap_prompt
+    assert "2. A man in a suit faces a door." in gap_prompt
+    assert "1. A gray background" not in gap_prompt   # already covered
+    assert "Jin was an ordinary guy" in gap_prompt    # context window
 
 
 def test_prompt_contains_all_panels_and_dedups_nonlexical(session):
@@ -141,14 +203,16 @@ def test_prompt_truncation_keeps_json_contract_and_head_tail(
     (d / "panels.json").write_text(big.model_dump_json(), "utf-8")
 
     # Force the truncation path deterministically (the default 60k budget is
-    # generous enough that a 25-panel chapter fits untouched).
-    monkeypatch.setattr(rs, "MAX_PROMPT_CHARS", 3000)
+    # generous enough that a 25-panel chapter fits untouched). The budget also
+    # has to clear the (now longer) fixed template that carries the title
+    # contract, so 4000 not 3000.
+    monkeypatch.setattr(rs, "MAX_PROMPT_CHARS", 4000)
 
     model = FakeModel([GOOD_LINES])
     rs.build_chapter_script(d, model_call=model, force=True)
     prompt = model.prompts[0]
 
-    assert len(prompt) <= 3000
+    assert len(prompt) <= 4000
     # The output contract survived: this is what used to be cut off.
     assert "Return STRICT JSON" in prompt, (
         "the JSON-schema instructions were truncated out of the prompt")
@@ -168,7 +232,13 @@ def test_panel_indices_out_of_range_are_dropped(session):
     ]})
     res = rs.build_chapter_script(d, model_call=FakeModel([bad]))
     assert res["status"] == "built"
-    assert [ln["panel_index"] for ln in res["lines"]] == [1, 2]
+    idx = [ln["panel_index"] for ln in res["lines"]]
+    assert 99 not in idx                 # invented index never reaches the TTS
+    # coverage still fills every speakable panel (3 has a "..." caption and no
+    # dialogue, so nothing can be said over it)
+    assert idx == [1, 2, 4, 5]
+    assert res["coverage"]["model_lines"] == 2
+    assert res["coverage"]["caption_fill_lines"] == 2
 
 
 def test_out_of_order_lines_are_sorted_not_rejected(session):
@@ -181,10 +251,13 @@ def test_out_of_order_lines_are_sorted_not_rejected(session):
     ]})
     res = rs.build_chapter_script(d, model_call=FakeModel([unordered]))
     assert res["status"] == "built"
-    # the narrator speaks in panel order: sorted, nothing dropped
-    assert [ln["panel_index"] for ln in res["lines"]] == [1, 2, 2, 4]
-    assert [ln["text"] for ln in res["lines"]] == \
-        ["earlier.", "middle one.", "middle two.", "later."]
+    # the narrator speaks in panel order: sorted; and the one-line-per-panel
+    # contract keeps the FIRST line for a duplicated panel_index
+    model_lines = [ln for ln in res["lines"] if ln["source"] == "script"]
+    assert [ln["panel_index"] for ln in model_lines] == [1, 2, 4]
+    assert [ln["text"] for ln in model_lines] == \
+        ["earlier.", "middle one.", "later."]
+    assert len(model_lines) == 3
 
 
 def test_one_line_response_is_rejected_as_fallback(session):
@@ -265,7 +338,8 @@ def test_force_rebuilds(session):
     model2 = FakeModel([GOOD_LINES])
     res = rs.build_chapter_script(d, model_call=model2, force=True)
     assert res["status"] == "built"
-    assert len(model2.prompts) == 1
+    # main call + one gap-fill round (GOOD_LINES leaves panels 2/3 unspoken)
+    assert len(model2.prompts) == 2
 
 
 # -------------------------------------------------------------- eligibility --
@@ -313,3 +387,51 @@ def test_load_script_roundtrip_and_rejects_bad(tmp_path):
          "quote": None}]}
     (tmp_path / "script.json").write_text(json.dumps(good), "utf-8")
     assert rs.load_script(tmp_path) == good
+
+
+# ---------------------------------------------------------------- YouTube title
+def test_build_captures_and_persists_title(session):
+    d, _ = session
+    resp = json.dumps({
+        "title": "He Was The Weakest — Until He Logged In",
+        "lines": [
+            {"panel_index": 1, "text": "Jin was ordinary.",
+             "part": "hook", "quote": None},
+            {"panel_index": 4, "text": "Then it explodes.",
+             "part": "escalation", "quote": None},
+            {"panel_index": 5, "text": "A hand claws out.",
+             "part": "cliffhanger", "quote": None}]})
+    res = rs.build_chapter_script(d, model_call=FakeModel([resp]))
+    assert res["status"] == "built"
+    assert res["title"] == "He Was The Weakest — Until He Logged In"
+    on_disk = json.loads((d / "script.json").read_text("utf-8"))
+    assert on_disk["title"] == res["title"]
+
+
+def test_build_without_title_is_gracefully_none(session):
+    d, _ = session
+    res = rs.build_chapter_script(d, model_call=FakeModel([GOOD_LINES]))
+    assert res["status"] == "built"
+    assert res["title"] is None
+
+
+def test_clean_title_caps_at_word_boundary():
+    out = rs._clean_title("word " * 40)
+    assert len(out) <= rs._TITLE_MAX_CHARS
+    assert not out.endswith(" ") and "wor" in out
+
+
+def test_generate_recap_title_parses_primary_and_alts():
+    resp = json.dumps({"title": "SSS-Rank Hunter Rises",
+                       "alternatives": ["Alt one", "Alt two"]})
+    res = rs.generate_recap_title("Some recap narration.",
+                                  model_call=FakeModel([resp]))
+    assert res["title"] == "SSS-Rank Hunter Rises"
+    assert res["alternatives"] == ["Alt one", "Alt two"]
+
+
+def test_generate_recap_title_empty_and_failure_are_none():
+    assert rs.generate_recap_title("  ")["title"] is None
+    # model_call raising is swallowed -> no crash, no title (bonus feature)
+    boom = rs.generate_recap_title("text", model_call=FakeModel([]))
+    assert boom == {"title": None, "alternatives": []}
