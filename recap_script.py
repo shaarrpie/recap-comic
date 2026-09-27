@@ -74,7 +74,7 @@ from typing import Any
 
 from guided_cutter import CutArtifact
 from narrator_prompt import NARRATOR_STYLE_PROMPT
-from text_clean import clean_text
+from text_clean import clean_text, strip_promo
 
 log = logging.getLogger(__name__)
 
@@ -95,8 +95,13 @@ SCRIPT_FILE = "script.json"
 # speaking URLs / scanlation promo text. Live data had the narrator reading
 # "φòÿ∞òä..." aloud and closing every chapter on a "Read at ASURASCANS.COM
 # for the fastest releases" splash, so pre-v6 scripts must regenerate.
-SCRIPT_VERSION = 6
-GENERATOR = "recap_script.6"
+# v7: CREDIT / ATMOSPHERE carve-out — the "credit/logo/banner" rule now
+# explicitly OUTRANKS "one line per panel" (that conflict was the leak: the
+# model resolved two absolute-sounding rules the wrong way and voiced the scan
+# site), plus a deterministic strip_promo() scrub on the final lines before TTS
+# as a safety net. Pre-v7 scripts regenerate.
+SCRIPT_VERSION = 7
+GENERATOR = "recap_script.7"
 
 # Structure template for the model + for validating its mapping.
 STRUCTURE = ["hook", "setup", "escalation", "cliffhanger"]
@@ -153,9 +158,26 @@ RULES:
   narrate a site name, URL, app promo or scanlation credit — that is not the
   story. Foreign text is stripped from the panel list before you see it, so a
   non-Latin character in your output means you invented one.
+- CREDIT / LOGO / BANNER PANELS: this rule OUTRANKS "one line per panel." If a
+  panel is a title card, credits roll, logo banner, "read more at X" splash, or
+  a subscribe/follow prompt, do NOT read out any site name, URL, or platform
+  mentioned in it. Write ONE short sign-off line using ONLY generic phrasing —
+  a beat of anticipation, a tease for next chapter, or a direct address to the
+  viewer ("that's chapter five — next one's a gut-punch"). If the panel carries
+  zero narratable content beyond branding, you may still emit a line, but it
+  must be 100% site/URL/platform-free. This is a hard filter, not a suggestion:
+  leaking a brand name is a worse failure than leaving the panel's literal text
+  undescribed.
 - Use character NAMES from the dialogue/memory, not "a person" or "a man".
 - Narrate STORY: what happens, why it matters, what changes. Never
   inventory what is visible ("a gray background with no characters").
+- ATMOSPHERE PANELS: some panels are pure atmosphere (empty rooms, establishing
+  shots, a lull with no new information). For these, do NOT describe what is
+  visible ("a grand hall opens," "stone statues flank a wall"). Use the panel's
+  ONE line to advance mood, tension, or a character's interior state carried
+  over from the previous beat — what they feel or brace for, not what the camera
+  sees. If truly nothing can be added without inventing events, default to a
+  short continuation of the prior line's stakes rather than a new description.
 - ONE LINE PER PANEL — mandatory, no exceptions. Every panel_index in the
   list gets exactly one line of its own; the narrator is never silent over
   a panel. Never merge panels, never skip panels, never write one line that
@@ -748,6 +770,28 @@ def build_chapter_script(
     # Full-coverage enforcement: every usable panel must carry a line, so the
     # narrator never pauses over visible art (gap-fill batches, then captions).
     lines, coverage = _ensure_coverage(parsed["lines"], panels, ctx, _call)
+
+    # Safety net: prompt compliance on trailing / low-signal branding panels is
+    # unreliable, so scrub scanlation domains and promo tokens from the FINAL
+    # lines before they are written and sent to TTS (reuses text_clean's vetted
+    # patterns). A line that was pure branding collapses to a neutral bridge so
+    # the "speak over every panel" guarantee still holds.
+    _BRIDGE = "The story continues."
+    scrubbed = 0
+    for ln in lines:
+        for key in ("text", "quote"):
+            val = ln.get(key)
+            if not val:
+                continue
+            cleaned = strip_promo(val)
+            if cleaned != val:
+                ln[key] = cleaned
+                scrubbed += 1
+        if not ln.get("text", "").strip():
+            ln["text"] = _BRIDGE
+    if scrubbed:
+        log.info("[script] stripped promo/branding tokens from %d line field(s)",
+                 scrubbed)
 
     script_text = " ".join(ln["text"] for ln in lines)
     result = {

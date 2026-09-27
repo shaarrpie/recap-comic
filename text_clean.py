@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 
 __all__ = ["latin_ratio", "strip_non_latin", "english_bubbles", "clean_text",
-           "is_promo_text", "promo_reason"]
+           "is_promo_text", "promo_reason", "strip_promo"]
 
 
 # ---------------------------------------------------------------- language --
@@ -170,3 +170,36 @@ def is_promo_text(*texts: str | None) -> bool:
     if not blob:
         return False
     return bool(_DOMAIN_RE.search(blob) or _PROMO_RE.search(blob))
+
+
+# Extra promo phrasing the safety-net scrub strips from narrator lines but
+# that is deliberately NOT in ``_PROMO_RE`` (which also drives panel demotion,
+# where a false positive silently deletes story art). Kept to unambiguous
+# call-to-action wording so it never eats a story sentence.
+_BRAND_PHRASE_RE = re.compile(
+    r"(?:\basura\s*scans?\b|\breaper\s*scans?\b|\bread\s+more\b"
+    r"|\bread\s+(?:more|first|it|them|ahead)\s+(?:at|on|to)\b"
+    r"|\bsmash\s+(?:the\s+)?(?:like\s+and\s+)?subscribe\b"
+    r"|\bsubscrib(?:e|ing)\b|\bhit\s+(?:the\s+)?(?:bell|like)\b"
+    r"|\bfollow\s+(?:me|us|him|her)\b|\b(?:check|head)\s+(?:out|over)\s+to\b)",
+    re.IGNORECASE,
+)
+
+
+def strip_promo(text: str | None) -> str:
+    """Remove scanlation domain/promo tokens from a line, keeping story text.
+
+    Reuses the exact vetted patterns behind ``is_promo_text`` (so the safety net
+    can never drift from the detector) plus ``_BRAND_PHRASE_RE`` (call-to-action
+    wording scrubbed here only, never used to demote a panel). Fails open on
+    anything ambiguous and preserves ordinary sentence punctuation, because a
+    false positive here would mangle the narrator's real lines.
+    """
+    if not text:
+        return text or ""
+    # domain FIRST: removing the bare group name (``asurascans``) before the
+    # full ``asurascans.com`` would orphan the ".com" and leave "at.com".
+    cleaned = _DOMAIN_RE.sub(" ", text)
+    cleaned = _PROMO_RE.sub(" ", cleaned)
+    cleaned = _BRAND_PHRASE_RE.sub(" ", cleaned)
+    return _tidy(cleaned)

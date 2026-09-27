@@ -58,6 +58,12 @@ def test_user_template_points_at_the_persona():
     # English-only contract: nothing non-Latin or promotional may be spoken
     assert "English ONLY" in tpl
     assert "narrate a site name, URL, app promo or scanlation credit" in tpl
+    # credit/logo carve-out must name its precedence over one-line-per-panel
+    assert 'OUTRANKS "one line per panel."' in tpl
+    assert "CREDIT / LOGO / BANNER PANELS" in tpl
+    # atmosphere panels must be redirected from visual inventory to carried
+    # tension, not banned outright (coverage still needs a line per panel)
+    assert "ATMOSPHERE PANELS" in tpl
     # the gap-fill pass carries the same rule, or coverage reintroduces it
     assert "English only" in rs.GAP_FILL_PROMPT_TEMPLATE
     # the old anti-style rule that fought the persona is gone
@@ -82,8 +88,8 @@ def test_version_bump_invalidates_pre_persona_cache(tmp_path):
     the "3-12 lines, skip panels" contract (the dead-air cause); v5 predates the
     English-only rule, so its lines can contain a URL or mojibake the narrator
     was forced to speak."""
-    assert rs.SCRIPT_VERSION == 6
-    for stale_version in (1, 2, 3, 4, 5):
+    assert rs.SCRIPT_VERSION == 7
+    for stale_version in (1, 2, 3, 4, 5, 6):
         stale = {"version": stale_version, "style": "recap",
                  "input_hash": "x" * 32,
                  "lines": [{"panel_id": "p1", "panel_index": 1,

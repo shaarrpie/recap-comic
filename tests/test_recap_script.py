@@ -204,15 +204,16 @@ def test_prompt_truncation_keeps_json_contract_and_head_tail(
 
     # Force the truncation path deterministically (the default 60k budget is
     # generous enough that a 25-panel chapter fits untouched). The budget also
-    # has to clear the (now longer) fixed template that carries the title
-    # contract, so 4000 not 3000.
-    monkeypatch.setattr(rs, "MAX_PROMPT_CHARS", 4000)
+    # has to clear the fixed template that carries the title + English-only +
+    # credit/atmosphere contracts (the template is ~4.9k chars now), so 6000 --
+    # still far under 60k, so the many-panel list is genuinely truncated.
+    monkeypatch.setattr(rs, "MAX_PROMPT_CHARS", 6000)
 
     model = FakeModel([GOOD_LINES])
     rs.build_chapter_script(d, model_call=model, force=True)
     prompt = model.prompts[0]
 
-    assert len(prompt) <= 4000
+    assert len(prompt) <= 6000
     # The output contract survived: this is what used to be cut off.
     assert "Return STRICT JSON" in prompt, (
         "the JSON-schema instructions were truncated out of the prompt")

@@ -100,7 +100,8 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
                    gap_frac: float = 0.05,
                    pan_overflow: float = 0.15,
                    split_ss: float = 3.0,
-                   pan_travel_frac: float = 1.0) -> str:
+                   pan_travel_frac: float = 1.0,
+                   pan_width_margin: float = 0.9) -> str:
     """One panel composited onto a neutral blurred full-frame copy of itself.
 
     Background branch (always): cover-scaled to the canvas and centre-cropped
@@ -203,7 +204,19 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
         # pan_left / pan_right: same closer framing, but the whole panel slides
         # ACROSS the blurred backdrop -- it needs no horizontal overflow, so it
         # adds lateral variety without cropping any art away.
-        s = f"({h}/ih)*(1+{pan_frac:g})"
+        #
+        # Width clamp: the closer framing scales the foreground to
+        # (h/ih)*(1+pan_frac), which is right for TALL art (its width stays
+        # under the canvas so blur pillars show). But a short/near-canvas-aspect
+        # panel scaled that far blows its width past the canvas too, so it
+        # covers the whole frame and the blurred background vanishes. Cap the
+        # scale so the displayed width never exceeds ``pan_width_margin`` of the
+        # canvas: min(height-closer-framing, margin * w/iw). Tall panels never
+        # bind (their w/iw is large); squat panels keep side blur and still
+        # overflow vertically enough to pan. The overlay composites onto the
+        # full-frame blurred bg, so any uncovered edge shows blur, never black.
+        s = (f"min(({h}/ih)*(1+{pan_frac:g}),"
+             f"{pan_width_margin:g}*{w}/iw)")
         fg = (f"[fgr{i}]scale=w='iw*{s}':h='ih*{s}'"
               f":eval=frame:flags=lanczos[fg{i}]")
         # The resolver already applied its travel fraction, so pan_x/pan_y are

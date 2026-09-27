@@ -18,6 +18,7 @@ from text_clean import (
     latin_ratio,
     promo_reason,
     strip_non_latin,
+    strip_promo,
 )
 
 # "\uc544\uc774\uc2a1" = Korean aisik; "\u03c6\u00f2\u00ff\u221e" = the
@@ -96,6 +97,32 @@ def test_clean_text_is_idempotent():
 def test_promo_text_detects_scanlation_cards(text):
     assert is_promo_text(text) is True
     assert promo_reason(text)
+
+
+def test_strip_promo_removes_branding_keeps_story():
+    out = strip_promo("He draws his blade. Read at ASURASCANS.COM now")
+    # the whole domain (not just the group name) must go; story survives
+    assert "asurascans" not in out.lower() and ".com" not in out.lower()
+    assert "blade" in out
+    assert "patreon" not in strip_promo("Support the creator on patreon").lower()
+    assert strip_promo("TL: RandomGuy QC: Someone").strip() == "RandomGuy Someone"
+
+
+@pytest.mark.parametrize("story", [
+    "FOG SWORD: RUSHING FOG STORM",          # technique card, credit-label false positive
+    "I read at the table every night.",       # "read at" alone is story
+    "She kept reading the letter in silence.",  # "reading" alone is story
+    "earlier.",                               # trailing period must survive
+])
+def test_strip_promo_preserves_story_punctuation(story):
+    # false-positive guard: ordinary story lines are never mangled
+    assert "." not in strip_promo(story) or story.count(".") == strip_promo(story).count(".")
+    assert strip_promo(story).strip() != "" or not story.strip()
+
+
+def test_strip_promo_fails_open_on_empty():
+    assert strip_promo(None) == ""
+    assert strip_promo("") == ""
 
 
 @pytest.mark.parametrize("text", [
