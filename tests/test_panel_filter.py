@@ -58,6 +58,32 @@ def uniform_block(h: int, rgb: tuple[int, int, int],
     return np.full((h, w, 3), rgb, dtype=np.uint8)
 
 
+def lone_bubble_block(h: int, w: int = W, *, balloon_frac: float = 0.9,
+                      field: tuple[int, int, int] = (0, 0, 0),
+                      balloon: tuple[int, int, int] = (255, 255, 255),
+                      text: tuple[int, int, int] = (8, 8, 8)) -> np.ndarray:
+    """A single speech balloon covering most of a flat field, with dark text
+    strokes inside. Bimodal (near-white + near-black, few mid-tones) -- the
+    lone-bubble card that defeats the uniform_fill and white_dominance gates."""
+    from PIL import ImageDraw
+    img = Image.new("RGB", (w, h), field)
+    dr = ImageDraw.Draw(img)
+    inset = int(min(w, h) * (1 - balloon_frac) / 2)
+    dr.ellipse([inset, inset, w - inset, h - inset], fill=balloon)
+    arr = np.asarray(img).copy()
+    for y in range(h // 3, 2 * h // 3, 16):        # "text" lines
+        arr[y:y + 4, w // 4:3 * w // 4] = text
+    return arr
+
+
+def bw_scene_block(h: int, w: int = W) -> np.ndarray:
+    """Black-and-white line-art scene: a WIDE grey spread (real mid-tones),
+    so its two-tone fraction stays well below the lone-bubble bar."""
+    rng = np.random.default_rng(11)
+    g = rng.integers(0, 255, (h, w, 1), dtype=np.uint8)
+    return np.repeat(g, 3, axis=2)
+
+
 def panel_dict(i: int, y0: int, y1: int, **over: object) -> dict:
     p: dict[str, object] = {
         "id": f"{i:03d}", "panel_index": i, "y_start": y0, "y_end": y1,
@@ -149,12 +175,83 @@ def test_promo_rule_respects_a_user_confirmed_panel(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
+# lone speech-bubble card demotion (FILTER_VERSION 8)
+# --------------------------------------------------------------------------- #
+def test_lone_bubble_on_black_demotes(tmp_path):
+    """A white balloon on a black field with text is bimodal: too many colours
+    for uniform_fill, too dark for white_dominance -- the old gates kept it, so
+    it showed as a floating-text frame. The two-tone test demotes it."""
+    panels = [panel_dict(1, 0, 300, narration="", dialogue="HONESTLY, I DON'T KNOW."),
+              panel_dict(2, 300, 1060, narration="the hero draws his sword")]
+    d = build_session(tmp_path, [lone_bubble_block(300), art_block(760)], panels)
+    res = pf.filter_panels(d)
+    out = json.loads((d / "panels_filtered.json").read_text("utf-8"))
+    by_id = {p["id"]: p for p in out["panels"]}
+    assert by_id["001"]["context_only"] is True      # balloon card -> no frame
+    assert not by_id["002"].get("context_only")      # story art untouched
+    assert res["context_only"] == 1
+    side = json.loads((d / "filter_summary.json").read_text("utf-8"))
+    dec = {str(e["id"]): e for e in side["decisions"]}
+    assert dec["001"]["decision"] == pf.DECISION_CONTEXT_ONLY
+
+
+def test_lone_bubble_on_white_demotes(tmp_path):
+    """Inverted card (black balloon on a white field) is equally two-tone."""
+    panels = [panel_dict(1, 0, 300, narration="", dialogue="WAIT... WHAT?"),
+              panel_dict(2, 300, 1060, narration="the city glows below")]
+    d = build_session(tmp_path, [lone_bubble_block(
+        300, field=(255, 255, 255), balloon=(0, 0, 0), text=(255, 255, 255)),
+        art_block(760)], panels)
+    res = pf.filter_panels(d)
+    out = json.loads((d / "panels_filtered.json").read_text("utf-8"))
+    by_id = {p["id"]: p for p in out["panels"]}
+    assert by_id["001"]["context_only"] is True
+    assert not by_id["002"].get("context_only")
+    assert res["context_only"] == 1
+
+
+def test_balloon_over_colourful_scene_is_kept(tmp_path):
+    """A colourful scene panel with dialogue has few pure extremes and lots of
+    saturation, so it is never mistaken for a lone-bubble card."""
+    panels = [panel_dict(1, 0, 300, narration="battle", dialogue="DIE!")]
+    d = build_session(tmp_path, [art_block(300)], panels)
+    res = pf.filter_panels(d)
+    out = json.loads((d / "panels_filtered.json").read_text("utf-8"))
+    assert out["panels"][0].get("context_only") is not True
+    assert res["context_only"] == 0
+
+
+def test_bw_line_art_scene_is_kept(tmp_path):
+    """Black-and-white line art has a wide grey mid-tone spread, so its
+    two-tone fraction stays below the lone-bubble bar even with dialogue."""
+    panels = [panel_dict(1, 0, 300, narration="duel", dialogue="HRAAAGH!")]
+    d = build_session(tmp_path, [bw_scene_block(300)], panels)
+    res = pf.filter_panels(d)
+    out = json.loads((d / "panels_filtered.json").read_text("utf-8"))
+    assert out["panels"][0].get("context_only") is not True
+    assert res["context_only"] == 0
+
+
+def test_lone_bubble_without_text_is_kept(tmp_path):
+    """Fail-safe: a two-tone card with NO dialogue/narration is never demoted
+    (there would be no line to voice, so dropping the frame loses content)."""
+    panels = [panel_dict(1, 0, 300, narration="", dialogue="",
+                         panel_type="single")]
+    d = build_session(tmp_path, [lone_bubble_block(300)], panels)
+    res = pf.filter_panels(d)
+    out = json.loads((d / "panels_filtered.json").read_text("utf-8"))
+    assert out["panels"][0].get("context_only") is not True
+    assert res["context_only"] == 0
+
+
+# --------------------------------------------------------------------------- #
 # _score_array
 # --------------------------------------------------------------------------- #
 def test_score_array_zero_size_returns_zeros():
     s = pf._score_array(np.zeros((0, 10, 3), dtype=np.uint8), CFG)
     assert s == {"white_of_content": 0.0, "color_ratio": 0.0,
-                 "edge_density": 0.0, "uniform_ratio": 0.0}
+                 "edge_density": 0.0, "uniform_ratio": 0.0,
+                 "two_tone_frac": 0.0}
 
 
 def test_score_array_uniform_colours():

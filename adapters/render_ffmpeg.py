@@ -101,7 +101,8 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
                    pan_overflow: float = 0.15,
                    split_ss: float = 3.0,
                    pan_travel_frac: float = 1.0,
-                   pan_width_margin: float = 0.9) -> str:
+                   pan_width_margin: float = 0.9,
+                   fps: float = 30.0) -> str:
     """One panel composited onto a neutral blurred full-frame copy of itself.
 
     Background branch (always): cover-scaled to the canvas and centre-cropped
@@ -130,10 +131,18 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
     The blurred background always fills the frame, so no move can reveal
     empty/black areas. Returns the chain WITHOUT the trailing label.
     """
+    # Loop-hold: the caller feeds ONE source frame (no input -loop), so every
+    # static filter (the full-frame gblur background, and a pan foreground of
+    # constant size) is computed ONCE and then duplicated to n frames with a
+    # clean PTS ramp. Recomputing an identical blur/scale on every frame is pure
+    # waste; duplicating its result is bit-identical. n = the frame count the
+    # old `-loop 1 -t dur` + `fps=` path produced, so output length is unchanged.
+    n = max(1, int(round(dur * fps)))
+    lp = f"loop=loop={n - 1}:size=1:start=0,setpts=N/{fps:g}/TB"
     bg = (f"[bgr{i}]"
           f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
           f"crop={w}:{h}:(iw-{w})/2:(ih-{h})/2,"
-          f"gblur=sigma={sigma:g}"
+          f"gblur=sigma={sigma:g},{lp}"
           f"[bg{i}]")
     head = f"split=2[bgr{i}][fgr{i}];"
     centre = f"[bg{i}][fg{i}]overlay=x=(W-w)/2:y=(H-h)/2"
@@ -159,7 +168,9 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
         gap = int(round(w * gap_frac))             # gap between bands (px)
         dt = dur if dur and dur > 0 else 1.0
         copies = "".join(f"[sl{k}_{i}]" for k in range(columns))
-        chain = f"[fgr{i}]split={columns}{copies};"
+        # duplicate the single frame to n first, THEN split into bands so each
+        # band's crop y(t) animates across the clip.
+        chain = f"[fgr{i}]{lp},split={columns}{copies};"
         for k in range(columns):
             d = split_dir * (1 if k % 2 == 0 else -1)
             if d > 0:                              # pan down: top -> bottom
@@ -189,14 +200,14 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
     if kind in ("zoom_in", "zoom_out", "pan_down", "pan_up",
                 "pan_left", "pan_right") and dur > 0:
         zm = max(zoom_mag, float(zoom or 0.0))
-        if kind == "zoom_in":
-            zexpr = f"(({h}/ih)*(1+{zm:g}*t/{dur:.3f}))"
-            fg = (f"[fgr{i}]scale=w='iw*{zexpr}':h='ih*{zexpr}'"
-                  f":eval=frame:flags=lanczos[fg{i}]")
-            return f"{head}{bg};{fg};{centre}"
-        if kind == "zoom_out":
-            zexpr = f"(({h}/ih)*({1.0 + zm:g}-{zm:g}*t/{dur:.3f}))"
-            fg = (f"[fgr{i}]scale=w='iw*{zexpr}':h='ih*{zexpr}'"
+        if kind in ("zoom_in", "zoom_out"):
+            # zoom genuinely varies per frame -> duplicate first, then animate
+            # the scale with eval=frame over the ramped timestamps.
+            if kind == "zoom_in":
+                zexpr = f"(({h}/ih)*(1+{zm:g}*t/{dur:.3f}))"
+            else:
+                zexpr = f"(({h}/ih)*({1.0 + zm:g}-{zm:g}*t/{dur:.3f}))"
+            fg = (f"[fgr{i}]{lp},scale=w='iw*{zexpr}':h='ih*{zexpr}'"
                   f":eval=frame:flags=lanczos[fg{i}]")
             return f"{head}{bg};{fg};{centre}"
         # pan_down / pan_up: hold the foreground taller than the frame so the
@@ -217,8 +228,10 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
         # full-frame blurred bg, so any uncovered edge shows blur, never black.
         s = (f"min(({h}/ih)*(1+{pan_frac:g}),"
              f"{pan_width_margin:g}*{w}/iw)")
+        # pan foreground is a CONSTANT size -> scale once, then duplicate; only
+        # the overlay position animates.
         fg = (f"[fgr{i}]scale=w='iw*{s}':h='ih*{s}'"
-              f":eval=frame:flags=lanczos[fg{i}]")
+              f":eval=init:flags=lanczos,{lp}[fg{i}]")
         # The resolver already applied its travel fraction, so pan_x/pan_y are
         # FINAL canvas px and must not be scaled a second time (double-scaling
         # turned a 154px slide into an imperceptible 54px drift). The
@@ -240,20 +253,22 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
         overlay = f"[bg{i}][fg{i}]overlay=x=(W-w)/2:y='{oy}'"
         return f"{head}{bg};{fg};{overlay}"
 
-    # ---- legacy contain->cover push-in (motion preset inactive): unchanged
+    # ---- legacy contain->cover push-in (motion preset inactive)
     if zoom > 0 and dur > 0:
         # Per-frame scale factor: contain-fit at t=0 -> cover x (1+zoom) at
         # the end. iw/ih are the panel PNG dims; w/h the canvas literals.
+        # Genuinely time-varying -> duplicate first, then animate the scale.
         contain = f"min({w}/iw,{h}/ih)"
         cover = f"max({w}/iw,{h}/ih)"
         zexpr = (f"({contain}+({cover}*(1+{zoom:g})-{contain})*t/{dur:.3f})")
-        fg = (f"[fgr{i}]"
+        fg = (f"[fgr{i}]{lp},"
               f"scale=w='iw*{zexpr}':h='ih*{zexpr}':eval=frame:flags=lanczos"
               f"[fg{i}]")
     else:
+        # static contain-fit: constant size -> scale once, then duplicate.
         fg = (f"[fgr{i}]"
-              f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos"
-              f"[fg{i}]")
+              f"scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,"
+              f"{lp}[fg{i}]")
     if (pan_x or pan_y) and dur > 0:
         overlay = (f"[bg{i}][fg{i}]overlay="
                    f"x='(W-w)/2+({pan_x:g})*t/{dur:.3f}':"
@@ -322,9 +337,16 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
                 use_xfade = True
                 break
 
+    blur = style is not None and style.blur_background
     for i, e in enumerate(timeline.entries):
         dur = f"{e.duration_seconds:.3f}"
-        cmd += ["-loop", "1", "-t", dur, "-i", e.source_image]
+        if blur:
+            # Feed ONE frame; _blur_bg_chain computes the static gblur/scale
+            # ONCE and loop-holds to the frame count (bit-identical, ~2-3x less
+            # filter work). Non-blur paths keep the input-level -loop.
+            cmd += ["-framerate", str(timeline.fps), "-i", e.source_image]
+        else:
+            cmd += ["-loop", "1", "-t", dur, "-i", e.source_image]
         if e.audio_path:
             cmd += ["-i", e.audio_path]
         else:
@@ -385,7 +407,8 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
                                     "split_pan_frac", 0.15) or 0.15),
                                 split_ss=float(motion.get(
                                     "split_ss", 3.0) or 3.0),
-                                pan_travel_frac=travel_frac)
+                                pan_travel_frac=travel_frac,
+                                fps=float(timeline.fps))
         else:
             motion = e.motion or {}
             default_zoom = style.zoom_strength if style else 0.3

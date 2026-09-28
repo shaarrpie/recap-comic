@@ -470,7 +470,9 @@ def test_blur_chain_split_has_gap_and_overlays_on_bg():
     """Bands are overlaid directly on the blurred bg (no hstack composite) so
     a `gap` (round(W*SPLIT_GAP_FRAC)) of blurred background shows between them."""
     chain = _blur_bg_chain(0, 1920, 1080, 40.0, columns=2, dur=6.0)
-    assert "[fgr0]split=2[sl0_0][sl1_0];" in chain
+    # single frame is loop-held (blur/scale computed once) before splitting
+    assert "[fgr0]loop=" in chain
+    assert "split=2[sl0_0][sl1_0]" in chain
     assert "crop=iw:trunc(ih/2):0:trunc(ih*0/2)" in chain
     assert "crop=iw:trunc(ih/2):0:trunc(ih*1/2)" in chain
     assert "hstack" not in chain                      # no side-by-side composite

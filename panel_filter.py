@@ -73,7 +73,11 @@ log = logging.getLogger(__name__)
 # GROUP.COM for the fastest releases") are drawn art, so the pixel gates below
 # legitimately refuse to demote them, while the one-line-per-panel script
 # contract forced the narrator to speak them. v6 had no such rule.
-FILTER_VERSION = 7
+# v8: LONE-BUBBLE card detection. A crop that is just a speech balloon on a
+# flat (often black) field with no scene art is bimodal, so it defeats both the
+# single-colour uniform_fill gate and the white_dominance gate. A two-tone
+# (near-white + near-black) fraction catches it. FILTER_VERSION 7 -> 8.
+FILTER_VERSION = 8
 
 # Decisions ---------------------------------------------------------------
 DECISION_KEEP = "keep"
@@ -124,6 +128,15 @@ class FilterConfig:
     uniform_fill_ratio: float = 0.92
     uniform_color_tolerance: int = 60  # per-channel distance from the median
 
+    # Lone speech-bubble card (v8). A crop that is a single balloon on a flat
+    # field (often black) is bimodal: too many colours for uniform_fill, too
+    # dark for white_dominance. It is, however, almost entirely near-white +
+    # near-black pixels with very few mid-tones, whereas real art (even B&W
+    # line art) carries lots of grey/colour mid-tones. Demote when the two-tone
+    # fraction clears lone_bubble_two_tone_min AND the panel has text.
+    lone_bubble_two_tone_min: float = 0.88
+    lone_bubble_dark_ceiling: int = 40  # per-channel max for "near-black"
+
     def with_overrides(self, **ov: Any) -> FilterConfig:
         valid = set(self.__dataclass_fields__)
         bad = set(ov) - valid
@@ -148,7 +161,8 @@ def _score_array(arr: np.ndarray, cfg: FilterConfig) -> dict[str, float]:
     total = h * w
     if total == 0:
         return {"white_of_content": 0.0, "color_ratio": 0.0,
-                "edge_density": 0.0, "uniform_ratio": 0.0}
+                "edge_density": 0.0, "uniform_ratio": 0.0,
+                "two_tone_frac": 0.0}
 
     flat = arr.reshape(-1, 3)
     white_mask = ((flat[:, 0] > cfg.white_pixel_threshold)
@@ -179,10 +193,20 @@ def _score_array(arr: np.ndarray, cfg: FilterConfig) -> dict[str, float]:
             <= cfg.uniform_color_tolerance).all(axis=1)
     uniform_ratio = float(near.sum()) / total
 
+    # Two-tone fraction: pixels that are near-white OR near-black. A lone
+    # speech-bubble card (balloon on a flat field) is almost entirely these
+    # two extremes; real art (even B&W line art) has many grey mid-tones, so
+    # its two-tone fraction is far lower. This is the lone-bubble discriminator.
+    black_mask = ((flat[:, 0] < cfg.lone_bubble_dark_ceiling)
+                  & (flat[:, 1] < cfg.lone_bubble_dark_ceiling)
+                  & (flat[:, 2] < cfg.lone_bubble_dark_ceiling))
+    two_tone_frac = float((white_mask | black_mask).sum()) / total
+
     return {"white_of_content": round(white_of_content, 5),
             "color_ratio": round(color_ratio, 5),
             "edge_density": round(edge_density, 6),
-            "uniform_ratio": round(uniform_ratio, 5)}
+            "uniform_ratio": round(uniform_ratio, 5),
+            "two_tone_frac": round(two_tone_frac, 5)}
 
 
 def _trim_black_padding(arr: np.ndarray, dark_thr: int) -> np.ndarray:
@@ -388,6 +412,35 @@ TEXT_PANEL_TYPES = frozenset({
 })
 
 
+def _is_lone_bubble(panel: dict[str, Any], score: dict[str, float],
+                    thr: dict[str, Any], cfg: FilterConfig) -> bool:
+    """Lone speech-bubble card: a balloon on a flat field, no scene art.
+
+    Bimodal (near-white balloon + near-black surround), so it defeats the
+    single-colour ``uniform_fill`` gate and the ``white_dominance`` gate. The
+    discriminator is a very high ``two_tone_frac`` (almost every pixel is
+    near-white or near-black, few mid-tones) plus low scene colour and visible
+    text. Real art — even black-and-white line art — has grey mid-tones that
+    pull two_tone_frac well below the bar. Requires the panel to actually carry
+    dialogue/narration so the line is voiced over a neighbour; a text-less
+    panel is never demoted (fail-safe: never lose a line or delete story art).
+    """
+    if not score:
+        return False
+    if panel.get("context_only"):
+        return False  # already demoted; idempotent
+    has_text = bool(str(panel.get("dialogue") or "").strip()) \
+        or bool(str(panel.get("narration") or "").strip()) \
+        or str(panel.get("panel_type") or "").lower() in TEXT_PANEL_TYPES
+    if not has_text:
+        return False
+    two_tone_ok = score.get("two_tone_frac", 0.0) >= cfg.lone_bubble_two_tone_min
+    color_ok = (bool(thr["is_bw_session"])
+                or score["color_ratio"] <= thr["text_color_threshold"])
+    edge_ok = score["edge_density"] >= thr["text_edge_floor"]
+    return bool(two_tone_ok and color_ok and edge_ok)
+
+
 # --------------------------------------------------------------------------- #
 # Core filter
 # --------------------------------------------------------------------------- #
@@ -550,6 +603,19 @@ def filter_panels(
             log.info("[C] %-18s context-only (white=%.3f color=%.4f "
                      "edge=%.5f)", pid, score["white_of_content"],
                      score["color_ratio"], score["edge_density"])
+            continue
+
+        if _is_lone_bubble(p, score, thresholds, cfg):
+            entry["_decision"] = DECISION_CONTEXT_ONLY
+            entry["_lone_bubble"] = True
+            annotated.append(entry)
+            q = {**p, "context_only": True}
+            out_panels.append(q)
+            context_only_ids.add(pid)
+            log.info("[C] %-18s context-only (lone speech bubble: "
+                     "two_tone=%.3f color=%.4f edge=%.5f)", pid,
+                     score.get("two_tone_frac", 0.0), score["color_ratio"],
+                     score["edge_density"])
             continue
 
         entry["_decision"] = DECISION_KEEP
