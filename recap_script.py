@@ -338,29 +338,83 @@ def _input_hash(artifact: CutArtifact, style: str, ctx: dict | None) -> str:
     return h.hexdigest()[:32]
 
 
+def _iter_line_objects(raw: str):
+    """Yield the line dicts from a model response, TOLERANT of truncation.
+
+    A long chapter's single script call can exceed the token budget and come
+    back with the JSON array cut off mid-object. A strict json.loads then fails
+    and the WHOLE chapter falls back to raw joined captions (the worst output).
+    Try a whole-object parse first; if that yields no lines array, brace-scan
+    the "lines": [ ... ] region and salvage every COMPLETE {...} object,
+    dropping only the final partial one. The missing tail is then filled by
+    gap-fill, so a truncation costs a few regenerated lines, not the chapter.
+    """
+    first = raw.find("{")
+    if first == -1:
+        return
+    last = raw.rfind("}")
+    if last > first:
+        try:
+            obj = json.loads(raw[first:last + 1])
+        except ValueError:
+            obj = None
+        if isinstance(obj, dict) and isinstance(obj.get("lines"), list):
+            yield from (ln for ln in obj["lines"] if isinstance(ln, dict))
+            return
+    key = raw.find('"lines"')
+    if key == -1:
+        return
+    arr = raw.find("[", key)
+    if arr == -1:
+        return
+    depth = 0
+    obj_start = -1
+    in_str = esc = False
+    for i in range(arr + 1, len(raw)):
+        c = raw[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif c == "\\":
+                esc = True
+            elif c == '"':
+                in_str = False
+            continue
+        if c == '"':
+            in_str = True
+        elif c == "{":
+            if depth == 0:
+                obj_start = i
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth == 0 and obj_start != -1:
+                try:
+                    o = json.loads(raw[obj_start:i + 1])
+                    if isinstance(o, dict):
+                        yield o
+                except ValueError:
+                    pass
+                obj_start = -1
+        elif c == "]" and depth == 0:
+            break
+
+
 def _extract_lines(raw: str, panels: list[dict],
                    *, source: str = "script") -> list[dict]:
     """Pull valid {"lines": [...]} entries out of a model response.
 
     Keeps the FIRST line per panel_index (the one-line-per-panel contract has
     no room for a duplicate), drops unknown indices, non-lexical text and
-    junk, and returns them in panel order. Never raises: a malformed response
-    simply yields fewer (or no) lines, and the caller decides what that means.
+    junk, and returns them in panel order. Never raises, and tolerates a
+    truncated response (see _iter_line_objects): a cut-off array still yields
+    every complete line, so the tail is recovered by gap-fill instead of the
+    whole chapter falling back to raw captions.
     """
-    first, last = raw.find("{"), raw.rfind("}")
-    if first == -1 or last <= first:
-        return []
-    try:
-        obj = json.loads(raw[first:last + 1])
-    except ValueError:
-        return []
-    lines = obj.get("lines")
-    if not isinstance(lines, list):
-        return []
     idx_by_index = {p["panel_index"]: p for p in panels}
     seen: set[int] = set()
     parsed: list[dict] = []
-    for ln in lines:
+    for ln in _iter_line_objects(raw):
         if not isinstance(ln, dict):
             continue
         idx = ln.get("panel_index")
@@ -776,7 +830,7 @@ def build_chapter_script(
     # lines before they are written and sent to TTS (reuses text_clean's vetted
     # patterns). A line that was pure branding collapses to a neutral bridge so
     # the "speak over every panel" guarantee still holds.
-    _BRIDGE = "The story continues."
+    bridge = "The story continues."
     scrubbed = 0
     for ln in lines:
         for key in ("text", "quote"):
@@ -788,7 +842,7 @@ def build_chapter_script(
                 ln[key] = cleaned
                 scrubbed += 1
         if not ln.get("text", "").strip():
-            ln["text"] = _BRIDGE
+            ln["text"] = bridge
     if scrubbed:
         log.info("[script] stripped promo/branding tokens from %d line field(s)",
                  scrubbed)

@@ -43,16 +43,15 @@ if str(REPO) not in sys.path:
 PY = str(Path(sys.executable))
 VOICE = "en-US-BrianNeural"
 RATE = "+20%"
-# Look: 16:9 canvas, flat colours (no moody grade) and no dark vignette over
-# the art; panels still float on the blurred fill (the preferred mode).
-# Never skip a panel: --min-silent 1.0 keeps a frame that somehow ends up
-# without a line on screen as a short beat instead of dropping it. Dead air is
-# fixed at the source now — the chapter script pass (recap_script v5) must
-# produce one spoken line for every panel, so this is only a last-resort net.
-# (A previous attempt to fix this by padding every skipped panel with a 1s beat
-# left 57 of 68 shots voiceless in chapter 4, with 12s silent stretches.)
-VIDEO_LOOK = ["--canvas", "16:9", "--no-color-grade", "--no-vignette",
-              "--min-silent", "1.0"]
+# Look: 720p canvas (faster render), flat colours (no moody grade), no dark
+# vignette; panels still float on the blurred fill (the preferred mode).
+# --min-silent 0 keeps the timeline speech-driven: any panel that somehow ends
+# up with no audio is dropped rather than held as a 1s silent beat (silent
+# filler beats = dead air + rushed pans; see the recap pitfall). Full coverage
+# (recap_script) already speaks every panel, so this drops nothing real and just
+# shaves residual dead air -> shorter video + faster render.
+VIDEO_LOOK = ["--canvas", "1280x720", "--no-color-grade", "--no-vignette",
+              "--min-silent", "0", "--render-preset", "ultrafast"]
 
 
 def log(msg: str) -> None:
@@ -174,7 +173,8 @@ def narrate(out_dir: Path, *, force: bool = False) -> bool:
             return True
         log(f"  narrate: script.json is v{version}, need "
             f"v{SCRIPT_VERSION} -> rebuilding (vision cache reused)")
-    rc = run([PY, "-m", "cli", "guided", "narrate-ai", str(out_dir)]
+    rc = run([PY, "-m", "cli", "guided", "narrate-ai", str(out_dir),
+              "--narration-concurrency", "16"]
              + (["--force"] if force else []), "narrate-ai")
     return rc == 0
 
@@ -187,7 +187,8 @@ def render(out_dir: Path, *, force: bool = False) -> bool:
     run([PY, "-m", "cli", "guided", "video",
         str(out_dir / "panels.json"), "--out", str(recap),
         *VIDEO_LOOK,
-        "--tts", "edge", "--voice", VOICE, "--rate", RATE]
+        "--tts", "edge", "--voice", VOICE, "--rate", RATE,
+        "--tts-concurrency", "16"]
         + (["--force"] if force else []), "video")
     return recap.is_file() and recap.stat().st_size > 100_000
 

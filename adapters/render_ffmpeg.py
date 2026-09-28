@@ -69,6 +69,15 @@ class StyleConfig:
     # kinds. 0 disables the animation (static fitted frame). Kept small so
     # zoom animations stay slow and cinematic.
     zoom_strength: float = 0.25
+    # libx264 speed preset. Render-only: faster = less CPU wall-time, larger
+    # file, ~same visual after platform recompression. Default preserves the
+    # historical veryfast.
+    preset: str = "veryfast"
+    # Blur the background at 1/N resolution then upscale. gblur is the most
+    # expensive filter in the graph and the background is a soft wash, so this
+    # is visually indistinguishable while touching ~N^2 fewer pixels. 8.0 is
+    # the default; 1.0 disables (exact full-resolution blur).
+    blur_downscale: float = 8.0
 
 
 def _style_post_filters(style: StyleConfig | None) -> list[str]:
@@ -102,7 +111,8 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
                    split_ss: float = 3.0,
                    pan_travel_frac: float = 1.0,
                    pan_width_margin: float = 0.9,
-                   fps: float = 30.0) -> str:
+                   fps: float = 30.0,
+                   blur_downscale: float = 1.0) -> str:
     """One panel composited onto a neutral blurred full-frame copy of itself.
 
     Background branch (always): cover-scaled to the canvas and centre-cropped
@@ -139,10 +149,22 @@ def _blur_bg_chain(i: int, w: int, h: int, sigma: float,
     # old `-loop 1 -t dur` + `fps=` path produced, so output length is unchanged.
     n = max(1, int(round(dur * fps)))
     lp = f"loop=loop={n - 1}:size=1:start=0,setpts=N/{fps:g}/TB"
+    # Low-resolution blur: cover-crop at 1/bd size, gblur there (sigma/bd), then
+    # upscale to the canvas. A heavy gaussian on a soft background wash is
+    # visually identical at 1/8 res while touching ~64x fewer pixels. At bd=1.0
+    # (the direct-call default) the chain is byte-identical to a full-res blur.
+    bd = max(1.0, float(blur_downscale))
+    if bd > 1.0:
+        bgw = max(2, int(round(w / bd)))
+        bgh = max(2, int(round(h / bd)))
+        bg_sigma = sigma / bd
+        up = f",scale={w}:{h}:flags=lanczos"
+    else:
+        bgw, bgh, bg_sigma, up = w, h, sigma, ""
     bg = (f"[bgr{i}]"
-          f"scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,"
-          f"crop={w}:{h}:(iw-{w})/2:(ih-{h})/2,"
-          f"gblur=sigma={sigma:g},{lp}"
+          f"scale={bgw}:{bgh}:force_original_aspect_ratio=increase:flags=lanczos,"
+          f"crop={bgw}:{bgh}:(iw-{bgw})/2:(ih-{bgh})/2,"
+          f"gblur=sigma={bg_sigma:g}{up},{lp}"
           f"[bg{i}]")
     head = f"split=2[bgr{i}][fgr{i}];"
     centre = f"[bg{i}][fg{i}]overlay=x=(W-w)/2:y=(H-h)/2"
@@ -408,7 +430,9 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
                                 split_ss=float(motion.get(
                                     "split_ss", 3.0) or 3.0),
                                 pan_travel_frac=travel_frac,
-                                fps=float(timeline.fps))
+                                fps=float(timeline.fps),
+                                blur_downscale=float(
+                                    getattr(style, "blur_downscale", 1.0)))
         else:
             motion = e.motion or {}
             default_zoom = style.zoom_strength if style else 0.3
@@ -469,7 +493,7 @@ def build_command(timeline: TimelineArtifact, out_path: Path,
         vlabel_out = "[vcat]"
     cmd += ["-filter_complex", ";".join(chains),
             "-map", vlabel_out, "-map", alabel_out,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:v", "libx264", "-preset", (style.preset if style else "veryfast"), "-crf", "20",
             "-pix_fmt", "yuv420p", "-r", str(timeline.fps),
             "-c:a", "aac", "-b:a", "192k", "-max_muxing_queue_size", "9999",
             # Faststart in the encode itself: the moov atom is placed at the
@@ -532,7 +556,7 @@ def _build_xfade_command(cmd: list[str], timeline: TimelineArtifact,
         vlabel_out = "[vcat]"
     cmd += ["-filter_complex", ";".join(chains),
             "-map", vlabel_out, "-map", alabel_out,
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+            "-c:v", "libx264", "-preset", (style.preset if style else "veryfast"), "-crf", "20",
             "-pix_fmt", "yuv420p", "-r", str(timeline.fps),
             "-c:a", "aac", "-b:a", "192k", "-max_muxing_queue_size", "9999",
             "-movflags", "+faststart",

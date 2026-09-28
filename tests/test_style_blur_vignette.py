@@ -135,6 +135,21 @@ def test_blur_bg_background_branch_covers_the_full_canvas():
     assert "crop=1080:1920:(iw-1080)/2:(ih-1920)/2" in bg
 
 
+def test_blur_downscale_blurs_at_low_res_then_upscales():
+    """The background gblur runs at 1/N resolution then upscales: ~N^2 fewer
+    pixels for a soft wash that is visually identical. Disabled at the default
+    (1.0), where the chain is byte-identical to a full-res blur."""
+    low = _blur_bg_chain(0, 1920, 1080, 40.0, blur_downscale=8.0)
+    assert "scale=240:135:force_original_aspect_ratio=increase" in low  # 1/8
+    assert "crop=240:135:(iw-240)/2:(ih-135)/2" in low
+    assert "gblur=sigma=5" in low                                       # 40/8
+    assert ",scale=1920:1080:flags=lanczos" in low                      # upscale
+    full = _blur_bg_chain(0, 1920, 1080, 40.0)                           # bd=1
+    assert "scale=1920:1080:force_original_aspect_ratio=increase" in full
+    assert "gblur=sigma=40" in full
+    assert ",scale=1920:1080:flags=lanczos," not in full
+
+
 def test_blur_bg_foreground_zooms_from_contain_to_cover():
     """zoom>0: the foreground starts contain-fitted (whole panel visible)
     and is pushed in until it covers the frame, reaching cover x (1+zoom)
@@ -191,7 +206,9 @@ def test_blur_background_replaces_scale_crop_in_command():
     cmd = build_command(tl, Path("out.mp4"), style=StyleConfig())
     fc = _fc(cmd)
     assert "split=2[bgr0][fgr0]" in fc
-    assert "gblur=sigma=40" in fc
+    # StyleConfig() defaults to blur_downscale=8.0 -> the gblur runs at 1/8 res
+    # with sigma/8 (40 -> 5), then upscales.
+    assert "gblur=sigma=5" in fc
     # the pan expression would move the crop window; it must be absent
     assert "crop=1080:1920:x=0:y='(ih-1920)*t" not in fc
 

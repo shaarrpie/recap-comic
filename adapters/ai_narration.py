@@ -31,8 +31,8 @@ import hashlib
 import json
 import logging
 import re
-import time
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -41,13 +41,11 @@ from story_context import (
     ENTITIES_SCHEMA_FRAGMENT,
     build_seed_context,
     build_seed_context_from_images,
-    extract_entities_from_response,
     inject_into_prompt,
     make_text_model_call,
     make_vision_seed_call,
     prompt_sha,
     scrub_fences,
-    update_context,
 )
 from text_clean import clean_text
 
@@ -156,6 +154,7 @@ def narrate_cropped_panels(
     cache_dir: str | Path | None = None,
     request_fn: Callable[..., str] | None = None,
     seed_cast_from_images: bool = True,
+    concurrency: int = 16,
 ) -> dict[str, Any]:
     """Fill narration/dialogue for cropped panels via Agnes (primary ->
     fallback).
@@ -237,18 +236,17 @@ def narrate_cropped_panels(
     sidecar: dict[str, Any] = {}
     failures: list[str] = []
 
-    for i, panel in enumerate(artifact.panels):
+    # Per-panel vision is INDEPENDENT (no cross-panel memory mutation), so the
+    # whole chapter's ~15s/panel network latency OVERLAPS in a thread pool
+    # instead of serialising. Story-memory continuity is restored by the single
+    # whole-chapter script pass below (build_chapter_script), not by threading
+    # each panel. The seed ctx is frozen for the loop, so the cache key is
+    # stable and re-runs hit cache (the old evolving-memory key caused misses).
+    def _narrate_one(panel):
         img_path = session / panel.image_file
         if not img_path.is_file():
-            log.warning("[AI] panel %s image missing (%s); keeping old text",
-                        panel.id, panel.image_file)
-            failures.append(f"{panel.id}: image file missing")
-            continue
+            return panel, None, "image file missing"
         data = img_path.read_bytes()
-        # Cache key MUST include the model pair actually in use, or a
-        # custom model silently reuses cached text from the default pair.
-        # It hashes the FINAL prompt (template + [STORY MEMORY] block), so
-        # a cached caption is never reused across different memory states.
         effective_primary = model or _ai.PRIMARY_MODEL
         memory_block = (inject_into_prompt(ctx, panel.panel_index)
                         if ctx else "")
@@ -257,85 +255,67 @@ def narrate_cropped_panels(
             final_prompt = f"{PANEL_NARRATION_PROMPT}\n\n{memory_block}"
         cache_key = (f"{_image_sha(data)[:16]}_{prompt_sha(final_prompt)}_"
                      f"{effective_primary}_{_ai.FALLBACK_MODEL}")
-        # sanitize for Windows filenames
         cache_key = re.sub(r"[^A-Za-z0-9_.-]", "_", cache_key)
         cache_path = cache_root / f"{panel.id}_{cache_key}.json"
-
-        cached: dict | None = None
         if not force and cache_path.is_file():
             try:
                 cached = json.loads(cache_path.read_text("utf-8"))
             except (OSError, ValueError):
                 cached = None
-        if cached is not None:
-            narration, dialogue = cached.get("narration", ""), cached.get("dialogue", "")
-            summary["cached"] += 1
-            used, fb = cached.get("model_used", "?"), bool(cached.get("fallback_used"))
-            log.info("[AI] panel %s narration from cache (model=%s)",
-                     panel.id, used)
-        else:
+            if cached is not None:
+                cached["_fresh"] = False
+                return panel, cached, None
+        try:
             b64 = base64.b64encode(data).decode("ascii")
-            try:
-                outcome = _ai.generate_vision_with_fallback(
-                    final_prompt, b64,
-                    operation=f"ai-narrate:{panel.id}",
-                    api_key=api_key, base_url=base_url,
-                    primary_model=model or _ai.PRIMARY_MODEL,
-                    # These are reasoning models: they spend part of the
-                    # completion budget on hidden reasoning_content before any
-                    # visible text. At the 2048 default a panel could come
-                    # back HTTP 200 with content == "" and be recorded as a
-                    # failure (losing its caption, which later starves the
-                    # script pass of lines to speak). The cache key is
-                    # image+prompt+models, so raising this only affects panels
-                    # that never cached (i.e. exactly those failures).
-                    max_tokens=6000,
-                    request_fn=request_fn)
-                narration, dialogue = _parse_narration(outcome.result)
-                narration = scrub_fences(narration)      # TTS safety net
-                # English-only before it is cached: the vision model sometimes
-                # transcribes untranslated bubbles (or emits mojibake for them)
-                # and edge-tts would read those characters literally. Cleaning
-                # here means the cache stores speakable text; the PANEL
-                # NARRATION PROMPT itself is deliberately untouched because the
-                # cache key hashes it -- rewording it would re-spend every
-                # caption in every chapter for no extra safety.
-                narration, dialogue, dropped = clean_text(narration, dialogue)
-                if dropped:
-                    log.info("[AI] panel %s dropped %d non-English bubble "
-                             "segment(s) from TTS text", panel.id, dropped)
-                used, fb = outcome.model_used, outcome.fallback_used
-                # Merge the optional entities update into memory (best
-                # effort; a malformed block never kills the narration).
-                if ctx:
-                    entities = extract_entities_from_response(outcome.result)
-                    if entities:
-                        try:
-                            update_context(ctx, entities, panel.panel_index)
-                            from story_context import save_context
-                            save_context(ctx, session)
-                        except Exception as exc:  # noqa: BLE001
-                            log.warning("[AI] story-context update failed "
-                                        "(panel %s): %s", panel.id, exc)
-                cache_path.write_text(json.dumps({
-                    "narration": narration, "dialogue": dialogue,
-                    "model_used": used, "fallback_used": fb,
-                }, indent=2), encoding="utf-8")
-                summary["narrated"] += 1
-            except Exception as exc:  # noqa: BLE001 - per-panel; keep old text
-                log.warning("[AI] panel %s narration failed (%s); "
-                            "keeping old text", panel.id, exc)
-                failures.append(f"{panel.id}: {exc}")
-                continue
-            if gap_s > 0 and i < len(artifact.panels) - 1:
-                time.sleep(gap_s)
+            outcome = _ai.generate_vision_with_fallback(
+                final_prompt, b64, operation=f"ai-narrate:{panel.id}",
+                api_key=api_key, base_url=base_url,
+                primary_model=model or _ai.PRIMARY_MODEL,
+                # reasoning models spend part of the budget on hidden
+                # reasoning_content; 6000 avoids empty-content "failures".
+                max_tokens=6000, request_fn=request_fn)
+            narration, dialogue = _parse_narration(outcome.result)
+            narration = scrub_fences(narration)          # TTS safety net
+            narration, dialogue, dropped = clean_text(narration, dialogue)
+            if dropped:
+                log.info("[AI] panel %s dropped %d non-English bubble "
+                         "segment(s) from TTS text", panel.id, dropped)
+            res = {"narration": narration, "dialogue": dialogue,
+                   "model_used": outcome.model_used,
+                   "fallback_used": bool(outcome.fallback_used),
+                   "_fresh": True}
+            cache_path.write_text(json.dumps(
+                {k: res[k] for k in ("narration", "dialogue",
+                                     "model_used", "fallback_used")},
+                indent=2), encoding="utf-8")
+            return panel, res, None
+        except Exception as exc:  # noqa: BLE001 - per-panel; keep old text
+            return panel, None, str(exc)
+
+    workers = max(1, int(concurrency))
+    with ThreadPoolExecutor(max_workers=workers,
+                            thread_name_prefix="ainar") as pool:
+        results = list(pool.map(_narrate_one, artifact.panels))
+    for panel, res, err in results:
+        if err is not None:
+            log.warning("[AI] panel %s narration failed (%s); keeping old text",
+                        panel.id, err)
+            failures.append(f"{panel.id}: {err}")
+            continue
+        if res is None:
+            continue
+        narration, dialogue = res.get("narration", ""), res.get("dialogue", "")
+        used = res.get("model_used", "?")
+        fb = bool(res.get("fallback_used"))
+        fresh = bool(res.get("_fresh"))
         # Only overwrite with non-empty AI text; never blank out existing words.
         if narration:
             panel.narration = narration
         if dialogue:
             panel.dialogue = dialogue
         sidecar[panel.id] = {"model_used": used, "fallback_used": fb,
-                             "cached": cached is not None}
+                             "cached": not fresh}
+        summary["narrated" if fresh else "cached"] += 1
         summary["models_used"][used] = summary["models_used"].get(used, 0) + 1
 
     # Geometry lock: prove nothing moved.

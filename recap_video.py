@@ -159,6 +159,10 @@ class VideoConfig:
     # foreground and to the zoom_in/zoom_out pan kinds. 0 disables motion.
     # Kept small so zoom animations stay slow and cinematic.
     zoom_strength: float = 0.25
+    # libx264 speed preset (ultrafast|superfast|veryfast|faster|fast). Render-
+    # only knob: faster = less CPU wall-time, larger file, ~same visual after
+    # platform recompression. Default keeps the historical veryfast.
+    render_preset: str = "veryfast"
     # ── Reference-motion preset (editing style) ─────────────────────────────
     # "reference" (default) reproduces the strict camera cycle of
     # reference_motion_preset.json — a repeating 4-beat sequence (zoom in,
@@ -231,6 +235,7 @@ class VideoConfig:
     # only camera geometry and pacing distribution).
     _STYLE_FIELDS = ("blur_background", "color_grade", "vignette",
                      "vignette_angle", "blur_sigma", "zoom_strength",
+                     "render_preset",
                      "motion_preset", "motion_preset_path", "motion_strength",
                      "min_silent",
                      "sfx_dir", "sfx_volume", "sfx_volumes")
@@ -1779,7 +1784,8 @@ def render_video(timeline: TimelineArtifact, out_path: Path,
         vignette=cfg.vignette,
         vignette_angle=cfg.vignette_angle,
         blur_sigma=cfg.blur_sigma,
-        zoom_strength=cfg.zoom_strength)
+        zoom_strength=cfg.zoom_strength,
+        preset=cfg.render_preset)
     log.info("render_video start out=%s timeline_entries=%d style=blur=%s/"
              "grade=%s/vignette=%s",
              out_path, len(timeline.entries), style.blur_background,

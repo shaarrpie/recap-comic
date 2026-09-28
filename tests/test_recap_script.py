@@ -343,6 +343,23 @@ def test_force_rebuilds(session):
     assert len(model2.prompts) == 2
 
 
+# ---------------------------------------------------------------- truncation --
+def test_extract_lines_salvages_truncated_json():
+    """A long chapter's script call can exceed the token budget and come back
+    with the JSON array cut off mid-object. Salvage every COMPLETE line instead
+    of failing the whole parse (which used to fall back to raw joined captions);
+    the missing tail is recovered by gap-fill."""
+    panels = [{"panel_index": i, "panel_id": f"p{i}"} for i in (1, 2, 3, 4)]
+    raw = ('{"title":"T","lines":['
+           '{"panel_index":1,"text":"one.","part":"hook"},'
+           '{"panel_index":2,"text":"two.","part":"setup"},'
+           '{"panel_index":3,"text":"three.","part":"escalation"},'
+           '{"panel_index":4,"text":"fo')          # truncated mid-object
+    out = rs._extract_lines(raw, panels)
+    assert [ln["panel_index"] for ln in out] == [1, 2, 3]
+    assert [ln["text"] for ln in out] == ["one.", "two.", "three."]
+
+
 # -------------------------------------------------------------- eligibility --
 def test_blank_and_context_only_never_mapped(tmp_path):
     panels = [

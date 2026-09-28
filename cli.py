@@ -696,6 +696,11 @@ def guided_narrate_ai(
              "fallback; bare names resolved automatically)"),
     force: bool = typer.Option(
         False, "--force", help="re-narrate even cached panels"),
+    narration_concurrency: int = typer.Option(
+        16, "--narration-concurrency", min=1, max=32,
+        help="per-panel vision calls in flight at once (network-bound; "
+             "panels are narrated independently, continuity comes from the "
+             "whole-chapter script pass)"),
     log_level: str = typer.Option("INFO", "--log-level"),
 ) -> None:
     """START button (CLI): AI narration for ALREADY-CROPPED panels.
@@ -708,7 +713,8 @@ def guided_narrate_ai(
     try:
         from adapters import ai_narration as ain
         summary = ain.narrate_cropped_panels(
-            panels_dir, model=model or "", force=force)
+            panels_dir, model=model or "", force=force,
+            concurrency=narration_concurrency)
     except (FileNotFoundError, ValueError, RuntimeError) as exc:
         if log.isEnabledFor(logging.DEBUG):
             log.exception("guided narrate-ai failed")
@@ -854,6 +860,13 @@ def guided_video(
     blur_sigma: float = typer.Option(
         40.0, "--blur-sigma",
         help="gblur sigma for the blurred background (default 40)"),
+    render_preset: str = typer.Option(
+        "veryfast", "--render-preset",
+        help="libx264 speed preset: ultrafast|superfast|veryfast|faster|fast "
+             "(faster = less CPU time, larger file)"),
+    tts_concurrency: int = typer.Option(
+        6, "--tts-concurrency", min=1, max=32,
+        help="TTS clips synthesized in parallel (network-bound)"),
     motion_preset: str = typer.Option(
         "reference", "--motion-preset",
         help="editing style: reference (default; strict sequential camera "
@@ -973,6 +986,7 @@ def guided_video(
         blur_background=blur_background, color_grade=color_grade,
         vignette=vignette, vignette_angle=vignette_angle,
         blur_sigma=blur_sigma,
+        render_preset=render_preset, tts_concurrency=tts_concurrency,
         motion_preset=mp, motion_preset_path=motion_preset_path,
         motion_strength=motion_strength,
         speech_window=speech_window, speech_target_seconds=speech_target,

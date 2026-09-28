@@ -4,10 +4,10 @@
 Fake transports only — no network, no keys. Enforces the INTEGRATION
 contract from story_context.py:
   * seed pass runs BEFORE the panel loop (one text call)
-  * per-panel vision prompt carries the [STORY MEMORY] block
-  * the cache key includes the memory-augmented prompt (different memory
-    state -> different cache file -> no stale-caption reuse)
-  * optional "entities" in a response update the context + save it
+  * per-panel vision prompt carries the frozen [STORY MEMORY] seed block
+  * panels are narrated INDEPENDENTLY in a thread pool (no per-panel memory
+    mutation), so the cache key is stable and re-runs HIT cache; continuity is
+    restored by the single whole-chapter script pass, not by chaining panels
   * geometry lock still holds; scrub_fences applied to narration
 """
 from __future__ import annotations
@@ -137,49 +137,37 @@ def test_seed_runs_before_panel_prompts(session):
     assert "Bam" in h.vision_calls[1]["prompt"]
 
 
-def test_memory_changes_cache_key(session, tmp_path):
-    """The cache key must include the memory-augmented prompt: after the
-    roster grows, the same image must NOT reuse the cached caption."""
-    cache = session / "_test_cache" / "memory_key"
+def test_cache_key_is_stable_across_runs(session):
+    """Per-panel vision no longer mutates memory mid-loop (the seed ctx is
+    frozen), so the cache key is STABLE and a re-run HITS cache instead of
+    re-spending every caption -- the opposite of the old chaining design, and
+    exactly what makes re-runs cheap."""
+    cache = session / "_test_cache" / "stable_key"
     cache.mkdir(parents=True, exist_ok=True)
 
-    h1 = Harness([_vision_response("A person stands.", "")])
-    ain.narrate_cropped_panels(session, api_key="k",
-                               request_fn=h1.request_fn, gap_s=0,
-                               cache_dir=cache)
-    cache_files_1 = list(cache.glob("panel_001_*.json"))
-    assert len(cache_files_1) == 1
+    h1 = Harness([_vision_response("Bam stands at the gate.", '"Hi"'),
+                  _vision_response("Bam runs.", "")])
+    s1 = ain.narrate_cropped_panels(session, api_key="k",
+                                    request_fn=h1.request_fn, gap_s=0,
+                                    cache_dir=cache)
+    assert s1["narrated"] == 2 and s1["cached"] == 0
+    assert len(list(cache.glob("panel_001_*.json"))) == 1
 
-    # memory evolves (Bam now last_seen=1): the seed is skipped (already
-    # built) but inject_into_prompt now has panel-1 freshness info ->
-    # different final prompt -> different cache key -> fresh call.
-    h2 = Harness([
-        _vision_response("Bam stands at the gate.", "",
-                         entities={"characters_seen": ["Bam"]}),
-    ])
-    ain.narrate_cropped_panels(session, api_key="k",
-                               request_fn=h2.request_fn, gap_s=0,
-                               cache_dir=cache, force=True)
-    assert (session / "story_context.json").is_file()
-    ctx = json.loads((session / "story_context.json").read_text("utf-8"))
-    assert ctx["characters"]["Bam"]["last_seen"] == 1
-
-    # a THIRD run with the grown memory must miss panel_001's old cache
-    h3 = Harness([
-        _vision_response("Bam stands at the gate, determined.", ""),
-        _vision_response("Bam runs.", ""),
-    ])
-    s3 = ain.narrate_cropped_panels(session, api_key="k",
-                                    request_fn=h3.request_fn, gap_s=0,
-                                    cache_dir=cache, force=True)
-    # both panels re-narrated: memory state changed the cache keys
-    assert s3["narrated"] == 2
-    cache_files_3 = list(cache.glob("panel_001_*.json"))
-    assert len(cache_files_3) == 2      # two distinct cache entries
-    assert cache_files_3[0].name != cache_files_3[1].name
+    # second run, same frozen seed -> both panels served from cache, no new
+    # vision calls (the scripted response below must never be consumed)
+    h2 = Harness([_vision_response("MUST NOT BE USED", "")])
+    s2 = ain.narrate_cropped_panels(session, api_key="k",
+                                    request_fn=h2.request_fn, gap_s=0,
+                                    cache_dir=cache)
+    assert s2["cached"] == 2 and s2["narrated"] == 0
+    assert len(list(cache.glob("panel_001_*.json"))) == 1
 
 
-def test_entities_update_persists_and_grows_roster(session):
+def test_panels_narrate_independently_no_chaining(session):
+    """A panel's entities no longer thread into the NEXT panel's prompt (the
+    loop is independent + parallel); continuity is the whole-chapter script
+    pass's job. So panel prompts carry only the SEED roster, never a peer's
+    newly-emitted entity, and the roster does not grow during narration."""
     h = Harness([
         _vision_response("A girl with pink hair appears.", '"Who?"',
                          entities={"new_characters": [
@@ -187,11 +175,15 @@ def test_entities_update_persists_and_grows_roster(session):
                               "description": "pink hair"}]}),
         _vision_response("Endorsi smiles.", ""),
     ])
-    _narrate(session, h, call_id="entities")
+    summary = _narrate(session, h, call_id="independent")
+    assert summary["narrated"] == 2
+    # no per-panel chaining: Endorsi never reaches any vision prompt
+    assert all("Endorsi" not in c["prompt"] for c in h.vision_calls)
+    # the frozen seed roster (Bam) is present in the prompts
+    assert any("Bam" in c["prompt"] for c in h.vision_calls)
+    # and the saved context is the seed, not grown by panel entities
     ctx = json.loads((session / "story_context.json").read_text("utf-8"))
-    assert "Endorsi" in ctx["characters"]
-    # second panel's prompt saw her in memory
-    assert "Endorsi" in h.vision_calls[1]["prompt"]
+    assert "Endorsi" not in ctx["characters"]
 
 
 def test_seed_failure_is_non_fatal(session):
@@ -216,7 +208,13 @@ def test_scrub_fences_applied_to_narration(session):
     _narrate(session, h, call_id="scrub")
     art = CutArtifact.model_validate_json(
         (session / "panels.json").read_text("utf-8"))
-    assert art.panels[0].narration == "Bam leaps."   # fences scrubbed
+    # panels narrate in a thread pool, so which panel receives the fenced
+    # response is non-deterministic; assert the fences were scrubbed wherever
+    # it landed and that no code-fence markup survives on any panel.
+    narrations = [p.narration for p in art.panels]
+    assert "Bam leaps." in narrations
+    assert all("```" not in (n or "") and "json" not in (n or "")
+               for n in narrations)
 
 
 def test_geometry_lock_holds(session):
